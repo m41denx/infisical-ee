@@ -1,13 +1,6 @@
 name: Release standalone docker image
 on:
     push:
-        branches:
-          - '*'
-        tags:
-            - "v*.*.*"
-            - "v*.*.*-glacier"
-            - "v*.*.*-nightly-*"
-            - "v*.*.*-nightly-*.*"
 
 jobs:
     # infisical-tests:
