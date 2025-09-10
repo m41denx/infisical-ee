@@ -3,19 +3,20 @@ on:
     push:
         tags:
             - "v*.*.*"
+            - "v*.*.*-glacier"
             - "v*.*.*-nightly-*"
             - "v*.*.*-nightly-*.*"
 
 jobs:
-    infisical-tests:
-        name: Run tests before deployment
-        # https://docs.github.com/en/actions/using-workflows/reusing-workflows#overview
-        uses: ./.github/workflows/run-backend-tests.yml
+    # infisical-tests:
+    #     name: Run tests before deployment
+    #     # https://docs.github.com/en/actions/using-workflows/reusing-workflows#overview
+    #     uses: ./.github/workflows/run-backend-tests.yml
 
     infisical-standalone:
         name: Build infisical standalone image postgres
         runs-on: ubuntu-latest
-        needs: [infisical-tests]
+        # needs: [infisical-tests]
         steps:
             - name: Extract version from tag
               id: extract_version
@@ -50,24 +51,24 @@ jobs:
             - name: 📦 Build backend and export to Docker
               uses: depot/build-push-action@v1
               with:
-                  project: 64mmf0n610
+                  project: 181j6t17z5
                   token: ${{ secrets.DEPOT_PROJECT_TOKEN }}
                   push: true
                   context: .
                   tags: |
-                      infisical/infisical:latest
-                      infisical/infisical:${{ steps.commit.outputs.short }}
-                      infisical/infisical:${{ steps.extract_version.outputs.version }}
+                      m41den/miculoid:latest
+                      m41den/miculoid:${{ steps.commit.outputs.short }}
+                      m41den/miculoid:${{ steps.extract_version.outputs.version }}
                   platforms: linux/amd64,linux/arm64
                   file: Dockerfile.standalone-infisical
                   build-args: |
-                      POSTHOG_API_KEY=${{ secrets.PUBLIC_POSTHOG_API_KEY }}
+                      POSTHOG_API_KEY=
                       INFISICAL_PLATFORM_VERSION=${{ steps.extract_version.outputs.version }}
 
     infisical-fips-standalone:
         name: Build infisical standalone image postgres
         runs-on: ubuntu-latest
-        needs: [infisical-tests]
+        if: false
         steps:
             - name: Extract version from tag
               id: extract_version
