@@ -59,7 +59,7 @@ jobs:
                       m41den/miculoid:latest
                       m41den/miculoid:${{ steps.commit.outputs.short }}
                       m41den/miculoid:${{ steps.extract_version.outputs.version }}
-                  platforms: linux/amd64,linux/arm64
+                  platforms: linux/amd64
                   file: Dockerfile.standalone-infisical
                   build-args: |
                       POSTHOG_API_KEY=""
