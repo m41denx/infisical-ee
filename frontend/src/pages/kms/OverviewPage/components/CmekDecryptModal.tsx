@@ -52,23 +52,15 @@ const DecryptForm = ({ cmek }: FormProps) => {
   });
 
   const handleDecryptData = async (formData: FormData) => {
-    try {
-      const data = await cmekDecrypt.mutateAsync({ ...formData, keyId: cmek.id });
-      createNotification({
-        text: "Successfully decrypted data",
-        type: "success"
-      });
+    const data = await cmekDecrypt.mutateAsync({ ...formData, keyId: cmek.id });
+    createNotification({
+      text: "Successfully decrypted data",
+      type: "success"
+    });
 
-      setPlaintext(
-        shouldDecode ? Buffer.from(decodeBase64(data.plaintext)).toString("utf8") : data.plaintext
-      );
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to decrypt data",
-        type: "error"
-      });
-    }
+    setPlaintext(
+      shouldDecode ? Buffer.from(decodeBase64(data.plaintext)).toString("utf8") : data.plaintext
+    );
   };
 
   useEffect(() => {
@@ -89,7 +81,7 @@ const DecryptForm = ({ cmek }: FormProps) => {
       {plaintext ? (
         <FormControl label="Decrypted Data (plaintext)">
           <TextArea
-            className="max-h-[20rem] min-h-[10rem] min-w-full max-w-full"
+            className="max-h-80 min-h-40 max-w-full min-w-full"
             isDisabled
             value={plaintext}
           />
@@ -102,7 +94,7 @@ const DecryptForm = ({ cmek }: FormProps) => {
         >
           <TextArea
             {...register("ciphertext")}
-            className="max-h-[20rem] min-h-[10rem] min-w-full max-w-full"
+            className="max-h-80 min-h-40 max-w-full min-w-full"
           />
         </FormControl>
       )}

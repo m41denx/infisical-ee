@@ -6,7 +6,6 @@ import ms from "ms";
 import { z } from "zod";
 
 import { TtlFormLabel } from "@app/components/features";
-import { createNotification } from "@app/components/notifications";
 import {
   Button,
   FilterableSelect,
@@ -20,7 +19,7 @@ import {
 } from "@app/components/v2";
 import { useCreateDynamicSecret } from "@app/hooks/api";
 import { DynamicSecretProviders } from "@app/hooks/api/dynamicSecret/types";
-import { WorkspaceEnv } from "@app/hooks/api/types";
+import { ProjectEnv } from "@app/hooks/api/types";
 import { slugSchema } from "@app/lib/schemas";
 
 const authMethods = [
@@ -60,9 +59,8 @@ const formSchema = z.object({
     const valMs = ms(val);
     if (valMs < 60 * 1000)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-    // a day
-    if (valMs > 24 * 60 * 60 * 1000)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+    if (valMs > ms("10y"))
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
   }),
   maxTTL: z
     .string()
@@ -72,9 +70,8 @@ const formSchema = z.object({
       const valMs = ms(val);
       if (valMs < 60 * 1000)
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-      // a day
-      if (valMs > 24 * 60 * 60 * 1000)
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+      if (valMs > ms("10y"))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
     }),
   name: slugSchema(),
   environment: z.object({ name: z.string(), slug: z.string() }),
@@ -87,7 +84,7 @@ type Props = {
   onCancel: () => void;
   secretPath: string;
   projectSlug: string;
-  environments: WorkspaceEnv[];
+  environments: ProjectEnv[];
   isSingleEnvironmentMode?: boolean;
 };
 
@@ -133,25 +130,18 @@ export const ElasticSearchInputForm = ({
     // wait till previous request is finished
     if (createDynamicSecret.isPending) return;
     const isDefaultUsernameTemplate = usernameTemplate === "{{randomUsername}}";
-    try {
-      await createDynamicSecret.mutateAsync({
-        provider: { type: DynamicSecretProviders.ElasticSearch, inputs: provider },
-        maxTTL,
-        name,
-        path: secretPath,
-        defaultTTL,
-        projectSlug,
-        environmentSlug: environment.slug,
-        usernameTemplate:
-          !usernameTemplate || isDefaultUsernameTemplate ? undefined : usernameTemplate
-      });
-      onCompleted();
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to create dynamic secret"
-      });
-    }
+    await createDynamicSecret.mutateAsync({
+      provider: { type: DynamicSecretProviders.ElasticSearch, inputs: provider },
+      maxTTL,
+      name,
+      path: secretPath,
+      defaultTTL,
+      projectSlug,
+      environmentSlug: environment.slug,
+      usernameTemplate:
+        !usernameTemplate || isDefaultUsernameTemplate ? undefined : usernameTemplate
+    });
+    onCompleted();
   };
 
   const selectedAuthType = watch("provider.auth.type");
@@ -162,7 +152,7 @@ export const ElasticSearchInputForm = ({
       <form onSubmit={handleSubmit(handleCreateDynamicSecret)} autoComplete="off">
         <div>
           <div className="flex items-center space-x-2">
-            <div className="flex-grow">
+            <div className="grow">
               <Controller
                 control={control}
                 defaultValue=""
@@ -212,7 +202,7 @@ export const ElasticSearchInputForm = ({
             </div>
           </div>
           <div>
-            <div className="mb-4 mt-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
+            <div className="mt-4 mb-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
               Configuration
             </div>
             <div className="flex flex-col">
@@ -224,7 +214,7 @@ export const ElasticSearchInputForm = ({
                   render={({ field, fieldState: { error } }) => (
                     <FormControl
                       label="Host"
-                      className="flex-grow"
+                      className="grow"
                       isError={Boolean(error?.message)}
                       errorText={error?.message}
                     >
@@ -367,7 +357,7 @@ export const ElasticSearchInputForm = ({
                           <div className="flex h-9 items-center gap-2">
                             <Input
                               placeholder="Insert role name, (superuser, kibana_admin, custom_role)"
-                              className="mb-0 flex-grow"
+                              className="mb-0 grow"
                               {...field}
                             />
                             <IconButton

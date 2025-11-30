@@ -11,19 +11,18 @@ import {
   faMagnifyingGlass,
   faSearch,
   faUsers,
-  faUserShield,
   faUserSlash,
   faUserXmark
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate } from "@tanstack/react-router";
+import { UserCogIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
 import { LastLoginSection } from "@app/components/organization/LastLoginSection";
 import { OrgPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   Button,
   Checkbox,
   DropdownMenu,
@@ -50,6 +49,7 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import {
   OrgPermissionActions,
   OrgPermissionSubjects,
@@ -82,7 +82,7 @@ type Props = {
     data?: {
       orgMembershipId?: string;
       username?: string;
-      description?: string;
+      text?: string;
       selectedOrgMemberships?: OrgUser[];
     }
   ) => void;
@@ -109,7 +109,7 @@ export const OrgMembersTable = ({
 }: Props) => {
   const navigate = useNavigate();
   const { subscription } = useSubscription();
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isSubOrganization } = useOrganization();
   const { user } = useUser();
   const userId = user?.id || "";
   const orgId = currentOrg?.id || "";
@@ -127,34 +127,26 @@ export const OrgMembersTable = ({
   const onRoleChange = async (membershipId: string, role: string) => {
     if (!currentOrg?.id) return;
 
-    try {
-      // TODO: replace hardcoding default role
-      const isCustomRole = !["admin", "member", "no-access"].includes(role);
+    // TODO: replace hardcoding default role
+    const isCustomRole = !["admin", "member", "no-access"].includes(role);
 
-      if (isCustomRole && subscription && !subscription?.rbac) {
-        handlePopUpOpen("upgradePlan", {
-          description: "You can assign custom roles to members if you upgrade your Infisical plan."
-        });
-        return;
-      }
-
-      await updateOrgMembership({
-        organizationId: currentOrg?.id,
-        membershipId,
-        role
+    if (isCustomRole && subscription && !subscription?.rbac) {
+      handlePopUpOpen("upgradePlan", {
+        text: "Your current plan does not include access to assigning custom roles to members. To unlock this feature, please upgrade to Infisical Pro plan."
       });
-
-      createNotification({
-        text: "Successfully updated user role",
-        type: "success"
-      });
-    } catch (error) {
-      console.error(error);
-      createNotification({
-        text: "Failed to update user role",
-        type: "error"
-      });
+      return;
     }
+
+    await updateOrgMembership({
+      organizationId: currentOrg?.id,
+      membershipId,
+      role
+    });
+
+    createNotification({
+      text: "Successfully updated user role",
+      type: "success"
+    });
   };
 
   const onResendInvite = async (membershipId: string) => {
@@ -172,12 +164,6 @@ export const OrgMembersTable = ({
       createNotification({
         text: "Successfully resent org invitation",
         type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to resend org invitation",
-        type: "error"
       });
     } finally {
       setResendInviteId(null);
@@ -332,7 +318,7 @@ export const OrgMembersTable = ({
               variant="plain"
               size="sm"
               className={twMerge(
-                "flex h-[2.375rem] w-[2.6rem] items-center justify-center overflow-hidden border border-mineshaft-600 bg-mineshaft-800 p-0 transition-all hover:border-primary/60 hover:bg-primary/10",
+                "flex h-9.5 w-[2.6rem] items-center justify-center overflow-hidden border border-mineshaft-600 bg-mineshaft-800 p-0 transition-all hover:border-primary/60 hover:bg-primary/10",
                 isTableFiltered && "border-primary/50 text-primary"
               )}
             >
@@ -348,9 +334,9 @@ export const OrgMembersTable = ({
               >
                 Roles
               </DropdownSubMenuTrigger>
-              <DropdownSubMenuContent className="thin-scrollbar max-h-[20rem] overflow-y-auto rounded-l-none">
+              <DropdownSubMenuContent className="max-h-80 thin-scrollbar overflow-y-auto rounded-l-none">
                 <DropdownMenuLabel className="sticky top-0 bg-mineshaft-900">
-                  Apply Roles to Filter Users
+                  Filter Organization Users by Role
                 </DropdownMenuLabel>
                 {roles?.map(({ id, slug, name }) => (
                   <DropdownMenuItem
@@ -379,7 +365,7 @@ export const OrgMembersTable = ({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
-          placeholder="Search members..."
+          placeholder="Search organization users..."
         />
       </div>
       <TableContainer className="mt-4">
@@ -406,7 +392,7 @@ export const OrgMembersTable = ({
                   }}
                 />
               </Th>
-              <Th className="w-1/3">
+              <Th className="min-w-40 md:w-1/3 md:min-w-0">
                 <div className="flex items-center">
                   Name
                   <IconButton
@@ -448,7 +434,7 @@ export const OrgMembersTable = ({
               </Th>
               <Th className="w-1/3">
                 <div className="flex items-center">
-                  Role
+                  Organization Role
                   <IconButton
                     variant="plain"
                     className={`ml-2 ${orderBy === OrgMembersOrderBy.Role ? "" : "opacity-30"}`}
@@ -495,9 +481,10 @@ export const OrgMembersTable = ({
                       className="h-10 w-full cursor-pointer transition-colors duration-100 hover:bg-mineshaft-700"
                       onClick={() =>
                         navigate({
-                          to: "/organization/members/$membershipId" as const,
+                          to: "/organizations/$orgId/members/$membershipId" as const,
                           params: {
-                            membershipId: orgMembershipId
+                            membershipId: orgMembershipId,
+                            orgId
                           }
                         })
                       }
@@ -519,21 +506,21 @@ export const OrgMembersTable = ({
                       <Td
                         className={twMerge("group max-w-0", isActive ? "" : "text-mineshaft-400")}
                       >
-                        <div className="flex items-center">
+                        <div className="flex w-full items-center gap-x-2">
                           <p className="truncate">
                             {name ?? <span className="text-mineshaft-400">Not Set</span>}
                           </p>
                           {u.superAdmin && (
-                            <Badge variant="primary" className="ml-2 w-min whitespace-nowrap">
-                              <span className="hidden xl:inline">Server Admin</span>
-                              <Tooltip content="Server Admin">
-                                <FontAwesomeIcon className="xl:hidden" icon={faUserShield} />
-                              </Tooltip>
-                            </Badge>
+                            <Tooltip content="Server Admin">
+                              <Badge variant="info">
+                                <UserCogIcon />
+                                <span className="hidden xl:inline">Server Admin</span>
+                              </Badge>
+                            </Tooltip>
                           )}
                           {lastLoginAuthMethod && lastLoginTime && (
                             <Tooltip
-                              className="min-w-52 max-w-96 px-3"
+                              className="max-w-96 min-w-52 px-3"
                               content={
                                 <LastLoginSection
                                   lastLoginAuthMethod={lastLoginAuthMethod}
@@ -586,6 +573,7 @@ export const OrgMembersTable = ({
                           {isActive &&
                             (status === "invited" || status === "verified") &&
                             email &&
+                            !isSubOrganization &&
                             serverDetails?.emailConfigured && (
                               <OrgPermissionCan
                                 I={OrgPermissionActions.Edit}
@@ -632,9 +620,10 @@ export const OrgMembersTable = ({
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       navigate({
-                                        to: "/organization/members/$membershipId" as const,
+                                        to: "/organizations/$orgId/members/$membershipId" as const,
                                         params: {
-                                          membershipId: orgMembershipId
+                                          membershipId: orgMembershipId,
+                                          orgId
                                         }
                                       });
                                     }}
@@ -738,8 +727,8 @@ export const OrgMembersTable = ({
           <EmptyState
             title={
               members.length
-                ? "No organization members match search..."
-                : "No organization members found"
+                ? "No organization users match search..."
+                : "No organization users found"
             }
             icon={members.length ? faSearch : faUsers}
           />

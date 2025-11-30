@@ -1,6 +1,7 @@
 import { AbilityBuilder, createMongoAbility, ForcedSubject, MongoAbility } from "@casl/ability";
 import { z } from "zod";
 
+import { ProjectMembershipRole } from "@app/db/schemas";
 import {
   CASL_ACTION_SCHEMA_ENUM,
   CASL_ACTION_SCHEMA_NATIVE_ENUM
@@ -64,7 +65,11 @@ export enum ProjectPermissionIdentityActions {
   Edit = "edit",
   Delete = "delete",
   GrantPrivileges = "grant-privileges",
-  AssumePrivileges = "assume-privileges"
+  AssumePrivileges = "assume-privileges",
+  RevokeAuth = "revoke-auth",
+  CreateToken = "create-token",
+  GetToken = "get-token",
+  DeleteToken = "delete-token"
 }
 
 export enum ProjectPermissionMemberActions {
@@ -110,6 +115,16 @@ export enum ProjectPermissionPkiSubscriberActions {
   ListCerts = "list-certs"
 }
 
+export enum ProjectPermissionCertificateProfileActions {
+  Read = "read",
+  Create = "create",
+  Edit = "edit",
+  Delete = "delete",
+  IssueCert = "issue-cert",
+  RevealAcmeEabSecret = "reveal-acme-eab-secret",
+  RotateAcmeEabSecret = "rotate-acme-eab-secret"
+}
+
 export enum ProjectPermissionSecretSyncActions {
   Read = "read",
   Create = "create",
@@ -118,6 +133,16 @@ export enum ProjectPermissionSecretSyncActions {
   SyncSecrets = "sync-secrets",
   ImportSecrets = "import-secrets",
   RemoveSecrets = "remove-secrets"
+}
+
+export enum ProjectPermissionPkiSyncActions {
+  Read = "read",
+  Create = "create",
+  Edit = "edit",
+  Delete = "delete",
+  SyncCertificates = "sync-certificates",
+  ImportCertificates = "import-certificates",
+  RemoveCertificates = "remove-certificates"
 }
 
 export enum ProjectPermissionSecretRotationActions {
@@ -147,6 +172,14 @@ export enum ProjectPermissionSecretScanningDataSourceActions {
   ReadResources = "read-data-source-resources"
 }
 
+export enum ProjectPermissionAppConnectionActions {
+  Read = "read-app-connections",
+  Create = "create-app-connections",
+  Edit = "edit-app-connections",
+  Delete = "delete-app-connections",
+  Connect = "connect-app-connections"
+}
+
 export enum ProjectPermissionSecretScanningFindingActions {
   Read = "read-findings",
   Update = "update-findings"
@@ -167,6 +200,22 @@ export enum ProjectPermissionSecretEventActions {
 export enum ProjectPermissionAuditLogsActions {
   Read = "read"
 }
+
+export enum ProjectPermissionPamAccountActions {
+  Access = "access",
+  Read = "read",
+  Create = "create",
+  Edit = "edit",
+  Delete = "delete"
+}
+
+export enum ProjectPermissionPamSessionActions {
+  Read = "read"
+  // Terminate = "terminate"
+}
+
+export const isCustomProjectRole = (slug: string) =>
+  !Object.values(ProjectMembershipRole).includes(slug as ProjectMembershipRole);
 
 export enum ProjectPermissionSub {
   Role = "role",
@@ -204,11 +253,18 @@ export enum ProjectPermissionSub {
   Kms = "kms",
   Cmek = "cmek",
   SecretSyncs = "secret-syncs",
+  PkiSyncs = "pki-syncs",
   Kmip = "kmip",
   SecretScanningDataSources = "secret-scanning-data-sources",
   SecretScanningFindings = "secret-scanning-findings",
   SecretScanningConfigs = "secret-scanning-configs",
-  SecretEvents = "secret-events"
+  SecretEvents = "secret-events",
+  AppConnections = "app-connections",
+  PamFolders = "pam-folders",
+  PamResources = "pam-resources",
+  PamAccounts = "pam-accounts",
+  PamSessions = "pam-sessions",
+  CertificateProfiles = "certificate-profiles"
 }
 
 export type SecretSubjectFields = {
@@ -233,6 +289,10 @@ export type SecretFolderSubjectFields = {
 export type SecretSyncSubjectFields = {
   environment: string;
   secretPath: string;
+};
+
+export type PkiSyncSubjectFields = {
+  subscriberName: string;
 };
 
 export type DynamicSecretSubjectFields = {
@@ -272,6 +332,16 @@ export type PkiSubscriberSubjectFields = {
   // (dangtony98): consider adding [commonName] as a subject field in the future
 };
 
+export type AppConnectionSubjectFields = {
+  connectionId: string;
+};
+
+export type PamAccountSubjectFields = {
+  resourceName: string;
+  accountName: string;
+  accountPath: string;
+};
+
 export type ProjectPermissionSet =
   | [
       ProjectPermissionSecretActions,
@@ -294,6 +364,10 @@ export type ProjectPermissionSet =
   | [
       ProjectPermissionSecretSyncActions,
       ProjectPermissionSub.SecretSyncs | (ForcedSubject<ProjectPermissionSub.SecretSyncs> & SecretSyncSubjectFields)
+    ]
+  | [
+      ProjectPermissionPkiSyncActions,
+      ProjectPermissionSub.PkiSyncs | (ForcedSubject<ProjectPermissionSub.PkiSyncs> & PkiSyncSubjectFields)
     ]
   | [
       ProjectPermissionActions,
@@ -365,7 +439,22 @@ export type ProjectPermissionSet =
   | [
       ProjectPermissionSecretEventActions,
       ProjectPermissionSub.SecretEvents | (ForcedSubject<ProjectPermissionSub.SecretEvents> & SecretEventSubjectFields)
-    ];
+    ]
+  | [
+      ProjectPermissionAppConnectionActions,
+      (
+        | ProjectPermissionSub.AppConnections
+        | (ForcedSubject<ProjectPermissionSub.AppConnections> & AppConnectionSubjectFields)
+      )
+    ]
+  | [ProjectPermissionActions, ProjectPermissionSub.PamFolders]
+  | [ProjectPermissionActions, ProjectPermissionSub.PamResources]
+  | [
+      ProjectPermissionPamAccountActions,
+      ProjectPermissionSub.PamAccounts | (ForcedSubject<ProjectPermissionSub.PamAccounts> & PamAccountSubjectFields)
+    ]
+  | [ProjectPermissionPamSessionActions, ProjectPermissionSub.PamSessions]
+  | [ProjectPermissionCertificateProfileActions, ProjectPermissionSub.CertificateProfiles];
 
 const SECRET_PATH_MISSING_SLASH_ERR_MSG = "Invalid Secret Path; it must start with a '/'";
 const SECRET_PATH_PERMISSION_OPERATOR_SCHEMA = z.union([
@@ -383,6 +472,27 @@ const SECRET_PATH_PERMISSION_OPERATOR_SCHEMA = z.union([
       [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN].refine(
         (val) => val.every((el) => el.startsWith("/")),
         SECRET_PATH_MISSING_SLASH_ERR_MSG
+      ),
+      [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
+    })
+    .partial()
+]);
+const PAM_ACCOUNT_PATH_MISSING_SLASH_ERR_MSG = "Invalid Secret Path; it must start with a '/'";
+const PAM_ACCOUNT_PATH_PERMISSION_OPERATOR_SCHEMA = z.union([
+  z.string().refine((val) => val.startsWith("/"), SECRET_PATH_MISSING_SLASH_ERR_MSG),
+  z
+    .object({
+      [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ].refine(
+        (val) => val.startsWith("/"),
+        PAM_ACCOUNT_PATH_MISSING_SLASH_ERR_MSG
+      ),
+      [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ].refine(
+        (val) => val.startsWith("/"),
+        PAM_ACCOUNT_PATH_MISSING_SLASH_ERR_MSG
+      ),
+      [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN].refine(
+        (val) => val.every((el) => el.startsWith("/")),
+        PAM_ACCOUNT_PATH_MISSING_SLASH_ERR_MSG
       ),
       [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
     })
@@ -457,6 +567,22 @@ const SecretSyncConditionV2Schema = z
         .partial()
     ]),
     secretPath: SECRET_PATH_PERMISSION_OPERATOR_SCHEMA
+  })
+  .partial();
+
+const PkiSyncConditionSchema = z
+  .object({
+    subscriberName: z.union([
+      z.string(),
+      z
+        .object({
+          [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+          [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+          [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN],
+          [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
+        })
+        .partial()
+    ])
   })
   .partial();
 
@@ -577,6 +703,49 @@ const PkiTemplateConditionSchema = z
         })
         .partial()
     ])
+  })
+  .partial();
+
+const AppConnectionConditionSchema = z
+  .object({
+    connectionId: z.union([
+      z.string(),
+      z
+        .object({
+          [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+          [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+          [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN]
+        })
+        .partial()
+    ])
+  })
+  .partial();
+
+const PamAccountConditionSchema = z
+  .object({
+    resourceName: z.union([
+      z.string(),
+      z
+        .object({
+          [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+          [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+          [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN],
+          [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
+        })
+        .partial()
+    ]),
+    accountName: z.union([
+      z.string(),
+      z
+        .object({
+          [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+          [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+          [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN],
+          [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
+        })
+        .partial()
+    ]),
+    accountPath: PAM_ACCOUNT_PATH_PERMISSION_OPERATOR_SCHEMA
   })
   .partial();
 
@@ -760,6 +929,44 @@ const GeneralPermissionSchema = [
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionSecretScanningConfigActions).describe(
       "Describe what action an entity can take."
     )
+  }),
+  z.object({
+    subject: z.literal(ProjectPermissionSub.AppConnections).describe("The entity this permission pertains to."),
+    inverted: z.boolean().optional().describe("Whether rule allows or forbids."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionAppConnectionActions).describe(
+      "Describe what action an entity can take."
+    ),
+    conditions: AppConnectionConditionSchema.describe(
+      "When specified, only matching conditions will be allowed to access given resource."
+    ).optional()
+  }),
+  z.object({
+    subject: z.literal(ProjectPermissionSub.PamFolders).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionActions).describe(
+      "Describe what action an entity can take."
+    )
+  }),
+  z.object({
+    subject: z.literal(ProjectPermissionSub.PamResources).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionActions).describe(
+      "Describe what action an entity can take."
+    )
+  }),
+  z.object({
+    subject: z.literal(ProjectPermissionSub.PamAccounts).describe("The entity this permission pertains to."),
+    inverted: z.boolean().optional().describe("Whether rule allows or forbids."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionPamAccountActions).describe(
+      "Describe what action an entity can take."
+    ),
+    conditions: PamAccountConditionSchema.describe(
+      "When specified, only matching conditions will be allowed to access given resource."
+    ).optional()
+  }),
+  z.object({
+    subject: z.literal(ProjectPermissionSub.PamSessions).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionPamSessionActions).describe(
+      "Describe what action an entity can take."
+    )
   })
 ];
 
@@ -899,6 +1106,16 @@ export const ProjectPermissionV2Schema = z.discriminatedUnion("subject", [
     ).optional()
   }),
   z.object({
+    subject: z.literal(ProjectPermissionSub.PkiSyncs).describe("The entity this permission pertains to."),
+    inverted: z.boolean().optional().describe("Whether rule allows or forbids."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionPkiSyncActions).describe(
+      "Describe what action an entity can take."
+    ),
+    conditions: PkiSyncConditionSchema.describe(
+      "When specified, only matching conditions will be allowed to access given resource."
+    ).optional()
+  }),
+  z.object({
     subject: z.literal(ProjectPermissionSub.SecretEvents).describe("The entity this permission pertains to."),
     inverted: z.boolean().optional().describe("Whether rule allows or forbids."),
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionSecretEventActions).describe(
@@ -907,6 +1124,13 @@ export const ProjectPermissionV2Schema = z.discriminatedUnion("subject", [
     conditions: SecretSyncConditionV2Schema.describe(
       "When specified, only matching conditions will be allowed to access given resource."
     ).optional()
+  }),
+  z.object({
+    subject: z.literal(ProjectPermissionSub.CertificateProfiles).describe("The entity this permission pertains to."),
+    inverted: z.boolean().optional().describe("Whether rule allows or forbids."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionCertificateProfileActions).describe(
+      "Describe what action an entity can take."
+    )
   }),
   ...GeneralPermissionSchema
 ]);

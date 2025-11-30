@@ -3,9 +3,9 @@ import { ForbiddenError } from "@casl/ability";
 import { ActionProjectType } from "@app/db/schemas";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { ProjectPermissionActions, ProjectPermissionSub } from "@app/ee/services/permission/project-permission";
-import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
+import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { groupBy } from "@app/lib/fn";
-import { TOrgMembershipDALFactory } from "@app/services/org-membership/org-membership-dal";
+import { TAdditionalPrivilegeDALFactory } from "@app/services/additional-privilege/additional-privilege-dal";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 import { TProjectEnvDALFactory } from "@app/services/project-env/project-env-dal";
 import { TProjectMembershipDALFactory } from "@app/services/project-membership/project-membership-dal";
@@ -15,7 +15,6 @@ import { TAccessApprovalRequestDALFactory } from "../access-approval-request/acc
 import { TAccessApprovalRequestReviewerDALFactory } from "../access-approval-request/access-approval-request-reviewer-dal";
 import { ApprovalStatus } from "../access-approval-request/access-approval-request-types";
 import { TGroupDALFactory } from "../group/group-dal";
-import { TProjectUserAdditionalPrivilegeDALFactory } from "../project-user-additional-privilege/project-user-additional-privilege-dal";
 import {
   TAccessApprovalPolicyApproverDALFactory,
   TAccessApprovalPolicyBypasserDALFactory
@@ -39,13 +38,12 @@ type TAccessApprovalPolicyServiceFactoryDep = {
   projectEnvDAL: Pick<TProjectEnvDALFactory, "find" | "findOne">;
   accessApprovalPolicyApproverDAL: TAccessApprovalPolicyApproverDALFactory;
   accessApprovalPolicyBypasserDAL: TAccessApprovalPolicyBypasserDALFactory;
-  projectMembershipDAL: Pick<TProjectMembershipDALFactory, "find">;
+  projectMembershipDAL: Pick<TProjectMembershipDALFactory, "findProjectMembershipsByUserIds">;
   groupDAL: TGroupDALFactory;
   userDAL: Pick<TUserDALFactory, "find">;
   accessApprovalRequestDAL: Pick<TAccessApprovalRequestDALFactory, "update" | "find" | "resetReviewByPolicyId">;
-  additionalPrivilegeDAL: Pick<TProjectUserAdditionalPrivilegeDALFactory, "delete">;
+  additionalPrivilegeDAL: Pick<TAdditionalPrivilegeDALFactory, "delete">;
   accessApprovalRequestReviewerDAL: Pick<TAccessApprovalRequestReviewerDALFactory, "update" | "delete">;
-  orgMembershipDAL: Pick<TOrgMembershipDALFactory, "find">;
   accessApprovalPolicyEnvironmentDAL: TAccessApprovalPolicyEnvironmentDALFactory;
 };
 
@@ -62,7 +60,7 @@ export const accessApprovalPolicyServiceFactory = ({
   accessApprovalRequestDAL,
   additionalPrivilegeDAL,
   accessApprovalRequestReviewerDAL,
-  orgMembershipDAL
+  projectMembershipDAL
 }: TAccessApprovalPolicyServiceFactoryDep): TAccessApprovalPolicyServiceFactory => {
   const $policyExists = async ({
     envId,
@@ -83,6 +81,21 @@ export const accessApprovalPolicyServiceFactory = ({
       envIds: envId ? [envId] : (envIds as string[])
     });
     return policyId ? policy && policy.id !== policyId : Boolean(policy);
+  };
+
+  const verifyProjectUserMembership = async (userIds: string[], orgId: string, projectId: string) => {
+    if (userIds.length === 0) return;
+    const projectMemberships = (await projectMembershipDAL.findProjectMembershipsByUserIds(orgId, userIds)).filter(
+      (v) => v.projectId === projectId
+    );
+
+    if (projectMemberships.length !== userIds.length) {
+      const projectMemberUserIds = new Set(projectMemberships.map((member) => member.userId));
+      const userIdsNotInProject = userIds.filter((id) => !projectMemberUserIds.has(id));
+      throw new BadRequestError({
+        message: `Some users are not members of the project: ${userIdsNotInProject.join(", ")}`
+      });
+    }
   };
 
   const createAccessApprovalPolicy: TAccessApprovalPolicyServiceFactory["createAccessApprovalPolicy"] = async ({
@@ -162,7 +175,7 @@ export const accessApprovalPolicyServiceFactory = ({
 
       if (invalidUsernames.length) {
         throw new BadRequestError({
-          message: `Invalid approver user: ${invalidUsernames.join(", ")}`
+          message: `Invalid approver user: ${invalidUsernames.map((i) => i.username).join(", ")}`
         });
       }
 
@@ -171,6 +184,14 @@ export const accessApprovalPolicyServiceFactory = ({
           id: approverUsersInDBGroupByUsername[el.username]?.[0].id,
           sequence: el.sequence
         }))
+      );
+    }
+
+    if (approverUserIds.length > 0) {
+      await verifyProjectUserMembership(
+        approverUserIds.map((au) => au.id),
+        project.orgId,
+        project.id
       );
     }
     let groupBypassers: string[] = [];
@@ -259,6 +280,8 @@ export const accessApprovalPolicyServiceFactory = ({
       }
 
       if (bypasserUserIds.length) {
+        await verifyProjectUserMembership(bypasserUserIds, project.orgId, project.id);
+
         await accessApprovalPolicyBypasserDAL.insertMany(
           bypasserUserIds.map((userId) => ({
             bypasserUserId: userId,
@@ -422,22 +445,6 @@ export const accessApprovalPolicyServiceFactory = ({
         bypasserUserIds = [...new Set(bypasserUserIds.concat(bypasserUsers.map((user) => user.id)))];
       }
 
-      // Validate user bypassers
-      if (bypasserUserIds.length > 0) {
-        const orgMemberships = await orgMembershipDAL.find({
-          $in: { userId: bypasserUserIds },
-          orgId: actorOrgId
-        });
-
-        if (orgMemberships.length !== bypasserUserIds.length) {
-          const foundUserIdsInOrg = new Set(orgMemberships.map((mem) => mem.userId));
-          const missingUserIds = bypasserUserIds.filter((id) => !foundUserIdsInOrg.has(id));
-          throw new BadRequestError({
-            message: `One or more specified bypasser users are not part of the organization or do not exist. Invalid or non-member user IDs: ${missingUserIds.join(", ")}`
-          });
-        }
-      }
-
       // Validate group bypassers
       if (groupBypassers.length > 0) {
         const orgGroups = await groupDAL.find({
@@ -488,7 +495,7 @@ export const accessApprovalPolicyServiceFactory = ({
 
           if (invalidUsernames.length) {
             throw new BadRequestError({
-              message: `Invalid approver user: ${invalidUsernames.join(", ")}`
+              message: `Invalid approver user: ${invalidUsernames.map((i) => i.username).join(", ")}`
             });
           }
 
@@ -497,6 +504,14 @@ export const accessApprovalPolicyServiceFactory = ({
               id: approverUsersInDBGroupByUsername[el.username]?.[0].id,
               sequence: el.sequence
             }))
+          );
+        }
+
+        if (approverUserIds.length > 0) {
+          await verifyProjectUserMembership(
+            approverUserIds.map((au) => au.id),
+            actorOrgId,
+            accessApprovalPolicy.projectId
           );
         }
         await accessApprovalPolicyApproverDAL.insertMany(
@@ -537,6 +552,8 @@ export const accessApprovalPolicyServiceFactory = ({
       await accessApprovalPolicyBypasserDAL.delete({ policyId: doc.id }, tx);
 
       if (bypasserUserIds.length) {
+        await verifyProjectUserMembership(bypasserUserIds, actorOrgId, accessApprovalPolicy.projectId);
+
         await accessApprovalPolicyBypasserDAL.insertMany(
           bypasserUserIds.map((userId) => ({
             bypasserUserId: userId,
@@ -633,7 +650,7 @@ export const accessApprovalPolicyServiceFactory = ({
 
     if (!project) throw new NotFoundError({ message: `Project with slug '${projectSlug}' not found` });
 
-    const { membership } = await permissionService.getProjectPermission({
+    await permissionService.getProjectPermission({
       actor,
       actorId,
       projectId: project.id,
@@ -641,9 +658,6 @@ export const accessApprovalPolicyServiceFactory = ({
       actorOrgId,
       actionProjectType: ActionProjectType.SecretManager
     });
-    if (!membership) {
-      throw new ForbiddenRequestError({ message: "You are not a member of this project" });
-    }
 
     const environment = await projectEnvDAL.findOne({ projectId: project.id, slug: envSlug });
     if (!environment) throw new NotFoundError({ message: `Environment with slug '${envSlug}' not found` });

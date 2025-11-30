@@ -1,6 +1,13 @@
 import { Knex } from "knex";
 
-import { OrgMembershipRole, OrgMembershipStatus, TableName, TUsers, UserDeviceSchema } from "@app/db/schemas";
+import {
+  AccessScope,
+  OrgMembershipRole,
+  OrgMembershipStatus,
+  TableName,
+  TUsers,
+  UserDeviceSchema
+} from "@app/db/schemas";
 import { EventType, TAuditLogServiceFactory } from "@app/ee/services/audit-log/audit-log-types";
 import { isAuthMethodSaml } from "@app/ee/services/permission/permission-fns";
 import { getConfig } from "@app/lib/config/env";
@@ -9,14 +16,18 @@ import { getUserPrivateKey } from "@app/lib/crypto/srp";
 import { BadRequestError, DatabaseError, ForbiddenRequestError, UnauthorizedError } from "@app/lib/errors";
 import { getMinExpiresIn, removeTrailingSlash } from "@app/lib/fn";
 import { logger } from "@app/lib/logger";
+import { AuthAttemptAuthMethod, AuthAttemptAuthResult, authAttemptCounter } from "@app/lib/telemetry/metrics";
 import { getUserAgentType } from "@app/server/plugins/audit-log";
 import { getServerCfg } from "@app/services/super-admin/super-admin-service";
 
 import { TAuthTokenServiceFactory } from "../auth-token/auth-token-service";
 import { TokenType } from "../auth-token/auth-token-types";
+import { TMembershipRoleDALFactory } from "../membership/membership-role-dal";
+import { TMembershipUserDALFactory } from "../membership-user/membership-user-dal";
+import { TNotificationServiceFactory } from "../notification/notification-service";
+import { NotificationType } from "../notification/notification-types";
 import { TOrgDALFactory } from "../org/org-dal";
 import { getDefaultOrgMembershipRole } from "../org/org-role-fns";
-import { TOrgMembershipDALFactory } from "../org-membership/org-membership-dal";
 import { SmtpTemplates, TSmtpService } from "../smtp/smtp-service";
 import { LoginMethod } from "../super-admin/super-admin-types";
 import { TTotpServiceFactory } from "../totp/totp-service";
@@ -46,7 +57,9 @@ type TAuthLoginServiceFactoryDep = {
   smtpService: TSmtpService;
   totpService: Pick<TTotpServiceFactory, "verifyUserTotp" | "verifyWithUserRecoveryCode">;
   auditLogService: Pick<TAuditLogServiceFactory, "createAuditLog">;
-  orgMembershipDAL: TOrgMembershipDALFactory;
+  membershipUserDAL: TMembershipUserDALFactory;
+  membershipRoleDAL: TMembershipRoleDALFactory;
+  notificationService: Pick<TNotificationServiceFactory, "createUserNotifications">;
 };
 
 export type TAuthLoginFactory = ReturnType<typeof authLoginServiceFactory>;
@@ -55,9 +68,11 @@ export const authLoginServiceFactory = ({
   tokenService,
   smtpService,
   orgDAL,
-  orgMembershipDAL,
   totpService,
-  auditLogService
+  auditLogService,
+  notificationService,
+  membershipUserDAL,
+  membershipRoleDAL
 }: TAuthLoginServiceFactoryDep) => {
   /*
    * Private
@@ -71,6 +86,16 @@ export const authLoginServiceFactory = ({
     if (!isDeviceSeen) {
       const newDeviceList = devices.concat([{ ip, userAgent }]);
       await userDAL.updateById(user.id, { devices: JSON.stringify(newDeviceList) }, tx);
+
+      await notificationService.createUserNotifications([
+        {
+          userId: user.id,
+          type: NotificationType.LOGIN_FROM_NEW_DEVICE,
+          title: "Login From New Device",
+          body: `A new device with IP **${ip}** and User Agent **${userAgent}** has logged into your account.`
+        }
+      ]);
+
       if (user.email) {
         await smtpService.sendMail({
           template: SmtpTemplates.NewDeviceJoin,
@@ -149,8 +174,8 @@ export const authLoginServiceFactory = ({
     if (organizationId) {
       const org = await orgDAL.findById(organizationId);
       if (org) {
-        await orgMembershipDAL.update(
-          { userId: user.id, orgId: org.id },
+        await membershipUserDAL.update(
+          { actorUserId: user.id, scopeOrgId: org.id, scope: AccessScope.Organization },
           { lastLoginAuthMethod: authMethod, lastLoginTime: new Date() }
         );
         if (org.userTokenExpiration) {
@@ -361,63 +386,118 @@ export const authLoginServiceFactory = ({
     providerAuthToken?: string;
     captchaToken?: string;
   }) => {
-    const usersByUsername = await userDAL.findUserEncKeyByUsername({
-      username: email
-    });
-    const userEnc =
-      usersByUsername?.length > 1 ? usersByUsername.find((el) => el.username === email) : usersByUsername?.[0];
+    const appCfg = getConfig();
 
-    if (!userEnc) throw new BadRequestError({ message: "User not found" });
+    try {
+      const usersByUsername = await userDAL.findUserEncKeyByUsername({
+        username: email
+      });
+      const userEnc =
+        usersByUsername?.length > 1 ? usersByUsername.find((el) => el.username === email) : usersByUsername?.[0];
 
-    if (userEnc.encryptionVersion !== UserEncryption.V2) {
-      throw new BadRequestError({ message: "Legacy encryption scheme not supported", name: "LegacyEncryptionScheme" });
-    }
+      if (!userEnc) throw new BadRequestError({ message: "User not found" });
 
-    if (!userEnc.hashedPassword) {
-      if (userEnc.authMethods?.includes(AuthMethod.EMAIL)) {
+      if (userEnc.encryptionVersion !== UserEncryption.V2) {
         throw new BadRequestError({
           message: "Legacy encryption scheme not supported",
           name: "LegacyEncryptionScheme"
         });
       }
 
-      throw new BadRequestError({ message: "No password found" });
-    }
-
-    const { authMethod, organizationId } = getAuthMethodAndOrgId(email, providerAuthToken);
-    await verifyCaptcha(userEnc, captchaToken);
-
-    if (!(await crypto.hashing().compareHash(password, userEnc.hashedPassword))) {
-      await userDAL.update(
-        { id: userEnc.userId },
-        {
-          $incr: {
-            consecutiveFailedPasswordAttempts: 1
-          }
+      if (!userEnc.hashedPassword) {
+        if (userEnc.authMethods?.includes(AuthMethod.EMAIL)) {
+          throw new BadRequestError({
+            message: "Legacy encryption scheme not supported",
+            name: "LegacyEncryptionScheme"
+          });
         }
-      );
 
-      throw new BadRequestError({ message: "Invalid username or email" });
+        throw new BadRequestError({ message: "No password found" });
+      }
+
+      const { authMethod, organizationId } = getAuthMethodAndOrgId(email, providerAuthToken);
+      await verifyCaptcha(userEnc, captchaToken);
+
+      if (!(await crypto.hashing().compareHash(password, userEnc.hashedPassword))) {
+        await userDAL.update(
+          { id: userEnc.userId },
+          {
+            $incr: {
+              consecutiveFailedPasswordAttempts: 1
+            }
+          }
+        );
+
+        throw new BadRequestError({ message: "Invalid username or email" });
+      }
+
+      const token = await generateUserTokens({
+        user: {
+          ...userEnc,
+          id: userEnc.userId
+        },
+        ip,
+        userAgent,
+        authMethod,
+        organizationId
+      });
+
+      if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
+        authAttemptCounter.add(1, {
+          "infisical.organization.id": organizationId,
+          "infisical.user.email": email,
+          "infisical.user.id": userEnc.userId,
+          "infisical.auth.method": AuthAttemptAuthMethod.EMAIL,
+          "infisical.auth.result": AuthAttemptAuthResult.SUCCESS,
+          "client.address": ip,
+          "user_agent.original": userAgent
+        });
+      }
+
+      if (organizationId) {
+        await auditLogService.createAuditLog({
+          orgId: organizationId,
+          ipAddress: ip,
+          userAgent,
+          userAgentType: getUserAgentType(userAgent),
+          actor: {
+            type: ActorType.USER,
+            metadata: {
+              email: userEnc.email,
+              userId: userEnc.userId,
+              username: userEnc.username,
+              authMethod
+            }
+          },
+          event: {
+            type: EventType.USER_LOGIN,
+            metadata: {
+              organizationId
+            }
+          }
+        });
+      }
+
+      return {
+        tokens: {
+          accessToken: token.access,
+          refreshToken: token.refresh
+        },
+        user: userEnc
+      } as const;
+    } catch (error) {
+      if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
+        authAttemptCounter.add(1, {
+          "infisical.user.email": email,
+          "infisical.auth.method": AuthAttemptAuthMethod.EMAIL,
+          "infisical.auth.result": AuthAttemptAuthResult.FAILURE,
+          "client.address": ip,
+          "user_agent.original": userAgent
+        });
+      }
+
+      throw error;
     }
-
-    const token = await generateUserTokens({
-      user: {
-        ...userEnc,
-        id: userEnc.userId
-      },
-      ip,
-      userAgent,
-      authMethod,
-      organizationId
-    });
-
-    return {
-      tokens: {
-        accessToken: token.access,
-        refreshToken: token.refresh
-      },
-      user: userEnc
-    } as const;
   };
 
   const selectOrganization = async ({
@@ -563,6 +643,18 @@ export const authLoginServiceFactory = ({
         .filter(Boolean) as string[];
 
       if (adminEmails.length > 0) {
+        await notificationService.createUserNotifications(
+          orgAdmins
+            .filter((admin) => admin.user.id !== user.id)
+            .map((admin) => ({
+              userId: admin.user.id,
+              orgId: organizationId,
+              type: NotificationType.ADMIN_SSO_BYPASS,
+              title: "Security Alert: Admin SSO Bypass",
+              body: `The org admin **${user.email}** has bypassed enforced SSO login.`
+            }))
+        );
+
         await smtpService.sendMail({
           recipients: adminEmails,
           subjectLine: "Security Alert: Admin SSO Bypass",
@@ -571,12 +663,36 @@ export const authLoginServiceFactory = ({
             timestamp: new Date().toISOString(),
             ip: ipAddress,
             userAgent,
-            siteUrl: removeTrailingSlash(cfg.SITE_URL || "https://app.infisical.com")
+            siteUrl: removeTrailingSlash(cfg.SITE_URL || "https://app.infisical.com"),
+            orgId: organizationId
           },
           template: SmtpTemplates.OrgAdminBreakglassAccess
         });
       }
     }
+
+    await auditLogService.createAuditLog({
+      orgId: organizationId,
+      ipAddress,
+      userAgent,
+      userAgentType: getUserAgentType(userAgent),
+      actor: {
+        type: ActorType.USER,
+        metadata: {
+          email: user.email,
+          userId: user.id,
+          username: user.username,
+          authMethod: decodedToken.authMethod
+        }
+      },
+      event: {
+        type: EventType.SELECT_ORGANIZATION,
+        metadata: {
+          organizationId,
+          organizationName: selectedOrg.name
+        }
+      }
+    });
 
     return {
       ...tokens,
@@ -658,7 +774,8 @@ export const authLoginServiceFactory = ({
     mfaJwtToken,
     ip,
     userAgent,
-    orgId
+    orgId,
+    isRecoveryCode = false
   }: TVerifyMfaTokenDTO) => {
     const appCfg = getConfig();
     const user = await userDAL.findById(userId);
@@ -672,15 +789,20 @@ export const authLoginServiceFactory = ({
           code: mfaToken
         });
       } else if (mfaMethod === MfaMethod.TOTP) {
-        if (mfaToken.length === 6) {
-          await totpService.verifyUserTotp({
-            userId,
-            totp: mfaToken
-          });
-        } else {
+        if (isRecoveryCode) {
           await totpService.verifyWithUserRecoveryCode({
             userId,
             recoveryCode: mfaToken
+          });
+        } else {
+          if (mfaToken.length !== 6) {
+            throw new BadRequestError({
+              message: "Please use a valid TOTP code."
+            });
+          }
+          await totpService.verifyUserTotp({
+            userId,
+            totp: mfaToken
           });
         }
       }
@@ -826,21 +948,34 @@ export const authLoginServiceFactory = ({
         }
         orgId = defaultOrg.id;
         const [orgMembership] = await orgDAL.findMembership({
-          [`${TableName.OrgMembership}.userId` as "userId"]: user.id,
-          [`${TableName.OrgMembership}.orgId` as "id"]: orgId
+          [`${TableName.Membership}.actorUserId` as "actorUserId"]: user.id,
+          [`${TableName.Membership}.scopeOrgId` as "scopeOrgId"]: orgId,
+          [`${TableName.Membership}.scope` as "scope"]: AccessScope.Organization
         });
 
         if (!orgMembership) {
           const { role, roleId } = await getDefaultOrgMembershipRole(defaultOrg.defaultMembershipRole);
 
-          await orgMembershipDAL.create({
-            userId: user.id,
-            inviteEmail: email,
-            orgId,
-            role,
-            roleId,
-            status: OrgMembershipStatus.Accepted,
-            isActive: true
+          await membershipUserDAL.transaction(async (tx) => {
+            const membership = await membershipUserDAL.create(
+              {
+                actorUserId: user?.id,
+                inviteEmail: email,
+                scopeOrgId: orgId,
+                scope: AccessScope.Organization,
+                status: OrgMembershipStatus.Accepted,
+                isActive: true
+              },
+              tx
+            );
+            await membershipRoleDAL.create(
+              {
+                membershipId: membership.id,
+                role,
+                customRoleId: roleId
+              },
+              tx
+            );
           });
         }
       }
@@ -863,10 +998,11 @@ export const authLoginServiceFactory = ({
       if (org) {
         // checks for the membership and only sets the orgId / orgName if the user is a member of the specified org
         const orgMembership = await orgDAL.findMembership({
-          [`${TableName.OrgMembership}.userId` as "userId"]: user.id,
-          [`${TableName.OrgMembership}.orgId` as "orgId"]: org.id,
-          [`${TableName.OrgMembership}.isActive` as "isActive"]: true,
-          [`${TableName.OrgMembership}.status` as "status"]: OrgMembershipStatus.Accepted
+          [`${TableName.Membership}.actorUserId` as "actorUserId"]: user.id,
+          [`${TableName.Membership}.scopeOrgId` as "scopeOrgId"]: org.id,
+          [`${TableName.Membership}.isActive` as "isActive"]: true,
+          [`${TableName.Membership}.status` as "status"]: OrgMembershipStatus.Accepted,
+          [`${TableName.Membership}.scope` as "scope"]: AccessScope.Organization
         });
 
         if (orgMembership) {
@@ -909,7 +1045,8 @@ export const authLoginServiceFactory = ({
         expiresIn: appCfg.JWT_PROVIDER_AUTH_LIFETIME
       }
     );
-    return { isUserCompleted, providerAuthToken };
+
+    return { isUserCompleted, providerAuthToken, user, orgId, orgName };
   };
 
   /**
@@ -949,6 +1086,33 @@ export const authLoginServiceFactory = ({
       authMethod,
       organizationId
     });
+
+    if (organizationId) {
+      await auditLogService.createAuditLog({
+        orgId: organizationId,
+        ipAddress: ip,
+        userAgent,
+        userAgentType: getUserAgentType(userAgent),
+        actor: {
+          type: ActorType.USER,
+          metadata: {
+            email: userEnc.email,
+            userId: userEnc.userId,
+            username: userEnc.username,
+            authMethod: decodedProviderToken.authMethod
+          }
+        },
+        event: {
+          type: EventType.USER_LOGIN,
+          metadata: {
+            organizationId,
+            ...(isAuthMethodSaml(decodedProviderToken.authMethod) && {
+              authProvider: decodedProviderToken.authMethod
+            })
+          }
+        }
+      });
+    }
 
     return { token, isMfaEnabled: false, user: userEnc, decodedProviderToken } as const;
   };

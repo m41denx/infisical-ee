@@ -23,6 +23,12 @@ import { logger } from "@app/lib/logger";
 import { QueueWorkerProfile } from "@app/lib/types";
 import { CaType } from "@app/services/certificate-authority/certificate-authority-enums";
 import { ExternalPlatforms } from "@app/services/external-migration/external-migration-types";
+import { TCreateUserNotificationDTO } from "@app/services/notification/notification-types";
+import {
+  TQueuePkiSyncImportCertificatesByIdDTO,
+  TQueuePkiSyncRemoveCertificatesByIdDTO,
+  TQueuePkiSyncSyncCertificatesByIdDTO
+} from "@app/services/pki-sync/pki-sync-types";
 import {
   TFailedIntegrationSyncEmailsPayload,
   TIntegrationSyncPayload,
@@ -45,6 +51,8 @@ export enum QueueName {
   AuditLogPrune = "audit-log-prune",
   DailyResourceCleanUp = "daily-resource-cleanup",
   DailyExpiringPkiItemAlert = "daily-expiring-pki-item-alert",
+  DailyPkiAlertV2Processing = "daily-pki-alert-v2-processing",
+  PkiSyncCleanup = "pki-sync-cleanup",
   PkiSubscriber = "pki-subscriber",
   TelemetryInstanceStats = "telemtry-self-hosted-stats",
   IntegrationSync = "sync-integrations",
@@ -53,10 +61,12 @@ export enum QueueName {
   SecretPushEventScan = "secret-push-event-scan",
   UpgradeProjectToGhost = "upgrade-project-to-ghost",
   DynamicSecretRevocation = "dynamic-secret-revocation",
+  DynamicSecretLeaseRevocationFailedEmail = "dynamic-secret-lease-revocation-failed-email",
   CaCrlRotation = "ca-crl-rotation",
   CaLifecycle = "ca-lifecycle", // parent queue to ca-order-certificate-for-subscriber
   SecretReplication = "secret-replication",
   SecretSync = "secret-sync", // parent queue to push integration sync, webhook, and secret replication
+  PkiSync = "pki-sync",
   ProjectV3Migration = "project-v3-migration",
   AccessTokenStatusUpdate = "access-token-status-update",
   ImportSecretsFromExternalSource = "import-secrets-from-external-source",
@@ -67,7 +77,11 @@ export enum QueueName {
   SecretScanningV2 = "secret-scanning-v2",
   TelemetryAggregatedEvents = "telemetry-aggregated-events",
   DailyReminders = "daily-reminders",
-  SecretReminderMigration = "secret-reminder-migration"
+  SecretReminderMigration = "secret-reminder-migration",
+  UserNotification = "user-notification",
+  HealthAlert = "health-alert",
+  CertificateV3AutoRenewal = "certificate-v3-auto-renewal",
+  PamAccountRotation = "pam-account-rotation"
 }
 
 export enum QueueJobs {
@@ -78,6 +92,8 @@ export enum QueueJobs {
   AuditLogPrune = "audit-log-prune-job",
   DailyResourceCleanUp = "daily-resource-cleanup-job",
   DailyExpiringPkiItemAlert = "daily-expiring-pki-item-alert",
+  DailyPkiAlertV2Processing = "daily-pki-alert-v2-processing",
+  PkiSyncCleanup = "pki-sync-cleanup-job",
   SecWebhook = "secret-webhook-trigger",
   TelemetryInstanceStats = "telemetry-self-hosted-stats",
   IntegrationSync = "secret-integration-pull",
@@ -89,6 +105,7 @@ export enum QueueJobs {
   CaCrlRotation = "ca-crl-rotation-job",
   SecretReplication = "secret-replication",
   SecretSync = "secret-sync", // parent queue to push integration sync, webhook, and secret replication
+  PkiSync = "pki-sync",
   ProjectV3Migration = "project-v3-migration",
   IdentityAccessTokenStatusUpdate = "identity-access-token-status-update",
   ServiceTokenStatusUpdate = "service-token-status-update",
@@ -97,10 +114,14 @@ export enum QueueJobs {
   SecretSyncImportSecrets = "secret-sync-import-secrets",
   SecretSyncRemoveSecrets = "secret-sync-remove-secrets",
   SecretSyncSendActionFailedNotifications = "secret-sync-send-action-failed-notifications",
+  PkiSyncSyncCertificates = "pki-sync-sync-certificates",
+  PkiSyncImportCertificates = "pki-sync-import-certificates",
+  PkiSyncRemoveCertificates = "pki-sync-remove-certificates",
   SecretRotationV2QueueRotations = "secret-rotation-v2-queue-rotations",
   SecretRotationV2RotateSecrets = "secret-rotation-v2-rotate-secrets",
   SecretRotationV2SendNotification = "secret-rotation-v2-send-notification",
   CreateFolderTreeCheckpoint = "create-folder-tree-checkpoint",
+  DynamicSecretLeaseRevocationFailedEmail = "dynamic-secret-lease-revocation-failed-email",
   InvalidateCache = "invalidate-cache",
   SecretScanningV2FullScan = "secret-scanning-v2-full-scan",
   SecretScanningV2DiffScan = "secret-scanning-v2-diff-scan",
@@ -109,7 +130,11 @@ export enum QueueJobs {
   PkiSubscriberDailyAutoRenewal = "pki-subscriber-daily-auto-renewal",
   TelemetryAggregatedEvents = "telemetry-aggregated-events",
   DailyReminders = "daily-reminders",
-  SecretReminderMigration = "secret-reminder-migration"
+  SecretReminderMigration = "secret-reminder-migration",
+  UserNotification = "user-notification-job",
+  HealthAlert = "health-alert",
+  CertificateV3DailyAutoRenewal = "certificate-v3-daily-auto-renewal",
+  PamAccountRotation = "pam-account-rotation"
 }
 
 export type TQueueJobTypes = {
@@ -136,6 +161,14 @@ export type TQueueJobTypes = {
   };
   [QueueName.DailyExpiringPkiItemAlert]: {
     name: QueueJobs.DailyExpiringPkiItemAlert;
+    payload: undefined;
+  };
+  [QueueName.DailyPkiAlertV2Processing]: {
+    name: QueueJobs.DailyPkiAlertV2Processing;
+    payload: undefined;
+  };
+  [QueueName.PkiSyncCleanup]: {
+    name: QueueJobs.PkiSyncCleanup;
     payload: undefined;
   };
   [QueueName.AuditLogPrune]: {
@@ -188,11 +221,19 @@ export type TQueueJobTypes = {
     name: QueueJobs.TelemetryInstanceStats;
     payload: undefined;
   };
+  [QueueName.DynamicSecretLeaseRevocationFailedEmail]: {
+    name: QueueJobs.DynamicSecretLeaseRevocationFailedEmail;
+    payload: {
+      leaseId: string;
+    };
+  };
   [QueueName.DynamicSecretRevocation]:
     | {
         name: QueueJobs.DynamicSecretRevocation;
         payload: {
+          isRetry?: boolean;
           leaseId: string;
+          dynamicSecretId: string;
         };
       }
     | {
@@ -215,6 +256,19 @@ export type TQueueJobTypes = {
     name: QueueJobs.SecretSync;
     payload: TSyncSecretsDTO;
   };
+  [QueueName.PkiSync]:
+    | {
+        name: QueueJobs.PkiSyncSyncCertificates;
+        payload: TQueuePkiSyncSyncCertificatesByIdDTO;
+      }
+    | {
+        name: QueueJobs.PkiSyncImportCertificates;
+        payload: TQueuePkiSyncImportCertificatesByIdDTO;
+      }
+    | {
+        name: QueueJobs.PkiSyncRemoveCertificates;
+        payload: TQueuePkiSyncRemoveCertificatesByIdDTO;
+      };
   [QueueName.ProjectV3Migration]: {
     name: QueueJobs.ProjectV3Migration;
     payload: { projectId: string };
@@ -228,6 +282,8 @@ export type TQueueJobTypes = {
   [QueueName.ImportSecretsFromExternalSource]: {
     name: QueueJobs.ImportSecretsFromExternalSource;
     payload: {
+      orgId: string;
+      actorId: string;
       actorEmail: string;
       importType: ExternalPlatforms;
       data: {
@@ -311,6 +367,22 @@ export type TQueueJobTypes = {
   };
   [QueueName.TelemetryAggregatedEvents]: {
     name: QueueJobs.TelemetryAggregatedEvents;
+    payload: undefined;
+  };
+  [QueueName.UserNotification]: {
+    name: QueueJobs.UserNotification;
+    payload: { notifications: TCreateUserNotificationDTO[] };
+  };
+  [QueueName.HealthAlert]: {
+    name: QueueJobs.HealthAlert;
+    payload: undefined;
+  };
+  [QueueName.CertificateV3AutoRenewal]: {
+    name: QueueJobs.CertificateV3DailyAutoRenewal;
+    payload: undefined;
+  };
+  [QueueName.PamAccountRotation]: {
+    name: QueueJobs.PamAccountRotation;
     payload: undefined;
   };
 };

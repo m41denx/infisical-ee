@@ -4,11 +4,10 @@ import ms from "ms";
 import { z } from "zod";
 
 import { TtlFormLabel } from "@app/components/features";
-import { createNotification } from "@app/components/notifications";
 import { Button, FilterableSelect, FormControl, Input } from "@app/components/v2";
 import { useCreateDynamicSecret } from "@app/hooks/api";
 import { DynamicSecretProviders } from "@app/hooks/api/dynamicSecret/types";
-import { WorkspaceEnv } from "@app/hooks/api/types";
+import { ProjectEnv } from "@app/hooks/api/types";
 
 const validateTTL = (val: string, ctx: z.RefinementCtx) => {
   if (!val) return;
@@ -49,7 +48,7 @@ type Props = {
   onCancel: () => void;
   secretPath: string;
   projectSlug: string;
-  environments: WorkspaceEnv[];
+  environments: ProjectEnv[];
   isSingleEnvironmentMode?: boolean;
 };
 
@@ -83,28 +82,21 @@ export const GcpIamInputForm = ({
   }: TForm) => {
     // wait till previous request is finished
     if (createDynamicSecret.isPending) return;
-    try {
-      await createDynamicSecret.mutateAsync({
-        provider: {
-          type: DynamicSecretProviders.GcpIam,
-          inputs: {
-            ...provider
-          }
-        },
-        maxTTL,
-        name,
-        path: secretPath,
-        defaultTTL,
-        projectSlug,
-        environmentSlug: environment.slug
-      });
-      onCompleted();
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to create dynamic secret"
-      });
-    }
+    await createDynamicSecret.mutateAsync({
+      provider: {
+        type: DynamicSecretProviders.GcpIam,
+        inputs: {
+          ...provider
+        }
+      },
+      maxTTL,
+      name,
+      path: secretPath,
+      defaultTTL,
+      projectSlug,
+      environmentSlug: environment.slug
+    });
+    onCompleted();
   };
 
   return (
@@ -112,7 +104,7 @@ export const GcpIamInputForm = ({
       <form onSubmit={handleSubmit(handleCreateDynamicSecret)} autoComplete="off">
         <div>
           <div className="flex items-center space-x-2">
-            <div className="flex-grow">
+            <div className="grow">
               <Controller
                 control={control}
                 defaultValue=""
@@ -162,7 +154,7 @@ export const GcpIamInputForm = ({
             </div>
           </div>
           <div>
-            <div className="mb-4 mt-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
+            <div className="mt-4 mb-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
               Configuration
             </div>
 
@@ -174,7 +166,7 @@ export const GcpIamInputForm = ({
                 render={({ field, fieldState: { error } }) => (
                   <FormControl
                     label="Service Account Email"
-                    className="flex-grow"
+                    className="grow"
                     isError={Boolean(error?.message)}
                     errorText={error?.message}
                     helperText={

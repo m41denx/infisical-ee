@@ -2,30 +2,32 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
 
-import { workspaceKeys } from "@app/hooks/api";
+import { projectKeys } from "@app/hooks/api";
 import { TIntegration } from "@app/hooks/api/integrations/types";
+import { fetchWorkspaceIntegrations } from "@app/hooks/api/projects/queries";
 import {
   fetchSecretSyncsByProjectId,
   SecretSync,
   secretSyncKeys,
   TSecretSync
 } from "@app/hooks/api/secretSyncs";
-import { fetchWorkspaceIntegrations } from "@app/hooks/api/workspace/queries";
 import { IntegrationsListPageTabs } from "@app/types/integrations";
 
 import { IntegrationsListPage } from "./IntegrationsListPage";
 
 const IntegrationsListPageQuerySchema = z.object({
   selectedTab: z.nativeEnum(IntegrationsListPageTabs).optional(),
-  addSync: z.nativeEnum(SecretSync).optional()
+  addSync: z.nativeEnum(SecretSync).optional(),
+  connectionId: z.string().optional(),
+  connectionName: z.string().optional()
 });
 
 export const Route = createFileRoute(
-  "/_authenticate/_inject-org-details/_org-layout/projects/secret-management/$projectId/_secret-manager-layout/integrations/"
+  "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects/secret-management/$projectId/_secret-manager-layout/integrations/"
 )({
   component: IntegrationsListPage,
   validateSearch: zodValidator(IntegrationsListPageQuerySchema),
-  beforeLoad: async ({ context, search, params: { projectId } }) => {
+  beforeLoad: async ({ context, search, params: { projectId, orgId } }) => {
     if (!search.selectedTab) {
       let secretSyncs: TSecretSync[];
 
@@ -36,20 +38,16 @@ export const Route = createFileRoute(
         });
       } catch {
         throw redirect({
-          to: "/projects/secret-management/$projectId/integrations",
-          params: {
-            projectId
-          },
+          to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
+          params: { orgId, projectId },
           search: { selectedTab: IntegrationsListPageTabs.NativeIntegrations }
         });
       }
 
       if (secretSyncs.length) {
         throw redirect({
-          to: "/projects/secret-management/$projectId/integrations",
-          params: {
-            projectId
-          },
+          to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
+          params: { orgId, projectId },
           search: { selectedTab: IntegrationsListPageTabs.SecretSyncs }
         });
       }
@@ -57,13 +55,14 @@ export const Route = createFileRoute(
       let integrations: TIntegration[];
       try {
         integrations = await context.queryClient.ensureQueryData({
-          queryKey: workspaceKeys.getWorkspaceIntegrations(projectId),
+          queryKey: projectKeys.getProjectIntegrations(projectId),
           queryFn: () => fetchWorkspaceIntegrations(projectId)
         });
       } catch {
         throw redirect({
-          to: "/projects/secret-management/$projectId/integrations",
+          to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
           params: {
+            orgId,
             projectId
           },
           search: { selectedTab: IntegrationsListPageTabs.SecretSyncs }
@@ -72,8 +71,9 @@ export const Route = createFileRoute(
 
       if (integrations.length) {
         throw redirect({
-          to: "/projects/secret-management/$projectId/integrations",
+          to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
           params: {
+            orgId,
             projectId
           },
           search: { selectedTab: IntegrationsListPageTabs.NativeIntegrations }
@@ -81,8 +81,9 @@ export const Route = createFileRoute(
       }
 
       throw redirect({
-        to: "/projects/secret-management/$projectId/integrations",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
         params: {
+          orgId,
           projectId
         },
         search: { selectedTab: IntegrationsListPageTabs.SecretSyncs }

@@ -22,9 +22,18 @@ export type TOfflineLicense = {
   features: TFeatureSet;
 };
 
+export type TPlanBillingInfo = {
+  currentPeriodStart: number;
+  currentPeriodEnd: number;
+  interval: "month" | "year";
+  intervalCount: number;
+  amount: number;
+  quantity: number;
+};
+
 export type TFeatureSet = {
   _id: null;
-  slug: null;
+  slug: string | null;
   tier: -1;
   workspaceLimit: null;
   workspacesUsed: number;
@@ -33,6 +42,7 @@ export type TFeatureSet = {
   membersUsed: number;
   identityLimit: null;
   identitiesUsed: number;
+  subOrganization: false;
   environmentLimit: null;
   environmentsUsed: 0;
   secretVersioning: true;
@@ -68,6 +78,7 @@ export type TFeatureSet = {
     secretsLimit: number;
   };
   pkiEst: boolean;
+  pkiAcme: false;
   enforceMfa: boolean;
   projectTemplates: false;
   kmip: false;
@@ -75,10 +86,13 @@ export type TFeatureSet = {
   sshHostGroups: false;
   secretScanning: false;
   enterpriseSecretSyncs: false;
+  enterpriseCertificateSyncs: false;
   enterpriseAppConnections: false;
   machineIdentityAuthTemplates: false;
+  pkiLegacyTemplates: false;
   fips: false;
   eventSubscriptions: false;
+  pam: false;
 };
 
 export type TOrgPlansTableDTO = {
@@ -87,6 +101,7 @@ export type TOrgPlansTableDTO = {
 
 export type TOrgPlanDTO = {
   projectId?: string;
+  refreshCache?: boolean;
 } & TOrgPermission;
 
 export type TStartOrgTrialDTO = {
@@ -121,3 +136,18 @@ export type TDelOrgTaxIdDTO = TOrgPermission & { taxId: string };
 export type TOrgInvoiceDTO = TOrgPermission;
 
 export type TOrgLicensesDTO = TOrgPermission;
+
+export enum LicenseType {
+  Offline = "offline",
+  Online = "online"
+}
+
+export type TLicenseKeyConfig =
+  | {
+      isValid: false;
+    }
+  | {
+      isValid: true;
+      licenseKey: string;
+      type: LicenseType;
+    };

@@ -35,25 +35,17 @@ export const CompanyNameSection = () => {
   }, [data]);
 
   const onFormSubmit = async ({ name }: { name: string }) => {
-    try {
-      if (!currentOrg?.id) return;
-      if (name === "") return;
-      await mutateAsync({
-        name,
-        organizationId: currentOrg.id
-      });
+    if (!currentOrg?.id) return;
+    if (name === "") return;
+    await mutateAsync({
+      name,
+      organizationId: currentOrg.id
+    });
 
-      createNotification({
-        text: "Successfully updated business name",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to update business name",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully updated business name",
+      type: "success"
+    });
   };
 
   return (
@@ -61,7 +53,7 @@ export const CompanyNameSection = () => {
       onSubmit={handleSubmit(onFormSubmit)}
       className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4"
     >
-      <h2 className="mb-8 flex-1 text-xl font-semibold text-mineshaft-100">Business name</h2>
+      <h2 className="mb-8 flex-1 text-xl font-medium text-mineshaft-100">Business name</h2>
       <div className="max-w-md">
         <Controller
           defaultValue=""

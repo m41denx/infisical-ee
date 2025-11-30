@@ -9,9 +9,9 @@ import { useOrganization } from "@app/context";
 import {
   useAddUserToWsNonE2EE,
   useGetOrgMembershipProjectMemberships,
-  useGetUserWorkspaces
+  useGetUserProjects
 } from "@app/hooks/api";
-import { ProjectVersion } from "@app/hooks/api/workspace/types";
+import { ProjectVersion } from "@app/hooks/api/projects/types";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 const schema = z
@@ -34,7 +34,7 @@ type Props = {
 const UserAddToProjectModalChild = ({ membershipId, popUp, handlePopUpToggle }: Props) => {
   const { currentOrg } = useOrganization();
   const orgId = currentOrg?.id || "";
-  const { data: workspaces = [] } = useGetUserWorkspaces();
+  const { data: workspaces = [] } = useGetUserProjects();
 
   const { mutateAsync: addUserToWorkspaceNonE2EE } = useAddUserToWsNonE2EE();
 
@@ -67,30 +67,19 @@ const UserAddToProjectModalChild = ({ membershipId, popUp, handlePopUpToggle }: 
   }, [workspaces, projectMemberships]);
 
   const onFormSubmit = async ({ projectId }: FormData) => {
-    try {
-      await addUserToWorkspaceNonE2EE({
-        projectId,
-        usernames: [popupData.username],
-        orgId
-      });
+    await addUserToWorkspaceNonE2EE({
+      projectId,
+      usernames: [popupData.username],
+      orgId
+    });
 
-      createNotification({
-        text: "Successfully added user to project",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully added user to project",
+      type: "success"
+    });
 
-      reset();
-      handlePopUpToggle("addUserToProject", false);
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to add identity to project";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    reset();
+    handlePopUpToggle("addUserToProject", false);
   };
 
   return (

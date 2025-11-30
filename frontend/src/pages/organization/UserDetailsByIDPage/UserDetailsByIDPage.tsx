@@ -1,6 +1,8 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { faChevronLeft } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { twMerge } from "tailwind-merge";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
@@ -44,7 +46,7 @@ const Page = withPermission(
     });
     const membershipId = search.membershipId as string;
     const { user } = useUser();
-    const { currentOrg } = useOrganization();
+    const { currentOrg, isSubOrganization } = useOrganization();
 
     const userId = user?.id || "";
     const orgId = currentOrg?.id || "";
@@ -62,68 +64,67 @@ const Page = withPermission(
     ] as const);
 
     const onDeactivateMemberSubmit = async (orgMembershipId: string) => {
-      try {
-        await updateOrgMembership({
-          organizationId: orgId,
-          membershipId: orgMembershipId,
-          isActive: false
-        });
+      await updateOrgMembership({
+        organizationId: orgId,
+        membershipId: orgMembershipId,
+        isActive: false
+      });
 
-        createNotification({
-          text: "Successfully deactivated user in organization",
-          type: "success"
-        });
-      } catch (err) {
-        console.error(err);
-        createNotification({
-          text: "Failed to deactivate user in organization",
-          type: "error"
-        });
-      }
+      createNotification({
+        text: "Successfully deactivated user in organization",
+        type: "success"
+      });
 
       handlePopUpClose("deactivateMember");
     };
 
     const onRemoveMemberSubmit = async (orgMembershipId: string) => {
-      try {
-        await deleteOrgMembership({
-          orgId,
-          membershipId: orgMembershipId
-        });
+      await deleteOrgMembership({
+        orgId,
+        membershipId: orgMembershipId
+      });
 
-        createNotification({
-          text: "Successfully removed user from org",
-          type: "success"
-        });
-
-        handlePopUpClose("removeMember");
-        navigate({
-          to: "/organization/access-management" as const,
-          search: {
-            selectedTab: OrgAccessControlTabSections.Member
-          }
-        });
-      } catch (err) {
-        console.error(err);
-        createNotification({
-          text: "Failed to remove user from the organization",
-          type: "error"
-        });
-      }
+      createNotification({
+        text: "Successfully removed user from org",
+        type: "success"
+      });
 
       handlePopUpClose("removeMember");
+      navigate({
+        to: "/organizations/$orgId/access-management" as const,
+        params: { orgId },
+        search: {
+          selectedTab: OrgAccessControlTabSections.Member
+        }
+      });
     };
 
     return (
-      <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+      <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
         {membership && (
-          <div className="mx-auto mb-6 w-full max-w-7xl">
+          <div className="mx-auto w-full max-w-8xl">
+            <Link
+              to="/organizations/$orgId/access-management"
+              params={{ orgId }}
+              search={{
+                selectedTab: OrgAccessControlTabSections.Member
+              }}
+              className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+            >
+              <FontAwesomeIcon icon={faChevronLeft} />
+              Organization Users
+            </Link>
             <PageHeader
+              scope={isSubOrganization ? "namespace" : "org"}
               title={
                 membership.user.firstName || membership.user.lastName
                   ? `${membership.user.firstName} ${membership.user.lastName ?? ""}`.trim()
-                  : "-"
+                  : (membership.user.username ??
+                    membership.user.email ??
+                    membership.inviteEmail ??
+                    "Unknown User")
               }
+              description={`${isSubOrganization ? "Sub-" : ""}Organization User Membership`}
             >
               <div>
                 {userId !== membership.user.id && (
@@ -170,7 +171,7 @@ const Page = withPermission(
                               membership.isActive
                                 ? twMerge(
                                     isAllowed
-                                      ? "hover:!bg-red-500 hover:!text-white"
+                                      ? "hover:bg-red-500! hover:text-white!"
                                       : "pointer-events-none cursor-not-allowed opacity-50"
                                   )
                                 : ""
@@ -215,7 +216,7 @@ const Page = withPermission(
                           <DropdownMenuItem
                             className={twMerge(
                               isAllowed
-                                ? "hover:!bg-red-500 hover:!text-white"
+                                ? "hover:bg-red-500! hover:text-white!"
                                 : "pointer-events-none cursor-not-allowed opacity-50"
                             )}
                             onClick={() => {
@@ -243,8 +244,8 @@ const Page = withPermission(
                 )}
               </div>
             </PageHeader>
-            <div className="flex">
-              <div className="mr-4 w-96">
+            <div className="flex flex-col gap-4 md:flex-row">
+              <div className="w-full md:w-96">
                 <UserDetailsSection membershipId={membershipId} handlePopUpOpen={handlePopUpOpen} />
               </div>
               <div className="w-full space-y-2">
@@ -288,7 +289,7 @@ const Page = withPermission(
         <UpgradePlanModal
           isOpen={popUp.upgradePlan.isOpen}
           onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-          text={(popUp.upgradePlan?.data as { description: string })?.description}
+          text={popUp.upgradePlan?.data?.text}
         />
         <UserOrgMembershipModal
           popUp={popUp}

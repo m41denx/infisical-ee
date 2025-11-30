@@ -11,7 +11,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { Button, Card, CardTitle, FormControl, TextArea } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { localStorageService } from "@app/helpers/localStorage";
 import { useGetCloudIntegrations, useSaveIntegrationAccessToken } from "@app/hooks/api";
 
@@ -25,13 +25,13 @@ type FormData = z.infer<typeof schema>;
 
 export const GcpSecretManagerAuthorizePage = () => {
   const navigate = useNavigate();
-
+  const { currentOrg } = useOrganization();
   const { control, handleSubmit } = useForm<FormData>({
     resolver: zodResolver(schema)
   });
 
   const { data: cloudIntegrations } = useGetCloudIntegrations();
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   const { mutateAsync } = useSaveIntegrationAccessToken();
 
@@ -47,7 +47,7 @@ export const GcpSecretManagerAuthorizePage = () => {
 
     const state = crypto.randomBytes(16).toString("hex");
     localStorage.setItem("latestCSRFToken", state);
-    localStorageService.setIntegrationProjectId(currentWorkspace.id);
+    localStorageService.setIntegrationProjectId(currentProject.id);
 
     if (!integrationOption.clientId) {
       createIntegrationMissingEnvVarsNotification(integrationOption.slug);
@@ -63,16 +63,17 @@ export const GcpSecretManagerAuthorizePage = () => {
       setIsLoading(true);
 
       const integrationAuth = await mutateAsync({
-        workspaceId: currentWorkspace.id,
+        workspaceId: currentProject.id,
         integration: "gcp-secret-manager",
         refreshToken: accessToken
       });
 
       setIsLoading(false);
       navigate({
-        to: "/projects/secret-management/$projectId/integrations/gcp-secret-manager/create",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/integrations/gcp-secret-manager/create",
         params: {
-          projectId: currentWorkspace.id
+          orgId: currentOrg.id,
+          projectId: currentProject.id
         },
         search: {
           integrationAuthId: integrationAuth.id
@@ -109,12 +110,12 @@ export const GcpSecretManagerAuthorizePage = () => {
               rel="noopener noreferrer"
               href="https://infisical.com/docs/integrations/cloud/gcp-secret-manager"
             >
-              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pb-[0.03rem] pt-[0.04rem] text-sm text-yellow opacity-80 hover:opacity-100">
+              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pt-[0.04rem] pb-[0.03rem] text-sm text-yellow opacity-80 hover:opacity-100">
                 <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
                 Docs
                 <FontAwesomeIcon
                   icon={faArrowUpRightFromSquare}
-                  className="mb-[0.07rem] ml-1.5 text-xxs"
+                  className="text-xxs mb-[0.07rem] ml-1.5"
                 />
               </div>
             </a>

@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Link } from "@tanstack/react-router";
 import { twMerge } from "tailwind-merge";
 
+import { useOrganization } from "@app/context";
 import { useTimedReset } from "@app/hooks";
 
 import { createNotification } from "../notifications";
@@ -23,6 +24,7 @@ export const SecretDashboardPathBreadcrumb = ({
   projectId,
   disableCopy
 }: Props) => {
+  const { currentOrg } = useOrganization();
   const [, isCopying, setIsCopying] = useTimedReset({
     initialState: false
   });
@@ -57,7 +59,7 @@ export const SecretDashboardPathBreadcrumb = ({
                   type: "info"
                 });
               }}
-              className="opacity-0 transition duration-75 hover:bg-bunker-100/10 group-hover:opacity-100"
+              className="opacity-0 transition duration-75 group-hover:opacity-100 hover:bg-bunker-100/10"
             >
               <FontAwesomeIcon
                 icon={!isCopying ? faCopy : faCheck}
@@ -69,8 +71,9 @@ export const SecretDashboardPathBreadcrumb = ({
         </div>
       ) : (
         <Link
-          to="/projects/secret-management/$projectId/secrets/$envSlug"
+          to="/organizations/$orgId/projects/secret-management/$projectId/secrets/$envSlug"
           params={{
+            orgId: currentOrg.id,
             projectId,
             envSlug: environmentSlug
           }}

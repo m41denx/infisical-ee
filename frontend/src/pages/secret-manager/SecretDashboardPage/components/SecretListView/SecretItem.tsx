@@ -27,8 +27,8 @@ import { InfisicalSecretInput } from "@app/components/v2/InfisicalSecretInput";
 import {
   ProjectPermissionActions,
   ProjectPermissionSub,
-  useProjectPermission,
-  useWorkspace
+  useProject,
+  useProjectPermission
 } from "@app/context";
 import { usePopUp, useToggle } from "@app/hooks";
 import { SecretV3RawSanitized } from "@app/hooks/api/secrets/types";
@@ -43,10 +43,13 @@ import { twMerge } from "tailwind-merge";
 import { ProjectPermissionSecretActions } from "@app/context/ProjectPermissionContext/types";
 import { hasSecretReadValueOrDescribePermission } from "@app/lib/fn/permission";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEyeSlash, faKey, faRotate } from "@fortawesome/free-solid-svg-icons";
+import { faEyeSlash, faKey, faRotate, faWarning } from "@fortawesome/free-solid-svg-icons";
 import { PendingAction } from "@app/hooks/api/secretFolders/types";
 import { format } from "date-fns";
 import { CreateReminderForm } from "@app/pages/secret-manager/SecretDashboardPage/components/SecretListView/CreateReminderForm";
+import { useGetSecretValue } from "@app/hooks/api/dashboard/queries";
+import { createNotification } from "@app/components/notifications";
+import { DashboardSecretValue } from "@app/hooks/api/dashboard/types";
 import {
   FontAwesomeSpriteName,
   formSchema,
@@ -56,11 +59,11 @@ import {
 import { CollapsibleSecretImports } from "./CollapsibleSecretImports";
 import { useBatchModeActions } from "../../SecretMainPage.store";
 
-export const HIDDEN_SECRET_VALUE = "*****************************";
+export const HIDDEN_SECRET_VALUE = "*************************";
 export const HIDDEN_SECRET_VALUE_API_MASK = "<hidden-by-infisical>";
 
 type Props = {
-  secret: SecretV3RawSanitized;
+  secret: SecretV3RawSanitized & { originalKey?: string };
   onSaveSecret: (
     orgSec: SecretV3RawSanitized,
     modSec: Omit<SecretV3RawSanitized, "tags"> & { tags?: { id: string }[] },
@@ -72,7 +75,7 @@ type Props = {
   isSelected?: boolean;
   onToggleSecretSelect: (secret: SecretV3RawSanitized) => void;
   tags: WsTag[];
-  onCreateTag: () => void;
+  onCreateTag: (secret?: SecretV3RawSanitized) => void;
   environment: string;
   secretPath: string;
   onShareSecret: (sec: SecretV3RawSanitized) => void;
@@ -91,7 +94,7 @@ type Props = {
 
 export const SecretItem = memo(
   ({
-    secret,
+    secret: originalSecret,
     onSaveSecret,
     onDeleteSecret,
     onDetailViewSecret,
@@ -112,17 +115,51 @@ export const SecretItem = memo(
       "editSecret",
       "reminder"
     ] as const);
-    const { currentWorkspace } = useWorkspace();
+    const { currentProject } = useProject();
     const { permission } = useProjectPermission();
-    const { isRotatedSecret } = secret;
     const { removePendingChange } = useBatchModeActions();
+
+    const [isFieldFocused, setIsFieldFocused] = useToggle();
+
+    const canFetchSecretValue =
+      !originalSecret.secretValueHidden &&
+      !originalSecret.isEmpty &&
+      pendingAction !== PendingAction.Create;
+
+    const fetchSecretValueParams = {
+      environment,
+      secretPath,
+      secretKey: originalSecret.originalKey || originalSecret.key,
+      projectId: currentProject.id,
+      isOverride: Boolean(originalSecret.idOverride)
+    };
+
+    const {
+      data: secretValueData,
+      isPending: isPendingSecretValueData,
+      isError: isErrorFetchingSecretValue,
+      refetch: refetchSecretValueData
+    } = useGetSecretValue(fetchSecretValueParams, {
+      enabled: canFetchSecretValue && (isVisible || isFieldFocused)
+    });
+
+    const isLoadingSecretValue = canFetchSecretValue && isPendingSecretValueData;
+    const hasFetchedSecretValue = !canFetchSecretValue || Boolean(secretValueData);
+
+    const secret = {
+      ...originalSecret,
+      value: originalSecret.value ?? secretValueData?.value,
+      valueOverride: originalSecret.valueOverride ?? secretValueData?.valueOverride
+    };
+
+    const { isRotatedSecret } = secret;
 
     const autoSaveTimeoutRef = useRef<NodeJS.Timeout>();
     const isAutoSavingRef = useRef(false);
 
     const handleDeletePending = (pendingSecret: SecretV3RawSanitized) => {
       removePendingChange(pendingSecret.id, "secret", {
-        workspaceId: currentWorkspace.id,
+        projectId: currentProject.id,
         environment,
         secretPath
       });
@@ -139,10 +176,27 @@ export const SecretItem = memo(
     );
 
     const getDefaultValue = () => {
+      if (isLoadingSecretValue) return undefined;
+
       if (secret.secretValueHidden && !isPending) {
         return canEditSecretValue ? HIDDEN_SECRET_VALUE : "";
       }
-      return secret.valueOverride || secret.value || "";
+
+      if (isErrorFetchingSecretValue) return undefined;
+
+      return secret.value || "";
+    };
+
+    const getOverrideDefaultValue = () => {
+      if (isLoadingSecretValue) return undefined;
+
+      if (secret.secretValueHidden && !isPending) {
+        return canEditSecretValue ? HIDDEN_SECRET_VALUE : "";
+      }
+
+      if (isErrorFetchingSecretValue) return undefined;
+
+      return secret.valueOverride || "";
     };
 
     const {
@@ -152,16 +206,18 @@ export const SecretItem = memo(
       watch,
       setValue,
       reset,
-      getValues,
       trigger,
-      formState: { isDirty, isSubmitting, errors }
+      formState: { isDirty, isSubmitting, errors },
+      getFieldState
     } = useForm<TFormSchema>({
       defaultValues: {
         ...secret,
+        valueOverride: getOverrideDefaultValue(),
         value: getDefaultValue()
       },
       values: {
         ...secret,
+        valueOverride: getOverrideDefaultValue(),
         value: getDefaultValue()
       },
       resolver: zodResolver(formSchema)
@@ -255,7 +311,10 @@ export const SecretItem = memo(
       );
 
     const isReadOnlySecret =
-      isReadOnly || isRotatedSecret || (isPending && pendingAction === PendingAction.Delete);
+      isReadOnly ||
+      isRotatedSecret ||
+      (isPending && pendingAction === PendingAction.Delete) ||
+      isLoadingSecretValue;
 
     const { secretValueHidden } = secret;
 
@@ -322,13 +381,25 @@ export const SecretItem = memo(
       }
     };
 
-    const copyTokenToClipboard = () => {
-      const [overrideValue, value] = getValues(["value", "valueOverride"]);
-      if (isOverridden) {
-        navigator.clipboard.writeText(value as string);
-      } else {
-        navigator.clipboard.writeText(overrideValue as string);
+    const fetchValue = async (): Promise<DashboardSecretValue | undefined> => {
+      const { data, isRefetchError } = await refetchSecretValueData();
+      if (isRefetchError) {
+        createNotification({
+          type: "error",
+          text: "Failed to fetch secret value"
+        });
       }
+      if (!data) return undefined;
+
+      return data;
+    };
+
+    const copyTokenToClipboard = async () => {
+      const data = await fetchValue();
+      if (!data) return;
+
+      navigator.clipboard.writeText(data.valueOverride ?? data.value);
+
       setIsSecValueCopied.on();
     };
 
@@ -361,7 +432,7 @@ export const SecretItem = memo(
                   <FontAwesomeIcon
                     icon={faRotate}
                     size="xs"
-                    className="absolute -bottom-[0.05rem] -right-[0.2rem] text-mineshaft-400"
+                    className="absolute -right-[0.2rem] -bottom-[0.05rem] text-mineshaft-400"
                   />
                 </div>
               ) : (
@@ -374,18 +445,15 @@ export const SecretItem = memo(
                   />
                   <FontAwesomeSymbol
                     className={twMerge(
-                      "ml-3 block h-3.5 w-3.5 group-hover:hidden",
-                      isSelected && "hidden"
+                      "ml-3 block h-3.5 w-3.5 group-hover:!hidden",
+                      isSelected && "!hidden"
                     )}
                     symbolName={FontAwesomeSpriteName.SecretKey}
                   />
                 </>
               )}
             </div>
-            <div
-              className="flex h-11 flex-shrink-0 items-center px-4 py-2"
-              style={{ width: colWidth }}
-            >
+            <div className="flex h-11 shrink-0 items-center px-4 py-2" style={{ width: colWidth }}>
               <Controller
                 name="key"
                 control={control}
@@ -393,12 +461,36 @@ export const SecretItem = memo(
                   <Input
                     autoComplete="off"
                     isReadOnly={isReadOnly || isRotatedSecret}
-                    autoCapitalization={currentWorkspace?.autoCapitalization}
+                    autoCapitalization={currentProject?.autoCapitalization}
                     variant="plain"
                     isDisabled={isOverridden}
                     placeholder={error?.message}
                     isError={Boolean(error)}
                     onKeyUp={() => trigger("key")}
+                    warning={
+                      field?.value !== (originalSecret.originalKey || originalSecret.key) &&
+                      field.value?.includes(" ") ? (
+                        <Tooltip
+                          className="w-full max-w-72"
+                          content={
+                            <div>
+                              Secret key contains whitespaces.
+                              <br />
+                              <br /> If this is the desired format, you need to provide it as{" "}
+                              <code className="rounded-md bg-mineshaft-500 px-1 py-0.5">
+                                {encodeURIComponent(field.value.trim())}
+                              </code>{" "}
+                              when making API requests.
+                            </div>
+                          }
+                        >
+                          <FontAwesomeIcon
+                            icon={faWarning}
+                            className="text-yellow-600 opacity-60"
+                          />
+                        </Tooltip>
+                      ) : undefined
+                    }
                     {...field}
                     className="w-full px-0 placeholder:text-red-500 focus:text-bunker-100 focus:ring-transparent"
                   />
@@ -406,11 +498,11 @@ export const SecretItem = memo(
               />
             </div>
             <div
-              className="flex w-80 flex-grow items-center border-x border-mineshaft-600 py-1 pl-4 pr-2"
+              className="flex w-80 grow items-center border-x border-mineshaft-600 py-1 pr-2 pl-4"
               tabIndex={0}
               role="button"
             >
-              {secretValueHidden && !isOverridden && !isPending && (
+              {secretValueHidden && !getFieldState("value").isDirty && (
                 <Tooltip
                   content={`You do not have access to view the current value${canEditSecretValue && !isRotatedSecret ? ", but you can set a new one" : "."}`}
                 >
@@ -424,10 +516,18 @@ export const SecretItem = memo(
                   control={control}
                   render={({ field }) => (
                     <SecretInput
+                      isLoadingValue={isLoadingSecretValue && Boolean(secret.idOverride)}
+                      isErrorLoadingValue={isErrorFetchingSecretValue}
                       key="value-overriden"
                       isVisible={isVisible}
-                      isReadOnly={isReadOnly}
                       {...field}
+                      onFocus={() => {
+                        if (secret.idOverride) setIsFieldFocused.on();
+                      }}
+                      onBlur={() => {
+                        setIsFieldFocused.off();
+                        field.onBlur();
+                      }}
                       containerClassName="py-1.5 rounded-md transition-all"
                     />
                   )}
@@ -439,6 +539,8 @@ export const SecretItem = memo(
                   control={control}
                   render={({ field }) => (
                     <InfisicalSecretInput
+                      isLoadingValue={isLoadingSecretValue}
+                      isErrorLoadingValue={isErrorFetchingSecretValue}
                       isReadOnly={isReadOnlySecret}
                       key="secret-value"
                       isVisible={isVisible && (!secretValueHidden || isPending)}
@@ -446,6 +548,13 @@ export const SecretItem = memo(
                       environment={environment}
                       secretPath={secretPath}
                       {...field}
+                      onFocus={() => {
+                        setIsFieldFocused.on();
+                      }}
+                      onBlur={() => {
+                        setIsFieldFocused.off();
+                        field.onBlur();
+                      }}
                       defaultValue={
                         secretValueHidden && !isPending ? HIDDEN_SECRET_VALUE : undefined
                       }
@@ -457,7 +566,7 @@ export const SecretItem = memo(
               {pendingAction !== PendingAction.Create && pendingAction !== PendingAction.Delete && (
                 <div
                   key="actions"
-                  className="flex h-full flex-shrink-0 self-start transition-all group-hover:gap-x-2"
+                  className="flex h-full shrink-0 self-start transition-all group-hover:gap-x-2"
                 >
                   <IconButton
                     isDisabled={secret.secretValueHidden}
@@ -605,7 +714,7 @@ export const SecretItem = memo(
                               className="h-3 w-3"
                             />
                           }
-                          onClick={onCreateTag}
+                          onClick={() => onCreateTag(secret)}
                         >
                           Create a tag
                         </Button>
@@ -613,7 +722,7 @@ export const SecretItem = memo(
                     </DropdownMenuContent>
                   </DropdownMenu>
                   <ProjectPermissionCan
-                    I={ProjectPermissionActions.Edit}
+                    I={ProjectPermissionActions.Create}
                     a={subject(ProjectPermissionSub.Secrets, {
                       environment,
                       secretPath,
@@ -677,12 +786,24 @@ export const SecretItem = memo(
                       )}
                     </ProjectPermissionCan>
                     <IconButton
-                      isDisabled={secret.secretValueHidden || !currentWorkspace.secretSharing}
+                      isDisabled={secret.secretValueHidden || !currentProject.secretSharing}
                       className="w-0 overflow-hidden p-0 group-hover:w-5"
                       variant="plain"
                       size="md"
                       ariaLabel="share-secret"
-                      onClick={() => onShareSecret(secret)}
+                      onClick={async () => {
+                        if (hasFetchedSecretValue) {
+                          onShareSecret(secret);
+                          return;
+                        }
+
+                        const data = await fetchValue();
+
+                        onShareSecret({
+                          ...secret,
+                          ...data
+                        });
+                      }}
                     >
                       <Tooltip content="Share Secret">
                         <FontAwesomeSymbol
@@ -710,7 +831,7 @@ export const SecretItem = memo(
               {pendingAction === PendingAction.Create && (
                 <div
                   key="actions"
-                  className="flex h-full flex-shrink-0 self-start transition-all group-hover:gap-x-2"
+                  className="flex h-full shrink-0 self-start transition-all group-hover:gap-x-2"
                 >
                   <DropdownMenu>
                     <ProjectPermissionCan
@@ -786,7 +907,7 @@ export const SecretItem = memo(
                               className="h-3 w-3"
                             />
                           }
-                          onClick={onCreateTag}
+                          onClick={() => onCreateTag(secret)}
                         >
                           Create a tag
                         </Button>
@@ -800,7 +921,7 @@ export const SecretItem = memo(
               {isInAutoSaveMode ? (
                 <motion.div
                   key="auto-save-mode"
-                  className="flex w-[63px] flex-shrink-0 items-center justify-between px-3"
+                  className="flex w-[63px] shrink-0 items-center justify-between px-3"
                   initial={{ x: -10, opacity: 0 }}
                   animate={{ x: 0, opacity: 1 }}
                   exit={{ x: -10, opacity: 0 }}
@@ -811,7 +932,7 @@ export const SecretItem = memo(
                 isPending ? (
                   <motion.div
                     key="options"
-                    className="flex w-[63px] flex-shrink-0 items-center justify-between px-3"
+                    className="flex w-[63px] shrink-0 items-center justify-between px-3"
                     initial={{ x: 0, opacity: 0 }}
                     animate={{ x: 0, opacity: 1 }}
                     exit={{ x: 10, opacity: 0 }}
@@ -851,7 +972,7 @@ export const SecretItem = memo(
                 ) : (
                   <motion.div
                     key="options"
-                    className="flex w-[63px] flex-shrink-0 items-center justify-between px-3"
+                    className="flex w-[63px] shrink-0 items-center justify-between px-3"
                     initial={{ x: 0, opacity: 0 }}
                     animate={{ x: 0, opacity: 1 }}
                     exit={{ x: 10, opacity: 0 }}
@@ -910,7 +1031,7 @@ export const SecretItem = memo(
               ) : (
                 <motion.div
                   key="options-save"
-                  className="flex w-[63px] flex-shrink-0 items-center justify-between px-3"
+                  className="flex w-[63px] shrink-0 items-center justify-between px-3"
                   initial={{ x: -10, opacity: 0 }}
                   animate={{ x: 0, opacity: 1 }}
                   exit={{ x: -10, opacity: 0 }}
@@ -974,7 +1095,7 @@ export const SecretItem = memo(
         <CreateReminderForm
           isOpen={popUp.reminder.isOpen}
           onOpenChange={() => handlePopUpToggle("reminder")}
-          workspaceId={currentWorkspace.id}
+          projectId={currentProject.id}
           environment={environment}
           secretPath={secretPath}
           secretId={secret?.id}

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { Button, FormControl, Select, SelectItem } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { ProjectPermissionActions, ProjectPermissionSub, useProject } from "@app/context";
 import {
   useGetProjectSshConfig,
   useListWorkspaceSshCas,
@@ -23,9 +23,9 @@ const schema = z
 export type FormData = z.infer<typeof schema>;
 
 export const ProjectSshConfigCasSection = () => {
-  const { currentWorkspace } = useWorkspace();
-  const { data: sshConfig } = useGetProjectSshConfig(currentWorkspace.id);
-  const { data: sshCas } = useListWorkspaceSshCas(currentWorkspace.id);
+  const { currentProject } = useProject();
+  const { data: sshConfig } = useGetProjectSshConfig(currentProject.id);
+  const { data: sshCas } = useListWorkspaceSshCas(currentProject.id);
   const { mutate: updateProjectSshConfig } = useUpdateProjectSshConfig();
 
   const {
@@ -47,29 +47,21 @@ export const ProjectSshConfigCasSection = () => {
   }, [sshConfig]);
 
   const onFormSubmit = async ({ defaultUserSshCaId, defaultHostSshCaId }: FormData) => {
-    try {
-      await updateProjectSshConfig({
-        projectId: currentWorkspace.id,
-        defaultUserSshCaId: defaultUserSshCaId || undefined,
-        defaultHostSshCaId: defaultHostSshCaId || undefined
-      });
+    await updateProjectSshConfig({
+      projectId: currentProject.id,
+      defaultUserSshCaId: defaultUserSshCaId || undefined,
+      defaultHostSshCaId: defaultHostSshCaId || undefined
+    });
 
-      createNotification({
-        text: "Successfully updated SSH project settings",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to update SSH project settings",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully updated SSH project settings",
+      type: "success"
+    });
   };
 
   return (
     <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-      <p className="mb-8 text-xl font-semibold">Certificate Authorities</p>
+      <p className="mb-8 text-xl font-medium">Certificate Authorities</p>
       <form onSubmit={handleSubmit(onFormSubmit)}>
         <Controller
           control={control}

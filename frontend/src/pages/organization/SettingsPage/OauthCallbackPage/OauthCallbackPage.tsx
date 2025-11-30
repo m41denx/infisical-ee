@@ -57,7 +57,8 @@ export const OAuthCallbackPage = () => {
     });
 
     navigate({
-      to: ROUTE_PATHS.Organization.SettingsPage.path
+      to: ROUTE_PATHS.Organization.SettingsPage.path,
+      params: { orgId: currentOrg.id }
     });
   }, []);
 
@@ -72,20 +73,12 @@ export const OAuthCallbackPage = () => {
     if (!isReady) return;
 
     (async () => {
-      try {
-        await handleMicrosoftTeams();
+      await handleMicrosoftTeams();
 
-        createNotification({
-          text: "Successfully created Microsoft Teams workflow integration",
-          type: "success"
-        });
-      } catch (err) {
-        console.error(err);
-        createNotification({
-          text: "Failed to create Microsoft Teams workflow integration",
-          type: "error"
-        });
-      }
+      createNotification({
+        text: "Successfully created Microsoft Teams workflow integration",
+        type: "success"
+      });
     })();
   }, [isReady]);
 

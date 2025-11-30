@@ -5,7 +5,6 @@ import ms from "ms";
 import { z } from "zod";
 
 import { TtlFormLabel } from "@app/components/features";
-import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
 import {
   Accordion,
@@ -19,6 +18,7 @@ import {
   SecretInput,
   Select,
   SelectItem,
+  Switch,
   TextArea,
   Tooltip
 } from "@app/components/v2";
@@ -28,7 +28,7 @@ import {
 } from "@app/context/OrgPermissionContext/types";
 import { gatewaysQueryKeys, useCreateDynamicSecret } from "@app/hooks/api";
 import { DynamicSecretProviders, SqlProviders } from "@app/hooks/api/dynamicSecret/types";
-import { WorkspaceEnv } from "@app/hooks/api/types";
+import { ProjectEnv } from "@app/hooks/api/types";
 import { slugSchema } from "@app/lib/schemas";
 
 import { MetadataForm } from "../../DynamicSecretListView/MetadataForm";
@@ -66,6 +66,7 @@ const formSchema = z.object({
     creationStatement: z.string().min(1),
     revocationStatement: z.string().min(1),
     renewStatement: z.string().optional(),
+    sslEnabled: z.boolean().optional(),
     ca: z.string().optional(),
     gatewayId: z.string().optional()
   }),
@@ -73,9 +74,8 @@ const formSchema = z.object({
     const valMs = ms(val);
     if (valMs < 60 * 1000)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-    // a day
-    if (valMs > 24 * 60 * 60 * 1000)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+    if (valMs > ms("10y"))
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
   }),
   maxTTL: z
     .string()
@@ -85,9 +85,8 @@ const formSchema = z.object({
       const valMs = ms(val);
       if (valMs < 60 * 1000)
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-      // a day
-      if (valMs > 24 * 60 * 60 * 1000)
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+      if (valMs > ms("10y"))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
     }),
   name: slugSchema(),
   environment: z.object({ name: z.string(), slug: z.string() }),
@@ -108,7 +107,7 @@ type Props = {
   onCancel: () => void;
   secretPath: string;
   projectSlug: string;
-  environments: WorkspaceEnv[];
+  environments: ProjectEnv[];
   isSingleEnvironmentMode?: boolean;
 };
 
@@ -200,6 +199,7 @@ export const SqlDatabaseInputForm = ({
 
   const createDynamicSecret = useCreateDynamicSecret();
   const { data: gateways, isPending: isGatewaysLoading } = useQuery(gatewaysQueryKeys.list());
+  const selectedClient = watch("provider.client");
 
   const handleCreateDynamicSecret = async ({
     name,
@@ -214,26 +214,19 @@ export const SqlDatabaseInputForm = ({
     if (createDynamicSecret.isPending) return;
 
     const isDefaultUsernameTemplate = usernameTemplate === "{{randomUsername}}";
-    try {
-      await createDynamicSecret.mutateAsync({
-        provider: { type: DynamicSecretProviders.SqlDatabase, inputs: provider },
-        maxTTL,
-        name,
-        path: secretPath,
-        defaultTTL,
-        projectSlug,
-        environmentSlug: environment.slug,
-        metadata,
-        usernameTemplate:
-          !usernameTemplate || isDefaultUsernameTemplate ? undefined : usernameTemplate
-      });
-      onCompleted();
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to create dynamic secret"
-      });
-    }
+    await createDynamicSecret.mutateAsync({
+      provider: { type: DynamicSecretProviders.SqlDatabase, inputs: provider },
+      maxTTL,
+      name,
+      path: secretPath,
+      defaultTTL,
+      projectSlug,
+      environmentSlug: environment.slug,
+      metadata,
+      usernameTemplate:
+        !usernameTemplate || isDefaultUsernameTemplate ? undefined : usernameTemplate
+    });
+    onCompleted();
   };
 
   const handleDatabaseChange = (type: SqlProviders) => {
@@ -253,7 +246,7 @@ export const SqlDatabaseInputForm = ({
       <form onSubmit={handleSubmit(handleCreateDynamicSecret)} autoComplete="off">
         <div>
           <div className="flex items-center space-x-2">
-            <div className="flex-grow">
+            <div className="grow">
               <Controller
                 control={control}
                 defaultValue=""
@@ -305,7 +298,7 @@ export const SqlDatabaseInputForm = ({
           </div>
           <MetadataForm control={control} />
           <div>
-            <div className="mb-4 mt-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
+            <div className="mt-4 mb-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
               Configuration
             </div>
             <div>
@@ -391,7 +384,7 @@ export const SqlDatabaseInputForm = ({
                   render={({ field, fieldState: { error } }) => (
                     <FormControl
                       label="Host"
-                      className="flex-grow"
+                      className="grow"
                       isError={Boolean(error?.message)}
                       errorText={error?.message}
                     >
@@ -458,13 +451,34 @@ export const SqlDatabaseInputForm = ({
                 />
               </div>
               <div>
+                {selectedClient === SqlProviders.MsSQL && (
+                  <div className="mt-2 mb-2">
+                    <Controller
+                      control={control}
+                      name="provider.sslEnabled"
+                      render={({ field: { value, onChange }, fieldState: { error } }) => (
+                        <FormControl isError={Boolean(error?.message)} errorText={error?.message}>
+                          <Switch
+                            className="bg-mineshaft-400/50 shadow-inner data-[state=checked]:bg-green/80"
+                            id="sql-ds-ssl-enabled"
+                            thumbClassName="bg-mineshaft-800"
+                            isChecked={value}
+                            onCheckedChange={onChange}
+                          >
+                            Encrypt Connection (SSL)
+                          </Switch>
+                        </FormControl>
+                      )}
+                    />
+                  </div>
+                )}
                 <Controller
                   control={control}
                   name="provider.ca"
                   render={({ field, fieldState: { error } }) => (
                     <FormControl
                       isOptional
-                      label="CA(SSL)"
+                      label="CA (SSL)"
                       isError={Boolean(error?.message)}
                       errorText={error?.message}
                     >
@@ -563,7 +577,7 @@ export const SqlDatabaseInputForm = ({
                     </AccordionContent>
                   </AccordionItem>
                 </Accordion>
-                <Accordion type="multiple" className="mb-2 mt-4 w-full bg-mineshaft-700">
+                <Accordion type="multiple" className="mt-4 mb-2 w-full bg-mineshaft-700">
                   <AccordionItem value="password-config">
                     <AccordionTrigger>Password Configuration (optional)</AccordionTrigger>
                     <AccordionContent>

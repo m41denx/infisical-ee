@@ -2,8 +2,10 @@ export { AcmeDnsProvider, CaRenewalType, CaStatus, CaType, InternalCaType } from
 export {
   useCreateCa,
   useCreateCertificate,
+  useCreateCertificateV3,
   useDeleteCa,
   useImportCaCertificate,
+  useOrderCertificateWithProfile,
   useRenewCa,
   useSignIntermediate,
   useUpdateCa
@@ -11,13 +13,14 @@ export {
 export {
   useGetAzureAdcsTemplates,
   useGetCa,
-  useGetCaById,
   useGetCaCert,
   useGetCaCerts,
   useGetCaCertTemplates,
   useGetCaCrls,
   useGetCaCsr,
+  useGetInternalCaById,
   useListCasByProjectId,
   useListCasByTypeAndProjectId,
   useListExternalCasByProjectId
 } from "./queries";
+export type { TOrderCertificateDTO, TOrderCertificateResponse } from "./types";

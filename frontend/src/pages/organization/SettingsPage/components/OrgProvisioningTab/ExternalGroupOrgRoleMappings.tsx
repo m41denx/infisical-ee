@@ -75,19 +75,11 @@ export const ExternalGroupOrgRoleMappings = () => {
   const mappingField = useFieldArray({ control, name: "mappings" });
 
   const handleUpdateMappings = async (form: TForm) => {
-    try {
-      await updateMappings.mutateAsync(form);
-      createNotification({
-        text: "Group organization role mappings updated.",
-        type: "success"
-      });
-    } catch (e) {
-      console.error(e);
-      createNotification({
-        text: "Failed to update group organization role mappings.",
-        type: "error"
-      });
-    }
+    await updateMappings.mutateAsync(form);
+    createNotification({
+      text: "Group organization role mappings updated.",
+      type: "success"
+    });
   };
 
   const disableScimEdit = permission.cannot(OrgPermissionActions.Edit, OrgPermissionSubjects.Scim);
@@ -105,7 +97,7 @@ export const ExternalGroupOrgRoleMappings = () => {
           <div className="mb-2 flex flex-col space-y-2">
             {mappingField.fields.map(({ id: scopeFieldId }, i) => (
               <div key={scopeFieldId} className="flex items-end space-x-2">
-                <div className="flex-grow">
+                <div className="grow">
                   {i === 0 && (
                     <FormLabel
                       label="SCIM Group Name"
@@ -121,7 +113,7 @@ export const ExternalGroupOrgRoleMappings = () => {
                       <FormControl
                         isError={Boolean(error?.message)}
                         errorText={error?.message}
-                        className="mb-0 flex-grow"
+                        className="mb-0 grow"
                       >
                         <Input
                           isDisabled={disableScimEdit}
@@ -145,7 +137,7 @@ export const ExternalGroupOrgRoleMappings = () => {
                       <FormControl
                         isError={Boolean(error?.message)}
                         errorText={error?.message}
-                        className="mb-0 flex-grow"
+                        className="mb-0 grow"
                       >
                         <Select
                           isDisabled={disableScimEdit}

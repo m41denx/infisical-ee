@@ -37,7 +37,7 @@ const OutputDisplay = ({
 
   return (
     <div className="relative">
-      <FormControl label={label} className="flex-grow" helperText={helperText}>
+      <FormControl label={label} className="grow" helperText={helperText}>
         <SecretInput
           isReadOnly
           value={value}
@@ -49,7 +49,7 @@ const OutputDisplay = ({
           ariaLabel="Copy to clipboard"
           variant="plain"
           size="md"
-          className="absolute right-2 top-7"
+          className="absolute top-7 right-2"
           onClick={() => {
             navigator.clipboard.writeText(value as string);
             setCopyText("Copied");
@@ -138,7 +138,8 @@ const renderOutputForm = (
     provider === DynamicSecretProviders.MongoAtlas ||
     provider === DynamicSecretProviders.MongoDB ||
     provider === DynamicSecretProviders.Vertica ||
-    provider === DynamicSecretProviders.SapAse
+    provider === DynamicSecretProviders.SapAse ||
+    provider === DynamicSecretProviders.AzureSqlDatabase
   ) {
     const { DB_PASSWORD, DB_USERNAME } = data as { DB_USERNAME: string; DB_PASSWORD: string };
     return (
@@ -154,20 +155,22 @@ const renderOutputForm = (
   }
 
   if (provider === DynamicSecretProviders.AwsIam) {
-    const { USERNAME, ACCESS_KEY, SECRET_ACCESS_KEY } = data as {
+    const { USERNAME, ACCESS_KEY, SECRET_ACCESS_KEY, SESSION_TOKEN } = data as {
       ACCESS_KEY: string;
       SECRET_ACCESS_KEY: string;
-      USERNAME: string;
+      USERNAME?: string;
+      SESSION_TOKEN?: string;
     };
     return (
       <div>
-        <OutputDisplay label="AWS Username" value={USERNAME} />
+        {USERNAME && <OutputDisplay label="AWS IAM Username" value={USERNAME} />}
         <OutputDisplay label="AWS IAM Access Key" value={ACCESS_KEY} />
-        <OutputDisplay
-          label="AWS IAM Secret Key"
-          value={SECRET_ACCESS_KEY}
-          helperText="Important: Copy these credentials now. You will not be able to see them again after you close the modal."
-        />
+        <OutputDisplay label="AWS IAM Secret Key" value={SECRET_ACCESS_KEY} />
+        {SESSION_TOKEN && <OutputDisplay label="AWS IAM Session Token" value={SESSION_TOKEN} />}
+        <div className="mt-2 text-xs text-mineshaft-300">
+          Important: Copy these credentials now. You will not be able to see them again after you
+          close the modal.
+        </div>
       </div>
     );
   }
@@ -288,7 +291,7 @@ const renderOutputForm = (
           value={PASSWORD}
           helperText="Important: Copy these credentials now. You will not be able to see them again after you close the modal."
         />
-        <FormControl label="DNs" className="flex-grow">
+        <FormControl label="DNs" className="grow">
           <SecretInput
             isReadOnly
             isVisible
@@ -438,30 +441,22 @@ export const CreateKubernetesDynamicSecretLease = ({
 
   const handleDynamicSecretLeaseCreate = async ({ ttl, namespace }: TKubernetesForm) => {
     if (createDynamicSecretLease.isPending) return;
-    try {
-      await createDynamicSecretLease.mutateAsync({
-        environmentSlug: environment,
-        projectSlug,
-        path: secretPath,
-        ttl,
-        dynamicSecretName,
-        config: {
-          namespace: namespace || undefined
-        },
-        provider
-      });
+    await createDynamicSecretLease.mutateAsync({
+      environmentSlug: environment,
+      projectSlug,
+      path: secretPath,
+      ttl,
+      dynamicSecretName,
+      config: {
+        namespace: namespace || undefined
+      },
+      provider
+    });
 
-      createNotification({
-        type: "success",
-        text: "Successfully leased dynamic secret"
-      });
-    } catch (error) {
-      console.log(error);
-      createNotification({
-        type: "error",
-        text: "Failed to lease dynamic secret"
-      });
-    }
+    createNotification({
+      type: "success",
+      text: "Successfully leased dynamic secret"
+    });
   };
 
   const handleLeaseRegeneration = async (data: { ttl?: string }) => {
@@ -587,29 +582,21 @@ export const CreateDynamicSecretLease = ({
 
   const handleDynamicSecretLeaseCreate = async ({ ttl }: TForm) => {
     if (createDynamicSecretLease.isPending) return;
-    try {
-      await createDynamicSecretLease.mutateAsync({
-        environmentSlug: environment,
-        projectSlug,
-        path: secretPath,
-        ttl,
-        dynamicSecretName,
-        provider
-      });
+    await createDynamicSecretLease.mutateAsync({
+      environmentSlug: environment,
+      projectSlug,
+      path: secretPath,
+      ttl,
+      dynamicSecretName,
+      provider
+    });
 
-      createNotification({
-        type: "success",
-        text: "Successfully leased dynamic secret"
-      });
+    createNotification({
+      type: "success",
+      text: "Successfully leased dynamic secret"
+    });
 
-      setIsPreloading.off();
-    } catch (error) {
-      console.log(error);
-      createNotification({
-        type: "error",
-        text: "Failed to lease dynamic secret"
-      });
-    }
+    setIsPreloading.off();
   };
 
   const handleLeaseRegeneration = async (data: { ttl?: string }) => {

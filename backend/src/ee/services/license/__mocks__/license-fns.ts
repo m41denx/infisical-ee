@@ -31,9 +31,17 @@ export const getDefaultOnPremFeatures = () => {
     caCrl: false,
     sshHostGroups: false,
     enterpriseSecretSyncs: false,
+    enterpriseCertificateSyncs: false,
     enterpriseAppConnections: true,
-    machineIdentityAuthTemplates: false
+    machineIdentityAuthTemplates: false,
+    pkiLegacyTemplates: false
   };
 };
 
 export const setupLicenseRequestWithStore = () => {};
+
+export const getLicenseKeyConfig = () => {
+  return {
+    isValid: false
+  };
+};

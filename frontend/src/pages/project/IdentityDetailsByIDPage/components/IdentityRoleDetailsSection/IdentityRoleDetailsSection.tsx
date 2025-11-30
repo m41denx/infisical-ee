@@ -23,17 +23,17 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { ProjectPermissionActions, ProjectPermissionSub, useProject } from "@app/context";
 import { formatProjectRoleName } from "@app/helpers/roles";
 import { usePopUp } from "@app/hooks";
-import { useUpdateIdentityWorkspaceRole } from "@app/hooks/api";
-import { IdentityMembership } from "@app/hooks/api/identities/types";
+import { useUpdateProjectIdentityMembership } from "@app/hooks/api";
+import { IdentityProjectMembershipV1 } from "@app/hooks/api/identities/types";
 import { TProjectRole } from "@app/hooks/api/roles/types";
 
 import { IdentityRoleModify } from "./IdentityRoleModify";
 
 type Props = {
-  identityMembershipDetails: IdentityMembership;
+  identityMembershipDetails: IdentityProjectMembershipV1;
   isMembershipDetailsLoading?: boolean;
 };
 
@@ -41,57 +41,52 @@ export const IdentityRoleDetailsSection = ({
   identityMembershipDetails,
   isMembershipDetailsLoading
 }: Props) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { popUp, handlePopUpOpen, handlePopUpToggle, handlePopUpClose } = usePopUp([
     "deleteRole",
     "modifyRole"
   ] as const);
-  const { mutateAsync: updateIdentityWorkspaceRole } = useUpdateIdentityWorkspaceRole();
+  const { mutateAsync: updateIdentityProjectMembership } = useUpdateProjectIdentityMembership();
 
   const handleRoleDelete = async () => {
     const { id } = popUp?.deleteRole?.data as TProjectRole;
-    try {
-      const updatedRoles = identityMembershipDetails?.roles?.filter((el) => el.id !== id);
-      await updateIdentityWorkspaceRole({
-        workspaceId: currentWorkspace?.id || "",
-        identityId: identityMembershipDetails.identity.id,
-        roles: updatedRoles.map(
-          ({
-            role,
-            customRoleSlug,
-            isTemporary,
-            temporaryMode,
-            temporaryRange,
-            temporaryAccessStartTime,
-            temporaryAccessEndTime
-          }) => ({
-            role: role === "custom" ? customRoleSlug : role,
-            ...(isTemporary
-              ? {
-                  isTemporary,
-                  temporaryMode,
-                  temporaryRange,
-                  temporaryAccessStartTime,
-                  temporaryAccessEndTime
-                }
-              : {
-                  isTemporary
-                })
-          })
-        )
-      });
-      createNotification({ type: "success", text: "Successfully removed role" });
-      handlePopUpClose("deleteRole");
-    } catch (err) {
-      console.log(err);
-      createNotification({ type: "error", text: "Failed to delete role" });
-    }
+    const updatedRoles = identityMembershipDetails?.roles?.filter((el) => el.id !== id);
+    await updateIdentityProjectMembership({
+      projectId: currentProject?.id || "",
+      identityId: identityMembershipDetails.identity.id,
+      roles: updatedRoles.map(
+        ({
+          role,
+          customRoleSlug,
+          isTemporary,
+          temporaryMode,
+          temporaryRange,
+          temporaryAccessStartTime,
+          temporaryAccessEndTime
+        }) => ({
+          role: role === "custom" ? customRoleSlug : role,
+          ...(isTemporary
+            ? {
+                isTemporary,
+                temporaryMode,
+                temporaryRange,
+                temporaryAccessStartTime,
+                temporaryAccessEndTime
+              }
+            : {
+                isTemporary
+              })
+        })
+      )
+    });
+    createNotification({ type: "success", text: "Successfully removed role" });
+    handlePopUpClose("deleteRole");
   };
 
   return (
     <div className="mb-4 w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-semibold text-mineshaft-100">Project Roles</h3>
+        <h3 className="text-lg font-medium text-mineshaft-100">Project Roles</h3>
         <ProjectPermissionCan
           I={ProjectPermissionActions.Edit}
           a={subject(ProjectPermissionSub.Identity, {

@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
 
-import { createNotification } from "@app/components/notifications";
 import { Switch } from "@app/components/v2";
 import { useOrganization } from "@app/context";
 import { useUpdateOrg } from "@app/hooks/api";
@@ -50,7 +48,7 @@ export const OrgProductSelectSection = () => {
         }));
       }
     });
-  }, [currentOrg]);
+  }, [currentOrg?.id]);
 
   const onProductToggle = async (value: boolean, key: string) => {
     setIsLoading(true);
@@ -60,27 +58,17 @@ export const OrgProductSelectSection = () => {
       [key]: { ...products[key], enabled: value }
     }));
 
-    try {
-      await mutateAsync({
-        orgId: currentOrg.id,
-        [key]: value
-      });
-    } catch (e) {
-      if (axios.isAxiosError(e)) {
-        const { message = "Something went wrong" } = e.response?.data as { message: string };
-        createNotification({
-          type: "error",
-          text: message
-        });
-      }
-    }
+    await mutateAsync({
+      orgId: currentOrg.id,
+      [key]: value
+    });
 
     setIsLoading(false);
   };
 
   return (
     <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-6 py-5">
-      <h2 className="text-xl font-semibold text-mineshaft-100">Enabled Products</h2>
+      <h2 className="text-xl font-medium text-mineshaft-100">Enabled Products</h2>
       <p className="mb-4 text-gray-400">
         Select which products are available for your organization.
       </p>

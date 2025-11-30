@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, FormControl, Modal, ModalContent, Select, SelectItem } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import { useRevokeCert } from "@app/hooks/api";
 import { crlReasons } from "@app/hooks/api/certificates/constants";
 import { CrlReason } from "@app/hooks/api/certificates/enums";
@@ -35,7 +35,7 @@ type Props = {
 };
 
 export const CertificateRevocationModal = ({ popUp, handlePopUpToggle }: Props) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { mutateAsync: revokeCertificate } = useRevokeCert();
 
   const {
@@ -48,31 +48,23 @@ export const CertificateRevocationModal = ({ popUp, handlePopUpToggle }: Props) 
   });
 
   const onFormSubmit = async ({ revocationReason }: FormData) => {
-    try {
-      if (!currentWorkspace?.slug) return;
+    if (!currentProject?.slug) return;
 
-      const { serialNumber } = popUp.revokeCertificate.data as { serialNumber: string };
+    const { certificateId } = popUp.revokeCertificate.data as { certificateId: string };
 
-      await revokeCertificate({
-        projectSlug: currentWorkspace.slug,
-        serialNumber,
-        revocationReason
-      });
+    await revokeCertificate({
+      projectId: currentProject.id,
+      id: certificateId,
+      revocationReason
+    });
 
-      reset();
-      handlePopUpToggle("revokeCertificate", false);
+    reset();
+    handlePopUpToggle("revokeCertificate", false);
 
-      createNotification({
-        text: "Successfully revoked certificate",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to revoke certificate",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully revoked certificate",
+      type: "success"
+    });
   };
 
   return (

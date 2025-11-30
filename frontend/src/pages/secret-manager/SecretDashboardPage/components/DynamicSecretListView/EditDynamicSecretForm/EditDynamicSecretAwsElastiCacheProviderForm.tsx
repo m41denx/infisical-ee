@@ -37,9 +37,8 @@ const formSchema = z.object({
     const valMs = ms(val);
     if (valMs < 60 * 1000)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-    // a day
-    if (valMs > 24 * 60 * 60 * 1000)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+    if (valMs > ms("10y"))
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
   }),
   maxTTL: z
     .string()
@@ -49,9 +48,8 @@ const formSchema = z.object({
       const valMs = ms(val);
       if (valMs < 60 * 1000)
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-      // a day
-      if (valMs > 24 * 60 * 60 * 1000)
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+      if (valMs > ms("10y"))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
     })
     .nullable(),
   newName: slugSchema().optional(),
@@ -103,38 +101,31 @@ export const EditDynamicSecretAwsElastiCacheProviderForm = ({
     // wait till previous request is finished
     if (updateDynamicSecret.isPending) return;
     const isDefaultUsernameTemplate = usernameTemplate === "{{randomUsername}}";
-    try {
-      await updateDynamicSecret.mutateAsync({
-        name: dynamicSecret.name,
-        path: secretPath,
-        projectSlug,
-        environmentSlug: environment,
-        data: {
-          maxTTL: maxTTL || undefined,
-          defaultTTL,
-          inputs,
-          newName: newName === dynamicSecret.name ? undefined : newName,
-          usernameTemplate: !usernameTemplate || isDefaultUsernameTemplate ? null : usernameTemplate
-        }
-      });
-      onClose();
-      createNotification({
-        type: "success",
-        text: "Successfully updated dynamic secret"
-      });
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to update dynamic secret"
-      });
-    }
+    await updateDynamicSecret.mutateAsync({
+      name: dynamicSecret.name,
+      path: secretPath,
+      projectSlug,
+      environmentSlug: environment,
+      data: {
+        maxTTL: maxTTL || undefined,
+        defaultTTL,
+        inputs,
+        newName: newName === dynamicSecret.name ? undefined : newName,
+        usernameTemplate: !usernameTemplate || isDefaultUsernameTemplate ? null : usernameTemplate
+      }
+    });
+    onClose();
+    createNotification({
+      type: "success",
+      text: "Successfully updated dynamic secret"
+    });
   };
 
   return (
     <div>
       <form onSubmit={handleSubmit(handleUpdateDynamicSecret)} autoComplete="off">
         <div className="flex items-center space-x-2">
-          <div className="flex-grow">
+          <div className="grow">
             <Controller
               control={control}
               name="newName"
@@ -181,7 +172,7 @@ export const EditDynamicSecretAwsElastiCacheProviderForm = ({
           </div>
         </div>
         <div>
-          <div className="mb-4 mt-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
+          <div className="mt-4 mb-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
             Configuration
           </div>
           <div className="flex flex-col">
@@ -193,7 +184,7 @@ export const EditDynamicSecretAwsElastiCacheProviderForm = ({
                 render={({ field, fieldState: { error } }) => (
                   <FormControl
                     label="Cluster name"
-                    className="flex-grow"
+                    className="grow"
                     isError={Boolean(error?.message)}
                     errorText={error?.message}
                   >

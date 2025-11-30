@@ -22,7 +22,7 @@ import {
   SelectItem,
   Tooltip
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   CaStatus,
   useCreateCertificate,
@@ -46,9 +46,8 @@ const schema = z.object({
   certificateTemplateId: z.string().optional(),
   caId: z.string(),
   collectionId: z.string().optional(),
-  friendlyName: z.string(),
   commonName: z.string().trim().min(1),
-  altNames: z.string(),
+  subjectAltNames: z.string(),
   ttl: z.string().trim(),
   keyUsages: z.object({
     [CertKeyUsage.DIGITAL_SIGNATURE]: z.boolean().optional(),
@@ -76,6 +75,7 @@ export type FormData = z.infer<typeof schema>;
 type Props = {
   popUp: UsePopUpState<["certificate"]>;
   handlePopUpToggle: (popUpName: keyof UsePopUpState<["certificate"]>, state?: boolean) => void;
+  preselectedTemplate?: { id: string; name: string };
 };
 
 type TCertificateDetails = {
@@ -87,24 +87,24 @@ type TCertificateDetails = {
 
 const CERT_TEMPLATE_NONE_VALUE = "none";
 
-export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
+export const CertificateModal = ({ popUp, handlePopUpToggle, preselectedTemplate }: Props) => {
   const [certificateDetails, setCertificateDetails] = useState<TCertificateDetails | null>(null);
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { data: cert } = useGetCert(
     (popUp?.certificate?.data as { serialNumber: string })?.serialNumber || ""
   );
 
   const { data: cas } = useListWorkspaceCas({
-    projectSlug: currentWorkspace?.slug ?? "",
+    projectId: currentProject.id,
     status: CaStatus.ACTIVE
   });
 
   const { data } = useListWorkspacePkiCollections({
-    workspaceId: currentWorkspace?.id || ""
+    projectId: currentProject?.id || ""
   });
 
   const { data: templatesData } = useListWorkspaceCertificateTemplates({
-    workspaceId: currentWorkspace?.id || ""
+    projectId: currentProject?.id || ""
   });
 
   const { mutateAsync: createCertificate } = useCreateCertificate();
@@ -139,9 +139,8 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
     if (cert) {
       reset({
         caId: cert.caId,
-        friendlyName: cert.friendlyName,
         commonName: cert.commonName,
-        altNames: cert.altNames,
+        subjectAltNames: cert.subjectAltNames,
         certificateTemplateId: cert.certificateTemplateId ?? CERT_TEMPLATE_NONE_VALUE,
         ttl: "",
         keyUsages: Object.fromEntries((cert.keyUsages || []).map((name) => [name, true])),
@@ -149,14 +148,15 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
           (cert.extendedKeyUsages || []).map((name) => [name, true])
         )
       });
-    } else {
+    } else if (popUp?.certificate?.isOpen) {
+      const templateId = preselectedTemplate?.id || CERT_TEMPLATE_NONE_VALUE;
+
       reset({
         caId: "",
-        friendlyName: "",
         commonName: "",
-        altNames: "",
+        subjectAltNames: "",
         ttl: "",
-        certificateTemplateId: CERT_TEMPLATE_NONE_VALUE,
+        certificateTemplateId: templateId,
         keyUsages: {
           [CertKeyUsage.DIGITAL_SIGNATURE]: true,
           [CertKeyUsage.KEY_ENCIPHERMENT]: true
@@ -164,7 +164,7 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
         extendedKeyUsages: {}
       });
     }
-  }, [cert]);
+  }, [cert, preselectedTemplate, popUp?.certificate?.isOpen]);
 
   useEffect(() => {
     if (!cert && selectedCertTemplate) {
@@ -182,54 +182,48 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
 
   const onFormSubmit = async ({
     caId,
-    friendlyName,
     collectionId,
     commonName,
-    altNames,
+    subjectAltNames,
     ttl,
     keyUsages,
     extendedKeyUsages
   }: FormData) => {
-    try {
-      if (!currentWorkspace?.slug) return;
+    if (!currentProject?.slug) return;
 
-      const { serialNumber, certificate, certificateChain, privateKey } = await createCertificate({
-        caId: !selectedCertTemplate ? caId : undefined,
-        certificateTemplateId: selectedCertTemplate ? selectedCertTemplateId : undefined,
-        projectSlug: currentWorkspace.slug,
-        pkiCollectionId: collectionId,
-        friendlyName,
-        commonName,
-        altNames,
-        ttl,
-        keyUsages: Object.entries(keyUsages)
-          .filter(([, value]) => value)
-          .map(([key]) => key as CertKeyUsage),
-        extendedKeyUsages: Object.entries(extendedKeyUsages)
-          .filter(([, value]) => value)
-          .map(([key]) => key as CertExtendedKeyUsage)
-      });
+    const { serialNumber, certificate, certificateChain, privateKey } = await createCertificate({
+      caId: !selectedCertTemplate ? caId : undefined,
+      certificateTemplateId: selectedCertTemplate ? selectedCertTemplateId : undefined,
+      projectSlug: currentProject.slug,
+      pkiCollectionId: collectionId,
+      commonName,
+      subjectAltNames,
+      ttl,
+      keyUsages: Object.entries(keyUsages)
+        .filter(([, value]) => value)
+        .map(([key]) =>
+          key === CertKeyUsage.CRL_SIGN
+            ? "cRLSign"
+            : key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+        ),
+      extendedKeyUsages: Object.entries(extendedKeyUsages)
+        .filter(([, value]) => value)
+        .map(([key]) => key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()))
+    });
 
-      reset();
+    reset();
 
-      setCertificateDetails({
-        serialNumber,
-        certificate,
-        certificateChain,
-        privateKey
-      });
+    setCertificateDetails({
+      serialNumber,
+      certificate,
+      certificateChain,
+      privateKey
+    });
 
-      createNotification({
-        text: "Successfully created certificate",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to create certificate",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully created certificate",
+      type: "success"
+    });
   };
 
   useEffect(() => {
@@ -282,15 +276,25 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
                   isRequired
                 >
                   <Select
-                    defaultValue={field.value}
-                    {...field}
+                    value={field.value}
                     onValueChange={(e) => onChange(e)}
                     className="w-full"
-                    isDisabled={Boolean(cert)}
+                    isDisabled={Boolean(cert) || Boolean(preselectedTemplate)}
                   >
                     <SelectItem value={CERT_TEMPLATE_NONE_VALUE} key="cert-template-none">
                       None
                     </SelectItem>
+                    {preselectedTemplate &&
+                      !templatesData?.certificateTemplates?.find(
+                        (t) => t.id === preselectedTemplate.id
+                      ) && (
+                        <SelectItem
+                          value={preselectedTemplate.id}
+                          key={`cert-template-preselected-${preselectedTemplate.id}`}
+                        >
+                          {preselectedTemplate.name}
+                        </SelectItem>
+                      )}
                     {(templatesData?.certificateTemplates || []).map(({ id, name }) => (
                       <SelectItem value={id} key={`cert-template-${id}`}>
                         {name}
@@ -362,20 +366,6 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
             <Controller
               control={control}
               defaultValue=""
-              name="friendlyName"
-              render={({ field, fieldState: { error } }) => (
-                <FormControl
-                  label="Friendly Name"
-                  isError={Boolean(error)}
-                  errorText={error?.message}
-                >
-                  <Input {...field} placeholder="My Certificate" isDisabled={Boolean(cert)} />
-                </FormControl>
-              )}
-            />
-            <Controller
-              control={control}
-              defaultValue=""
               name="commonName"
               render={({ field, fieldState: { error } }) => (
                 <FormControl
@@ -391,7 +381,7 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
             <Controller
               control={control}
               defaultValue=""
-              name="altNames"
+              name="subjectAltNames"
               render={({ field, fieldState: { error } }) => (
                 <FormControl
                   label="Alternative Names (SANs)"
@@ -440,7 +430,7 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
                           errorText={error?.message}
                           isError={Boolean(error)}
                         >
-                          <div className="mb-7 mt-2 grid grid-cols-2 gap-2">
+                          <div className="mt-2 mb-7 grid grid-cols-2 gap-2">
                             {KEY_USAGES_OPTIONS.map(({ label, value: optionValue }) => {
                               return (
                                 <Checkbox
@@ -474,7 +464,7 @@ export const CertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
                           errorText={error?.message}
                           isError={Boolean(error)}
                         >
-                          <div className="mb-7 mt-2 grid grid-cols-2 gap-2">
+                          <div className="mt-2 mb-7 grid grid-cols-2 gap-2">
                             {EXTENDED_KEY_USAGES_OPTIONS.map(({ label, value: optionValue }) => {
                               return (
                                 <Checkbox

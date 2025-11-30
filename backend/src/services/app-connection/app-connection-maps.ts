@@ -28,9 +28,11 @@ export const APP_CONNECTION_NAME_MAP: Record<AppConnection, string> = {
   [AppConnection.OnePass]: "1Password",
   [AppConnection.Heroku]: "Heroku",
   [AppConnection.Render]: "Render",
+  [AppConnection.LaravelForge]: "Laravel Forge",
   [AppConnection.Flyio]: "Fly.io",
   [AppConnection.GitLab]: "GitLab",
   [AppConnection.Cloudflare]: "Cloudflare",
+  [AppConnection.DNSMadeEasy]: "DNS Made Easy",
   [AppConnection.Zabbix]: "Zabbix",
   [AppConnection.Railway]: "Railway",
   [AppConnection.Bitbucket]: "Bitbucket",
@@ -38,7 +40,10 @@ export const APP_CONNECTION_NAME_MAP: Record<AppConnection, string> = {
   [AppConnection.Supabase]: "Supabase",
   [AppConnection.DigitalOcean]: "DigitalOcean App Platform",
   [AppConnection.Netlify]: "Netlify",
-  [AppConnection.Okta]: "Okta"
+  [AppConnection.Okta]: "Okta",
+  [AppConnection.Redis]: "Redis",
+  [AppConnection.Chef]: "Chef",
+  [AppConnection.Northflank]: "Northflank"
 };
 
 export const APP_CONNECTION_PLAN_MAP: Record<AppConnection, AppConnectionPlanType> = {
@@ -69,9 +74,11 @@ export const APP_CONNECTION_PLAN_MAP: Record<AppConnection, AppConnectionPlanTyp
   [AppConnection.MySql]: AppConnectionPlanType.Regular,
   [AppConnection.Heroku]: AppConnectionPlanType.Regular,
   [AppConnection.Render]: AppConnectionPlanType.Regular,
+  [AppConnection.LaravelForge]: AppConnectionPlanType.Regular,
   [AppConnection.Flyio]: AppConnectionPlanType.Regular,
   [AppConnection.GitLab]: AppConnectionPlanType.Regular,
   [AppConnection.Cloudflare]: AppConnectionPlanType.Regular,
+  [AppConnection.DNSMadeEasy]: AppConnectionPlanType.Regular,
   [AppConnection.Zabbix]: AppConnectionPlanType.Regular,
   [AppConnection.Railway]: AppConnectionPlanType.Regular,
   [AppConnection.Bitbucket]: AppConnectionPlanType.Regular,
@@ -79,5 +86,8 @@ export const APP_CONNECTION_PLAN_MAP: Record<AppConnection, AppConnectionPlanTyp
   [AppConnection.Supabase]: AppConnectionPlanType.Regular,
   [AppConnection.DigitalOcean]: AppConnectionPlanType.Regular,
   [AppConnection.Netlify]: AppConnectionPlanType.Regular,
-  [AppConnection.Okta]: AppConnectionPlanType.Regular
+  [AppConnection.Okta]: AppConnectionPlanType.Regular,
+  [AppConnection.Redis]: AppConnectionPlanType.Regular,
+  [AppConnection.Chef]: AppConnectionPlanType.Enterprise,
+  [AppConnection.Northflank]: AppConnectionPlanType.Regular
 };

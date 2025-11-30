@@ -33,24 +33,16 @@ export const SshCertificateTemplatesSection = ({ caId }: Props) => {
   const { mutateAsync: updateSshCertTemplate } = useUpdateSshCertTemplate();
 
   const onRemoveSshCertificateTemplateSubmit = async (id: string) => {
-    try {
-      await deleteSshCertTemplate({
-        id
-      });
+    await deleteSshCertTemplate({
+      id
+    });
 
-      await createNotification({
-        text: "Successfully deleted SSH certificate template",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully deleted SSH certificate template",
+      type: "success"
+    });
 
-      handlePopUpClose("deleteSshCertificateTemplate");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to delete SSH certificate template",
-        type: "error"
-      });
-    }
+    handlePopUpClose("deleteSshCertificateTemplate");
   };
 
   const onUpdateSshCaStatus = async ({
@@ -60,32 +52,22 @@ export const SshCertificateTemplatesSection = ({ caId }: Props) => {
     templateId: string;
     status: SshCertTemplateStatus;
   }) => {
-    try {
-      await updateSshCertTemplate({ id: templateId, status });
+    await updateSshCertTemplate({ id: templateId, status });
 
-      await createNotification({
-        text: `Successfully ${
-          status === SshCertTemplateStatus.ACTIVE ? "enabled" : "disabled"
-        } SSH certificate template`,
-        type: "success"
-      });
+    createNotification({
+      text: `Successfully ${
+        status === SshCertTemplateStatus.ACTIVE ? "enabled" : "disabled"
+      } SSH certificate template`,
+      type: "success"
+    });
 
-      handlePopUpClose("sshCertificateTemplateStatus");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: `Failed to ${
-          status === SshCertTemplateStatus.ACTIVE ? "enabled" : "disabled"
-        } SSH certificate template`,
-        type: "error"
-      });
-    }
+    handlePopUpClose("sshCertificateTemplateStatus");
   };
 
   return (
     <div className="h-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-semibold text-mineshaft-100">Certificate Templates</h3>
+        <h3 className="text-lg font-medium text-mineshaft-100">Certificate Templates</h3>
         <ProjectPermissionCan
           I={ProjectPermissionActions.Create}
           a={ProjectPermissionSub.SshCertificateTemplates}

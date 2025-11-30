@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
   faArrowDown,
   faArrowUp,
@@ -7,6 +7,7 @@ import {
   faSearch
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { createNotification } from "@app/components/notifications";
 import {
@@ -23,7 +24,7 @@ import {
   THead,
   Tr
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { getProjectHomePage } from "@app/helpers/project";
 import {
   getUserTablePreference,
@@ -48,6 +49,7 @@ enum GroupMembersOrderBy {
 }
 
 export const GroupMembersTable = ({ groupMembership }: Props) => {
+  const navigate = useNavigate();
   const {
     search,
     setSearch,
@@ -62,6 +64,21 @@ export const GroupMembersTable = ({ groupMembership }: Props) => {
     initPerPage: getUserTablePreference("projectGroupMembersTable", PreferenceKey.PerPage, 20)
   });
 
+  // this handles links from secret versions when the actor is in a group membership
+  const { username, ...restSearch } = useSearch({
+    strict: false
+  });
+  useEffect(() => {
+    if (username) {
+      setSearch(username);
+      navigate({
+        to: ".",
+        replace: true,
+        search: restSearch
+      });
+    }
+  }, [username]);
+
   const { handlePopUpToggle, popUp, handlePopUpOpen } = usePopUp(["assumePrivileges"] as const);
 
   const handlePerPageChange = (newPerPage: number) => {
@@ -69,12 +86,13 @@ export const GroupMembersTable = ({ groupMembership }: Props) => {
     setUserTablePreference("projectGroupMembersTable", PreferenceKey.PerPage, newPerPage);
   };
 
-  const { currentWorkspace } = useWorkspace();
+  const { isSubOrganization, currentOrg } = useOrganization();
+  const { currentProject } = useProject();
 
   const { data: groupMemberships, isPending } = useListProjectGroupUsers({
     id: groupMembership.group.id,
     groupSlug: groupMembership.group.slug,
-    projectId: currentWorkspace.id,
+    projectId: currentProject.id,
     offset,
     limit: perPage,
     search,
@@ -127,7 +145,7 @@ export const GroupMembersTable = ({ groupMembership }: Props) => {
       {
         actorId: userId,
         actorType: ActorType.USER,
-        projectId: currentWorkspace.id
+        projectId: currentProject.id
       },
       {
         onSuccess: () => {
@@ -136,8 +154,10 @@ export const GroupMembersTable = ({ groupMembership }: Props) => {
             text: "User privilege assumption has started"
           });
 
-          const url = getProjectHomePage(currentWorkspace.type, currentWorkspace.environments);
-          window.location.href = url.replace("$projectId", currentWorkspace.id);
+          const url = `${getProjectHomePage(currentProject.type, currentProject.environments)}${isSubOrganization ? `?subOrganization=${currentOrg.slug}` : ""}`;
+          window.location.assign(
+            url.replace("$orgId", currentOrg.id).replace("$projectId", currentProject.id)
+          );
         }
       }
     );

@@ -5,7 +5,6 @@ import { twMerge } from "tailwind-merge";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -21,7 +20,13 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { Badge } from "@app/components/v3";
+import {
+  ProjectPermissionActions,
+  ProjectPermissionSub,
+  useOrganization,
+  useProject
+} from "@app/context";
 import { SshCaStatus, useListWorkspaceSshCas } from "@app/hooks/api";
 import { caStatusToNameMap, getCaStatusBadgeVariant } from "@app/hooks/api/ca/constants";
 import { UsePopUpState } from "@app/hooks/usePopUp";
@@ -35,8 +40,9 @@ type Props = {
 
 export const SshCaTable = ({ handlePopUpOpen }: Props) => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
-  const { data, isPending } = useListWorkspaceSshCas(currentWorkspace?.id || "");
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
+  const { data, isPending } = useListWorkspaceSshCas(currentProject?.id || "");
 
   return (
     <div>
@@ -61,9 +67,10 @@ export const SshCaTable = ({ handlePopUpOpen }: Props) => {
                     key={`ca-${ca.id}`}
                     onClick={() =>
                       navigate({
-                        to: "/projects/ssh/$projectId/ca/$caId",
+                        to: "/organizations/$orgId/projects/ssh/$projectId/ca/$caId",
                         params: {
-                          projectId: currentWorkspace.id,
+                          orgId: currentOrg.id,
+                          projectId: currentProject.id,
                           caId: ca.id
                         }
                       })

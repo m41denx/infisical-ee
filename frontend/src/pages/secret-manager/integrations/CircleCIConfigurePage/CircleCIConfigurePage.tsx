@@ -18,7 +18,7 @@ import {
 } from "@app/components/v2";
 import { SecretPathInput } from "@app/components/v2/SecretPathInput";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useCreateIntegration, useGetIntegrationAuthCircleCIOrganizations } from "@app/hooks/api";
 import { CircleCiScope } from "@app/hooks/api/integrationAuth/types";
 import { IntegrationsListPageTabs } from "@app/types/integrations";
@@ -45,8 +45,8 @@ type TFormData = z.infer<typeof formSchema>;
 export const CircleCIConfigurePage = () => {
   const navigate = useNavigate();
   const { mutateAsync, isPending: isCreatingIntegration } = useCreateIntegration();
-  const { currentWorkspace } = useWorkspace();
-
+  const { currentProject } = useProject();
+  const { currentOrg } = useOrganization();
   const integrationAuthId = useSearch({
     from: ROUTE_PATHS.SecretManager.Integratons.CircleConfigurePage.id,
     select: (el) => el.integrationAuthId
@@ -56,7 +56,7 @@ export const CircleCIConfigurePage = () => {
     resolver: zodResolver(formSchema),
     defaultValues: {
       secretPath: "/",
-      sourceEnvironment: currentWorkspace?.environments[0],
+      sourceEnvironment: currentProject?.environments[0],
       scope: CircleCiScope.Project
     }
   });
@@ -73,51 +73,44 @@ export const CircleCIConfigurePage = () => {
     : undefined;
 
   const onSubmit = async (data: TFormData) => {
-    try {
-      if (data.scope === CircleCiScope.Context) {
-        await mutateAsync({
-          scope: data.scope,
-          integrationAuthId,
-          isActive: true,
-          sourceEnvironment: data.sourceEnvironment.slug,
-          app: data.targetContext.name,
-          appId: data.targetContext.id,
-          owner: data.targetOrg.name,
-          secretPath: data.secretPath
-        });
-      } else {
-        await mutateAsync({
-          scope: data.scope,
-          integrationAuthId,
-          isActive: true,
-          app: data.targetProject.name, // project name
-          owner: data.targetOrg.name, // organization name
-          appId: data.targetProject.id, // project id (used for syncing)
-          sourceEnvironment: data.sourceEnvironment.slug,
-          secretPath: data.secretPath
-        });
-      }
-
-      createNotification({
-        type: "success",
-        text: "Successfully created integration"
+    if (data.scope === CircleCiScope.Context) {
+      await mutateAsync({
+        scope: data.scope,
+        integrationAuthId,
+        isActive: true,
+        sourceEnvironment: data.sourceEnvironment.slug,
+        app: data.targetContext.name,
+        appId: data.targetContext.id,
+        owner: data.targetOrg.name,
+        secretPath: data.secretPath
       });
-      navigate({
-        to: "/projects/secret-management/$projectId/integrations",
-        params: {
-          projectId: currentWorkspace.id
-        },
-        search: {
-          selectedTab: IntegrationsListPageTabs.NativeIntegrations
-        }
+    } else {
+      await mutateAsync({
+        scope: data.scope,
+        integrationAuthId,
+        isActive: true,
+        app: data.targetProject.name, // project name
+        owner: data.targetOrg.name, // organization name
+        appId: data.targetProject.id, // project id (used for syncing)
+        sourceEnvironment: data.sourceEnvironment.slug,
+        secretPath: data.secretPath
       });
-    } catch (err) {
-      createNotification({
-        type: "error",
-        text: "Failed to create integration"
-      });
-      console.error(err);
     }
+
+    createNotification({
+      type: "success",
+      text: "Successfully created integration"
+    });
+    navigate({
+      to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
+      params: {
+        orgId: currentOrg.id,
+        projectId: currentProject.id
+      },
+      search: {
+        selectedTab: IntegrationsListPageTabs.NativeIntegrations
+      }
+    });
   };
 
   if (isCircleCIOrganizationsLoading)
@@ -154,12 +147,12 @@ export const CircleCIConfigurePage = () => {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <div className="mb-1 ml-2 flex cursor-pointer flex-row items-center gap-0.5 rounded-md bg-yellow/20 px-1.5 pb-[0.03rem] pt-[0.04rem] text-sm text-yellow opacity-80 hover:opacity-100">
+              <div className="mb-1 ml-2 flex cursor-pointer flex-row items-center gap-0.5 rounded-md bg-yellow/20 px-1.5 pt-[0.04rem] pb-[0.03rem] text-sm text-yellow opacity-80 hover:opacity-100">
                 <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
                 Docs
                 <FontAwesomeIcon
                   icon={faArrowUpRightFromSquare}
-                  className="mb-[0.07rem] ml-1.5 text-xxs"
+                  className="text-xxs mb-[0.07rem] ml-1.5"
                 />
               </div>
             </a>
@@ -179,9 +172,9 @@ export const CircleCIConfigurePage = () => {
                 value={value}
                 getOptionLabel={(option) => option.name}
                 onChange={onChange}
-                options={currentWorkspace?.environments}
+                options={currentProject?.environments}
                 placeholder="Select a project environment"
-                isDisabled={!currentWorkspace?.environments.length}
+                isDisabled={!currentProject?.environments.length}
               />
             </FormControl>
           )}

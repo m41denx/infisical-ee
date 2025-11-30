@@ -1,4 +1,4 @@
-import { requestContext } from "@fastify/request-context";
+import { requestContext, RequestContextData } from "@fastify/request-context";
 import { FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import type { JwtPayload } from "jsonwebtoken";
@@ -8,6 +8,7 @@ import { TScimTokenJwtPayload } from "@app/ee/services/scim/scim-types";
 import { getConfig } from "@app/lib/config/env";
 import { crypto } from "@app/lib/crypto";
 import { BadRequestError } from "@app/lib/errors";
+import { slugSchema } from "@app/server/lib/schemas";
 import { ActorType, AuthMethod, AuthMode, AuthModeJwtTokenPayload, AuthTokenType } from "@app/services/auth/auth-type";
 import { TIdentityAccessTokenJwtPayload } from "@app/services/identity-access-token/identity-access-token-types";
 import { getServerCfg } from "@app/services/super-admin/super-admin-service";
@@ -20,6 +21,8 @@ export type TAuthMode =
       tokenVersionId: string; // the session id of token used
       user: TUsers;
       orgId: string;
+      rootOrgId: string;
+      parentOrgId: string;
       authMethod: AuthMethod;
       isMfaVerified?: boolean;
       token: AuthModeJwtTokenPayload;
@@ -31,6 +34,8 @@ export type TAuthMode =
       userId: string;
       user: TUsers;
       orgId: string;
+      rootOrgId: string;
+      parentOrgId: string;
       token: string;
     }
   | {
@@ -39,6 +44,8 @@ export type TAuthMode =
       actor: ActorType.SERVICE;
       serviceTokenId: string;
       orgId: string;
+      rootOrgId: string;
+      parentOrgId: string;
       authMethod: null;
       token: string;
     }
@@ -48,6 +55,8 @@ export type TAuthMode =
       identityId: string;
       identityName: string;
       orgId: string;
+      rootOrgId: string;
+      parentOrgId: string;
       authMethod: null;
       isInstanceAdmin?: boolean;
       token: TIdentityAccessTokenJwtPayload;
@@ -57,6 +66,8 @@ export type TAuthMode =
       actor: ActorType.SCIM_CLIENT;
       scimTokenId: string;
       orgId: string;
+      rootOrgId: string;
+      parentOrgId: string;
       authMethod: null;
     };
 
@@ -122,6 +133,16 @@ export const injectIdentity = fp(
         return;
       }
 
+      // Authentication is handled on a route-level
+      if (req.url === "/api/v1/relays/register-instance-relay") {
+        return;
+      }
+
+      // Authentication is handled on a route-level
+      if (req.url === "/api/v1/relays/heartbeat-instance-relay") {
+        return;
+      }
+
       // Authentication is handled on a route-level here.
       if (req.url.includes("/api/v1/workflow-integrations/microsoft-teams/message-endpoint")) {
         return;
@@ -131,17 +152,27 @@ export const injectIdentity = fp(
 
       if (!authMode) return;
 
+      const subOrganizationSelector = req.headers?.["x-infisical-org"] as string | undefined;
+      if (subOrganizationSelector) {
+        await slugSchema().parseAsync(subOrganizationSelector);
+      }
+
       switch (authMode) {
         case AuthMode.JWT: {
-          const { user, tokenVersionId, orgId } = await server.services.authToken.fnValidateJwtIdentity(token);
+          const { user, tokenVersionId, orgId, orgName, rootOrgId, parentOrgId } =
+            await server.services.authToken.fnValidateJwtIdentity(token, subOrganizationSelector);
           requestContext.set("orgId", orgId);
+          requestContext.set("orgName", orgName);
+          requestContext.set("userAuthInfo", { userId: user.id, email: user.email || "" });
           req.auth = {
             authMode: AuthMode.JWT,
             user,
             userId: user.id,
             tokenVersionId,
             actor,
-            orgId: orgId as string,
+            orgId,
+            rootOrgId,
+            parentOrgId,
             authMethod: token.authMethod,
             isMfaVerified: token.isMfaVerified,
             token
@@ -149,44 +180,56 @@ export const injectIdentity = fp(
           break;
         }
         case AuthMode.IDENTITY_ACCESS_TOKEN: {
-          const identity = await server.services.identityAccessToken.fnValidateIdentityAccessToken(token, req.realIp);
+          const identity = await server.services.identityAccessToken.fnValidateIdentityAccessToken(
+            token,
+            req.realIp,
+            subOrganizationSelector
+          );
           const serverCfg = await getServerCfg();
           requestContext.set("orgId", identity.orgId);
+          requestContext.set("orgName", identity.orgName);
           req.auth = {
             authMode: AuthMode.IDENTITY_ACCESS_TOKEN,
             actor,
             orgId: identity.orgId,
+            rootOrgId: identity.rootOrgId,
+            parentOrgId: identity.parentOrgId,
             identityId: identity.identityId,
             identityName: identity.name,
             authMethod: null,
             isInstanceAdmin: serverCfg?.adminIdentityIds?.includes(identity.identityId),
             token
           };
+          const identityAuthInfo: RequestContextData["identityAuthInfo"] = {
+            identityId: identity.identityId,
+            identityName: identity.name,
+            authMethod: identity.authMethod
+          };
+
           if (token?.identityAuth?.oidc) {
-            requestContext.set("identityAuthInfo", {
-              identityId: identity.identityId,
-              oidc: token?.identityAuth?.oidc
-            });
+            identityAuthInfo.oidc = token?.identityAuth?.oidc;
           }
           if (token?.identityAuth?.kubernetes) {
-            requestContext.set("identityAuthInfo", {
-              identityId: identity.identityId,
-              kubernetes: token?.identityAuth?.kubernetes
-            });
+            identityAuthInfo.kubernetes = token?.identityAuth?.kubernetes;
           }
           if (token?.identityAuth?.aws) {
-            requestContext.set("identityAuthInfo", {
-              identityId: identity.identityId,
-              aws: token?.identityAuth?.aws
-            });
+            identityAuthInfo.aws = token?.identityAuth?.aws;
           }
+
+          requestContext.set("identityAuthInfo", identityAuthInfo);
           break;
         }
         case AuthMode.SERVICE_TOKEN: {
           const serviceToken = await server.services.serviceToken.fnValidateServiceToken(token);
           requestContext.set("orgId", serviceToken.orgId);
+
+          if (subOrganizationSelector)
+            throw new BadRequestError({ message: `Service token doesn't support sub organization selector` });
+
           req.auth = {
             orgId: serviceToken.orgId,
+            rootOrgId: serviceToken.rootOrgId,
+            parentOrgId: serviceToken.parentOrgId,
             authMode: AuthMode.SERVICE_TOKEN as const,
             serviceToken,
             serviceTokenId: serviceToken.id,
@@ -197,22 +240,27 @@ export const injectIdentity = fp(
           break;
         }
         case AuthMode.API_KEY: {
-          const user = await server.services.apiKey.fnValidateApiKey(token as string);
-          req.auth = {
-            authMode: AuthMode.API_KEY as const,
-            userId: user.id,
-            actor,
-            user,
-            orgId: "API_KEY", // We set the orgId to an arbitrary value, since we can't link an API key to a specific org. We have to deprecate API keys soon!
-            authMethod: null,
-            token: token as string
-          };
-          break;
+          throw new BadRequestError({
+            message: "API key authentication is not supported anymore. Please switch to identity authentication."
+          });
         }
         case AuthMode.SCIM_TOKEN: {
           const { orgId, scimTokenId } = await server.services.scim.fnValidateScimToken(token);
           requestContext.set("orgId", orgId);
-          req.auth = { authMode: AuthMode.SCIM_TOKEN, actor, scimTokenId, orgId, authMethod: null };
+
+          if (subOrganizationSelector)
+            throw new BadRequestError({ message: `SCIM token doesn't support sub organization selector` });
+
+          req.auth = {
+            authMode: AuthMode.SCIM_TOKEN,
+            actor,
+            scimTokenId,
+            orgId,
+            authMethod: null,
+            // scim cannot be done for sub organization
+            rootOrgId: orgId,
+            parentOrgId: orgId
+          };
           break;
         }
         default:

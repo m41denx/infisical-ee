@@ -10,6 +10,8 @@ import {
   faArrowRight,
   faArrowRightToBracket,
   faArrowUp,
+  faCheck,
+  faCopy,
   faFilter,
   faFingerprint,
   faFolder,
@@ -20,7 +22,7 @@ import {
   faRotate
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Link, useNavigate, useRouter, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import { twMerge } from "tailwind-merge";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
@@ -63,9 +65,9 @@ import {
   ProjectPermissionActions,
   ProjectPermissionDynamicSecretActions,
   ProjectPermissionSub,
+  useProject,
   useProjectPermission,
-  useSubscription,
-  useWorkspace
+  useSubscription
 } from "@app/context";
 import { ProjectPermissionSecretRotationActions } from "@app/context/ProjectPermissionContext/types";
 import {
@@ -79,6 +81,7 @@ import {
   usePopUp,
   useResetPageHelper,
   useResizableHeaderHeight,
+  useTimedReset,
   useToggle
 } from "@app/hooks";
 import {
@@ -86,22 +89,18 @@ import {
   useCreateSecretV3,
   useDeleteSecretV3,
   useGetImportedSecretsAllEnvs,
+  useGetOrCreateFolder,
   useGetWsTags,
   useUpdateSecretV3
 } from "@app/hooks/api";
 import { useGetProjectSecretsOverview } from "@app/hooks/api/dashboard/queries";
 import { DashboardSecretsOrderBy, ProjectSecretsImportedBy } from "@app/hooks/api/dashboard/types";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
+import { ProjectType, ProjectVersion } from "@app/hooks/api/projects/types";
 import { useUpdateFolderBatch } from "@app/hooks/api/secretFolders/queries";
 import { TUpdateFolderBatchDTO } from "@app/hooks/api/secretFolders/types";
 import { TSecretRotationV2 } from "@app/hooks/api/secretRotationsV2";
-import {
-  SecretType,
-  SecretV3RawSanitized,
-  TSecretFolder,
-  WorkspaceEnv
-} from "@app/hooks/api/types";
-import { ProjectVersion } from "@app/hooks/api/workspace/types";
+import { ProjectEnv, SecretType, SecretV3RawSanitized, TSecretFolder } from "@app/hooks/api/types";
 import {
   useDynamicSecretOverview,
   useFolderOverview,
@@ -169,14 +168,18 @@ export const OverviewPage = () => {
       search: el.search
     })
   });
+
+  const orgId = useParams({
+    from: ROUTE_PATHS.SecretManager.OverviewPage.id,
+    select: (el) => el.orgId
+  });
   const [scrollOffset, setScrollOffset] = useState(0);
   const [debouncedScrollOffset] = useDebounce(scrollOffset);
   const { permission } = useProjectPermission();
   const tableRef = useRef<HTMLDivElement>(null);
-  const { currentWorkspace } = useWorkspace();
-  const isProjectV3 = currentWorkspace?.version === ProjectVersion.V3;
-  const workspaceId = currentWorkspace?.id as string;
-  const projectSlug = currentWorkspace?.slug as string;
+  const { currentProject, projectId } = useProject();
+  const isProjectV3 = currentProject?.version === ProjectVersion.V3;
+  const projectSlug = currentProject?.slug as string;
   const [searchFilter, setSearchFilter] = useState("");
   const [debouncedSearchFilter, setDebouncedSearchFilter] = useDebounce(searchFilter);
   const secretPath = (routerSearch?.secretPath as string) || "/";
@@ -192,6 +195,15 @@ export const OverviewPage = () => {
     } else {
       localStorage.setItem("overview-collapse-environments", "true");
     }
+  };
+
+  const [copiedSlug, , setCopiedSlug] = useTimedReset<string>({
+    initialState: ""
+  });
+
+  const copyToClipboard = (value: string, slug: string) => {
+    navigator.clipboard.writeText(value);
+    setCopiedSlug(slug);
   };
 
   const [filter, setFilter] = useState<Filter>(DEFAULT_FILTER_STATE);
@@ -246,7 +258,7 @@ export const OverviewPage = () => {
     };
   }, []);
 
-  const userAvailableEnvs = currentWorkspace?.environments || [];
+  const userAvailableEnvs = currentProject?.environments || [];
   const userAvailableDynamicSecretEnvs = userAvailableEnvs.filter((env) =>
     permission.can(
       ProjectPermissionDynamicSecretActions.CreateRootCredential,
@@ -267,7 +279,7 @@ export const OverviewPage = () => {
     )
   );
 
-  const [filteredEnvs, setFilteredEnvs] = useState<WorkspaceEnv[]>([]);
+  const [filteredEnvs, setFilteredEnvs] = useState<ProjectEnv[]>([]);
   const visibleEnvs = filteredEnvs.length ? filteredEnvs : userAvailableEnvs;
 
   const {
@@ -276,15 +288,19 @@ export const OverviewPage = () => {
     getImportedSecretByKey,
     getEnvImportedSecretKeyCount
   } = useGetImportedSecretsAllEnvs({
-    projectId: workspaceId,
+    projectId,
     path: secretPath,
     environments: (userAvailableEnvs || []).map(({ slug }) => slug)
   });
 
   const isFilteredByResources = Object.values(filter).some(Boolean);
-  const { isPending: isOverviewLoading, data: overview } = useGetProjectSecretsOverview(
+  const {
+    isPending: isOverviewLoading,
+    data: overview,
+    isFetching: isOverviewFetching
+  } = useGetProjectSecretsOverview(
     {
-      projectId: workspaceId,
+      projectId,
       environments: visibleEnvs.map((env) => env.slug),
       secretPath,
       orderDirection,
@@ -355,9 +371,7 @@ export const OverviewPage = () => {
     getSecretRotationStatusesByName
   } = useSecretRotationOverview(secretRotations);
 
-  const { secKeys, getEnvSecretKeyCount } = useSecretOverview(
-    secrets?.concat(secretImportsShaped) || []
-  );
+  const { secKeys, getEnvSecretKeyCount } = useSecretOverview(secrets || []);
 
   const getSecretByKey = useCallback(
     (env: string, key: string) => {
@@ -368,13 +382,14 @@ export const OverviewPage = () => {
   );
 
   const { data: tags } = useGetWsTags(
-    permission.can(ProjectPermissionActions.Read, ProjectPermissionSub.Tags) ? workspaceId : ""
+    permission.can(ProjectPermissionActions.Read, ProjectPermissionSub.Tags) ? projectId : ""
   );
 
   const { mutateAsync: createSecretV3 } = useCreateSecretV3();
   const { mutateAsync: updateSecretV3 } = useUpdateSecretV3();
   const { mutateAsync: deleteSecretV3 } = useDeleteSecretV3();
   const { mutateAsync: createFolder } = useCreateFolder();
+  const { mutateAsync: getOrCreateFolder } = useGetOrCreateFolder();
   const { mutateAsync: updateFolderBatch } = useUpdateFolderBatch();
 
   const { handlePopUpOpen, handlePopUpToggle, handlePopUpClose, popUp } = usePopUp([
@@ -392,16 +407,32 @@ export const OverviewPage = () => {
   ] as const);
 
   const handleFolderCreate = async (folderName: string, description: string | null) => {
-    const promises = userAvailableEnvs.map((env) => {
-      const environment = env.slug;
-      return createFolder({
-        name: folderName,
-        path: secretPath,
-        environment,
-        projectId: workspaceId,
-        description
+    const promises = userAvailableEnvs
+      .map((env) => {
+        const environment = env.slug;
+        const isFolderPresent = isFolderPresentInEnv(folderName, environment);
+        if (isFolderPresent) {
+          return undefined;
+        }
+
+        return createFolder({
+          name: folderName,
+          path: secretPath,
+          environment,
+          projectId,
+          description
+        });
+      })
+      .filter((promise) => promise !== undefined);
+
+    if (promises.length === 0) {
+      handlePopUpClose("addFolder");
+      createNotification({
+        type: "info",
+        text: "Folder already exists in all environments"
       });
-    });
+      return;
+    }
 
     const results = await Promise.allSettled(promises);
     const isFoldersAdded = results.some((result) => result.status === "fulfilled");
@@ -456,9 +487,8 @@ export const OverviewPage = () => {
 
     try {
       await updateFolderBatch({
-        projectSlug,
         folders: updatedFolders,
-        projectId: workspaceId
+        projectId
       });
       createNotification({
         type: "success",
@@ -475,55 +505,47 @@ export const OverviewPage = () => {
   };
 
   const handleSecretCreate = async (env: string, key: string, value: string) => {
-    try {
-      // create folder if not existing
-      if (secretPath !== "/") {
-        // /hello/world -> [hello","world"]
-        const pathSegment = secretPath.split("/").filter(Boolean);
-        const parentPath = `/${pathSegment.slice(0, -1).join("/")}`;
-        const folderName = pathSegment.at(-1);
-        const canCreateFolder = permission.can(
-          ProjectPermissionActions.Create,
-          subject(ProjectPermissionSub.SecretFolders, {
-            environment: env,
-            secretPath: parentPath
-          })
-        );
-        if (folderName && parentPath && canCreateFolder) {
-          await createFolder({
-            projectId: workspaceId,
-            path: parentPath,
-            environment: env,
-            name: folderName
-          });
-        }
+    // create folder if not existing
+    if (secretPath !== "/") {
+      // /hello/world -> [hello","world"]
+      const pathSegment = secretPath.split("/").filter(Boolean);
+      const parentPath = `/${pathSegment.slice(0, -1).join("/")}`;
+      const folderName = pathSegment.at(-1);
+      const canCreateFolder = permission.can(
+        ProjectPermissionActions.Create,
+        subject(ProjectPermissionSub.SecretFolders, {
+          environment: env,
+          secretPath: parentPath
+        })
+      );
+      if (folderName && parentPath && canCreateFolder) {
+        await getOrCreateFolder({
+          projectId,
+          path: parentPath,
+          environment: env,
+          name: folderName
+        });
       }
-      const result = await createSecretV3({
-        environment: env,
-        workspaceId,
-        secretPath,
-        secretKey: key,
-        secretValue: value,
-        secretComment: "",
-        type: SecretType.Shared
-      });
+    }
+    const result = await createSecretV3({
+      environment: env,
+      projectId,
+      secretPath,
+      secretKey: key,
+      secretValue: value,
+      secretComment: "",
+      type: SecretType.Shared
+    });
 
-      if ("approval" in result) {
-        createNotification({
-          type: "info",
-          text: "Requested change has been sent for review"
-        });
-      } else {
-        createNotification({
-          type: "success",
-          text: "Successfully created secret"
-        });
-      }
-    } catch (error) {
-      console.log(error);
+    if ("approval" in result) {
       createNotification({
-        type: "error",
-        text: "Failed to create secret"
+        type: "info",
+        text: "Requested change has been sent for review"
+      });
+    } else {
+      createNotification({
+        type: "success",
+        text: "Successfully created secret"
       });
     }
   };
@@ -552,63 +574,47 @@ export const OverviewPage = () => {
       secretValue = undefined;
     }
 
-    try {
-      const result = await updateSecretV3({
-        environment: env,
-        workspaceId,
-        secretPath,
-        secretKey: key,
-        secretValue,
-        type
-      });
+    const result = await updateSecretV3({
+      environment: env,
+      projectId,
+      secretPath,
+      secretKey: key,
+      secretValue,
+      type
+    });
 
-      if ("approval" in result) {
-        createNotification({
-          type: "info",
-          text: "Requested change has been sent for review"
-        });
-      } else {
-        createNotification({
-          type: "success",
-          text: "Successfully updated secret"
-        });
-      }
-    } catch (error) {
-      console.log(error);
+    if ("approval" in result) {
       createNotification({
-        type: "error",
-        text: "Failed to update secret"
+        type: "info",
+        text: "Requested change has been sent for review"
+      });
+    } else {
+      createNotification({
+        type: "success",
+        text: "Successfully updated secret"
       });
     }
   };
 
   const handleSecretDelete = async (env: string, key: string, secretId?: string) => {
-    try {
-      const result = await deleteSecretV3({
-        environment: env,
-        workspaceId,
-        secretPath,
-        secretKey: key,
-        secretId,
-        type: SecretType.Shared
-      });
+    const result = await deleteSecretV3({
+      environment: env,
+      projectId,
+      secretPath,
+      secretKey: key,
+      secretId,
+      type: SecretType.Shared
+    });
 
-      if ("approval" in result) {
-        createNotification({
-          type: "info",
-          text: "Requested change has been sent for review"
-        });
-      } else {
-        createNotification({
-          type: "success",
-          text: "Successfully deleted secret"
-        });
-      }
-    } catch (error) {
-      console.log(error);
+    if ("approval" in result) {
       createNotification({
-        type: "error",
-        text: "Failed to delete secret"
+        type: "info",
+        text: "Requested change has been sent for review"
+      });
+    } else {
+      createNotification({
+        type: "success",
+        text: "Successfully deleted secret"
       });
     }
   };
@@ -622,6 +628,8 @@ export const OverviewPage = () => {
   };
 
   const handleFolderClick = (path: string) => {
+    if (isOverviewFetching) return;
+
     // store for breadcrumb nav to restore previously used filters
     setFilterHistory((prev) => {
       const curr = new Map(prev);
@@ -654,8 +662,8 @@ export const OverviewPage = () => {
         })
       );
       if (folderName && parentPath && canCreateFolder) {
-        await createFolder({
-          projectId: workspaceId,
+        await getOrCreateFolder({
+          projectId,
           environment: slug,
           path: parentPath,
           name: folderName
@@ -667,9 +675,10 @@ export const OverviewPage = () => {
     const envIndex = visibleEnvs.findIndex((el) => slug === el.slug);
     if (envIndex !== -1) {
       navigate({
-        to: "/projects/secret-management/$projectId/secrets/$envSlug",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/secrets/$envSlug",
         params: {
-          projectId: workspaceId,
+          orgId,
+          projectId,
           envSlug: slug
         },
         search: query
@@ -738,6 +747,9 @@ export const OverviewPage = () => {
 
     userAvailableEnvs.forEach((env) => {
       secrets?.forEach((secret) => {
+        // bulk actions don't apply to rotation secrets (move/delete)
+        if (secret.isRotatedSecret) return;
+
         if (allRowsSelectedOnPage.isChecked) {
           delete newChecks[EntryType.SECRET][secret.key];
         } else {
@@ -890,7 +902,7 @@ export const OverviewPage = () => {
 
   if (isProjectV3 && visibleEnvs.length > 0 && isOverviewLoading) {
     return (
-      <div className="container mx-auto flex h-screen w-full items-center justify-center px-8 text-mineshaft-50 dark:[color-scheme:dark]">
+      <div className="container mx-auto flex h-screen w-full items-center justify-center px-8 text-mineshaft-50 dark:scheme-dark">
         <Lottie isAutoPlay icon="infisical_loading" className="h-32 w-32" />
       </div>
     );
@@ -906,7 +918,7 @@ export const OverviewPage = () => {
 
   if (!isProjectV3)
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center px-6 text-mineshaft-50 dark:[color-scheme:dark]">
+      <div className="flex h-full w-full flex-col items-center justify-center px-6 text-mineshaft-50 dark:scheme-dark">
         <SecretV2MigrationSection />
       </div>
     );
@@ -917,15 +929,16 @@ export const OverviewPage = () => {
         <meta property="og:title" content={String(t("dashboard.og-title"))} />
         <meta name="og:description" content={String(t("dashboard.og-description"))} />
       </Helmet>
-      <div className="relative mx-auto max-w-7xl text-mineshaft-50 dark:[color-scheme:dark]">
+      <div className="relative mx-auto max-w-8xl text-mineshaft-50 dark:scheme-dark">
         <div className="flex w-full items-baseline justify-between">
           <PageHeader
-            title="Secrets Overview"
+            scope={ProjectType.SecretManager}
+            title="Project Overview"
             description={
               <p className="text-md text-bunker-300">
                 Inject your secrets using
                 <a
-                  className="ml-1 text-mineshaft-300 underline decoration-primary-800 underline-offset-4 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
+                  className="ml-1 text-mineshaft-200 underline decoration-mineshaft-400/65 underline-offset-3 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
                   href="https://infisical.com/docs/cli/overview"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -934,7 +947,7 @@ export const OverviewPage = () => {
                 </a>
                 ,
                 <a
-                  className="ml-1 text-mineshaft-300 underline decoration-primary-800 underline-offset-4 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
+                  className="ml-1 text-mineshaft-200 underline decoration-mineshaft-400/65 underline-offset-3 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
                   href="https://infisical.com/docs/documentation/getting-started/api"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -943,7 +956,7 @@ export const OverviewPage = () => {
                 </a>
                 ,
                 <a
-                  className="ml-1 text-mineshaft-300 underline decoration-primary-800 underline-offset-4 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
+                  className="ml-1 text-mineshaft-200 underline decoration-mineshaft-400/65 underline-offset-3 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
                   href="https://infisical.com/docs/sdks/overview"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -952,7 +965,7 @@ export const OverviewPage = () => {
                 </a>
                 , and
                 <a
-                  className="ml-1 text-mineshaft-300 underline decoration-primary-800 underline-offset-4 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
+                  className="ml-1 text-mineshaft-200 underline decoration-mineshaft-400/65 underline-offset-3 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
                   href="https://infisical.com/docs/documentation/getting-started/introduction"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -964,9 +977,9 @@ export const OverviewPage = () => {
             }
           />
         </div>
-        <div className="mt-4 flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <FolderBreadCrumbs secretPath={secretPath} onResetSearch={handleResetSearch} />
-          <div className="flex flex-row items-center justify-center space-x-2">
+          <div className="flex flex-row flex-wrap items-center gap-2">
             {isTableFiltered && (
               <Button
                 variant="plain"
@@ -986,7 +999,7 @@ export const OverviewPage = () => {
                     size="sm"
                     variant="outline_bg"
                     className={twMerge(
-                      "flex h-[2.5rem]",
+                      "flex h-10",
                       isTableFiltered && "border-primary/40 bg-primary/10"
                     )}
                     leftIcon={
@@ -1000,7 +1013,7 @@ export const OverviewPage = () => {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
-                  className="thin-scrollbar max-h-[70vh] overflow-y-auto"
+                  className="max-h-[70vh] thin-scrollbar overflow-y-auto"
                   align="end"
                   sideOffset={2}
                 >
@@ -1099,7 +1112,7 @@ export const OverviewPage = () => {
               tags={tags}
               onChange={setSearchFilter}
               environments={userAvailableEnvs}
-              projectId={currentWorkspace?.id}
+              projectId={currentProject?.id}
             />
             {userAvailableEnvs.length > 0 && (
               <div>
@@ -1159,7 +1172,10 @@ export const OverviewPage = () => {
                               handlePopUpClose("misc");
                               return;
                             }
-                            handlePopUpOpen("upgradePlan");
+                            handlePopUpOpen("upgradePlan", {
+                              isEnterpriseFeature: true,
+                              text: "Adding dynamic secrets can be unlocked if you upgrade to Infisical Enterprise plan."
+                            });
                           }}
                           isDisabled={userAvailableDynamicSecretEnvs.length === 0}
                           variant="outline_bg"
@@ -1182,7 +1198,9 @@ export const OverviewPage = () => {
                               handlePopUpClose("misc");
                               return;
                             }
-                            handlePopUpOpen("upgradePlan");
+                            handlePopUpOpen("upgradePlan", {
+                              text: "Adding secret rotations can be unlocked if you upgrade to Infisical Pro plan."
+                            });
                           }}
                           isDisabled={userAvailableSecretRotationEnvs.length === 0}
                           variant="outline_bg"
@@ -1210,7 +1228,7 @@ export const OverviewPage = () => {
         <div ref={tableRef} className="mt-4">
           <TableContainer
             onScroll={(e) => setScrollOffset(e.currentTarget.scrollLeft)}
-            className="thin-scrollbar max-h-[66vh] overflow-y-auto rounded-b-none"
+            className="max-h-[66vh] thin-scrollbar overflow-y-auto rounded-b-none"
           >
             <Table>
               <THead
@@ -1227,7 +1245,7 @@ export const OverviewPage = () => {
                   >
                     <div
                       className={twMerge(
-                        "flex h-full border-b border-mineshaft-600 pb-3 pl-3 pr-5",
+                        "flex h-full border-b border-mineshaft-600 pr-5 pb-3 pl-3",
                         !collapseEnvironments && "border-r pt-3.5"
                       )}
                     >
@@ -1244,7 +1262,7 @@ export const OverviewPage = () => {
                               : ""
                           }
                         >
-                          <div className="ml-2 mr-4">
+                          <div className="mr-4 ml-2">
                             <Checkbox
                               isDisabled={totalCount === 0}
                               id="checkbox-select-all-rows"
@@ -1282,7 +1300,7 @@ export const OverviewPage = () => {
                           ariaLabel="Toggle Environment View"
                           variant="plain"
                           colorSchema="secondary"
-                          className="ml-auto mt-auto h-min p-1"
+                          className="mt-auto ml-auto h-min p-1"
                           onClick={handleToggleNarrowHeader}
                         >
                           <FontAwesomeIcon
@@ -1303,14 +1321,14 @@ export const OverviewPage = () => {
                       <Th
                         className={twMerge(
                           "min-table-row border-b-0 p-0 text-xs",
-                          collapseEnvironments && index === visibleEnvs.length - 1 && "!mr-8",
-                          !collapseEnvironments && "min-w-[11rem] text-center"
+                          collapseEnvironments && index === visibleEnvs.length - 1 && "mr-8!",
+                          !collapseEnvironments && "min-w-44 text-center"
                         )}
                         style={
                           collapseEnvironments
                             ? {
                                 height: headerHeight,
-                                width: "w-[1rem]"
+                                width: "w-4"
                               }
                             : undefined
                         }
@@ -1318,26 +1336,40 @@ export const OverviewPage = () => {
                       >
                         <Tooltip
                           content={
-                            collapseEnvironments ? (
-                              <p className="whitespace-break-spaces">{name}</p>
-                            ) : (
-                              ""
-                            )
+                            <div className="flex flex-col gap-2">
+                              {collapseEnvironments ? (
+                                <p className="whitespace-break-spaces text-mineshaft-300">{name}</p>
+                              ) : (
+                                ""
+                              )}
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs text-mineshaft-300">{slug}</p>
+                                <IconButton
+                                  variant="plain"
+                                  colorSchema="secondary"
+                                  ariaLabel="Copy environment slug"
+                                  onClick={() => copyToClipboard(slug, slug)}
+                                >
+                                  <FontAwesomeIcon icon={copiedSlug === slug ? faCheck : faCopy} />
+                                </IconButton>
+                              </div>
+                            </div>
                           }
                           side="bottom"
-                          sideOffset={-1}
-                          align="end"
+                          sideOffset={5}
+                          align="center"
                           className="max-w-xl text-xs normal-case"
                           rootProps={{
-                            disableHoverableContent: true
+                            disableHoverableContent: false
                           }}
+                          key={`tooltip-${name}-${index + 1}`}
                         >
                           <div
                             className={twMerge(
                               "border-b border-mineshaft-600",
                               collapseEnvironments
                                 ? "relative"
-                                : "flex items-center justify-center px-5 pb-[0.82rem] pt-3.5",
+                                : "flex items-center justify-center px-5 pt-3.5 pb-[0.82rem]",
                               collapseEnvironments && isLast && "overflow-clip"
                             )}
                             style={{
@@ -1380,7 +1412,7 @@ export const OverviewPage = () => {
                                 className="max-w-none lowercase"
                                 content={`${missingKeyCount} secrets missing\n compared to other environments`}
                               >
-                                <div className="ml-2 flex h-[1.1rem] cursor-default items-center justify-center rounded-sm border border-red-400 bg-red-600 p-1 text-xs font-medium text-bunker-100">
+                                <div className="ml-2 flex h-[1.1rem] cursor-default items-center justify-center rounded-xs border border-red-400 bg-red-600 p-1 text-xs font-medium text-bunker-100">
                                   <span className="text-bunker-100">{missingKeyCount}</span>
                                 </div>
                               </Tooltip>
@@ -1417,9 +1449,10 @@ export const OverviewPage = () => {
                         iconSize="3x"
                       >
                         <Link
-                          to="/projects/secret-management/$projectId/settings"
+                          to="/organizations/$orgId/projects/secret-management/$projectId/settings"
                           params={{
-                            projectId: workspaceId
+                            orgId,
+                            projectId
                           }}
                           hash="environments"
                         >
@@ -1547,7 +1580,7 @@ export const OverviewPage = () => {
                 <Tr className="sticky bottom-0 z-10 border-0 bg-mineshaft-800">
                   <Td className="sticky left-0 z-10 border-0 bg-mineshaft-800 p-0">
                     <div
-                      className="w-full border-r border-t border-mineshaft-600"
+                      className="w-full border-t border-r border-mineshaft-600"
                       style={{ height: "45px" }}
                     />
                   </Td>
@@ -1567,7 +1600,7 @@ export const OverviewPage = () => {
                               ariaLabel="Explore Environment"
                               size="xs"
                               variant="outline_bg"
-                              className="mx-auto h-[1.76rem] rounded"
+                              className="mx-auto h-[1.76rem] rounded-sm"
                               onClick={() => handleExploreEnvClick(slug)}
                             >
                               <FontAwesomeIcon icon={faArrowRightToBracket} />
@@ -1666,11 +1699,8 @@ export const OverviewPage = () => {
         <UpgradePlanModal
           isOpen={popUp.upgradePlan.isOpen}
           onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-          text={
-            subscription.slug === null
-              ? "You can perform this action under an Enterprise license"
-              : "You can perform this action if you switch to Infisical's Team plan"
-          }
+          isEnterpriseFeature={popUp.upgradePlan.data?.isEnterpriseFeature}
+          text={popUp.upgradePlan.data?.text}
         />
       )}
       <CreateSecretRotationV2Modal

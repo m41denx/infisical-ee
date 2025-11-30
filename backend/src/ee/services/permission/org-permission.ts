@@ -15,6 +15,11 @@ export enum OrgPermissionActions {
   Delete = "delete"
 }
 
+export enum OrgPermissionSubOrgActions {
+  Create = "create",
+  DirectAccess = "direct-access"
+}
+
 export enum OrgPermissionAppConnectionActions {
   Read = "read",
   Create = "create",
@@ -58,6 +63,13 @@ export enum OrgPermissionGatewayActions {
   AttachGateways = "attach-gateways"
 }
 
+export enum OrgPermissionRelayActions {
+  CreateRelays = "create-relays",
+  ListRelays = "list-relays",
+  EditRelays = "edit-relays",
+  DeleteRelays = "delete-relays"
+}
+
 export enum OrgPermissionIdentityActions {
   Read = "read",
   Create = "create",
@@ -87,6 +99,7 @@ export enum OrgPermissionBillingActions {
 
 export enum OrgPermissionSubjects {
   Workspace = "workspace",
+  Project = "project",
   Role = "role",
   Member = "member",
   Settings = "settings",
@@ -108,7 +121,9 @@ export enum OrgPermissionSubjects {
   AppConnections = "app-connections",
   Kmip = "kmip",
   Gateway = "gateway",
-  SecretShare = "secret-share"
+  Relay = "relay",
+  SecretShare = "secret-share",
+  SubOrganization = "sub-organization"
 }
 
 export type AppConnectionSubjectFields = {
@@ -117,7 +132,9 @@ export type AppConnectionSubjectFields = {
 
 export type OrgPermissionSet =
   | [OrgPermissionActions.Create, OrgPermissionSubjects.Workspace]
+  | [OrgPermissionActions.Create, OrgPermissionSubjects.Project]
   | [OrgPermissionActions, OrgPermissionSubjects.Role]
+  | [OrgPermissionSubOrgActions, OrgPermissionSubjects.SubOrganization]
   | [OrgPermissionActions, OrgPermissionSubjects.Member]
   | [OrgPermissionActions, OrgPermissionSubjects.Settings]
   | [OrgPermissionActions, OrgPermissionSubjects.IncidentAccount]
@@ -134,6 +151,7 @@ export type OrgPermissionSet =
   | [OrgPermissionAuditLogsActions, OrgPermissionSubjects.AuditLogs]
   | [OrgPermissionActions, OrgPermissionSubjects.ProjectTemplates]
   | [OrgPermissionGatewayActions, OrgPermissionSubjects.Gateway]
+  | [OrgPermissionRelayActions, OrgPermissionSubjects.Relay]
   | [
       OrgPermissionAppConnectionActions,
       (
@@ -167,8 +185,18 @@ export const OrgPermissionSchema = z.discriminatedUnion("subject", [
     action: CASL_ACTION_SCHEMA_ENUM([OrgPermissionActions.Create]).describe("Describe what action an entity can take.")
   }),
   z.object({
+    subject: z.literal(OrgPermissionSubjects.Project).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_ENUM([OrgPermissionActions.Create]).describe("Describe what action an entity can take.")
+  }),
+  z.object({
     subject: z.literal(OrgPermissionSubjects.Role).describe("The entity this permission pertains to."),
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionActions).describe("Describe what action an entity can take.")
+  }),
+  z.object({
+    subject: z.literal(OrgPermissionSubjects.SubOrganization).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionSubOrgActions).describe(
+      "Describe what action an entity can take."
+    )
   }),
   z.object({
     subject: z.literal(OrgPermissionSubjects.Member).describe("The entity this permission pertains to."),
@@ -204,7 +232,9 @@ export const OrgPermissionSchema = z.discriminatedUnion("subject", [
   }),
   z.object({
     subject: z.literal(OrgPermissionSubjects.Groups).describe("The entity this permission pertains to."),
-    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionActions).describe("Describe what action an entity can take.")
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionGroupActions).describe(
+      "Describe what action an entity can take."
+    )
   }),
   z.object({
     subject: z.literal(OrgPermissionSubjects.SecretScanning).describe("The entity this permission pertains to."),
@@ -212,11 +242,15 @@ export const OrgPermissionSchema = z.discriminatedUnion("subject", [
   }),
   z.object({
     subject: z.literal(OrgPermissionSubjects.Billing).describe("The entity this permission pertains to."),
-    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionActions).describe("Describe what action an entity can take.")
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionBillingActions).describe(
+      "Describe what action an entity can take."
+    )
   }),
   z.object({
     subject: z.literal(OrgPermissionSubjects.Identity).describe("The entity this permission pertains to."),
-    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionActions).describe("Describe what action an entity can take.")
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionIdentityActions).describe(
+      "Describe what action an entity can take."
+    )
   }),
   z.object({
     subject: z.literal(OrgPermissionSubjects.Kms).describe("The entity this permission pertains to."),
@@ -273,6 +307,12 @@ export const OrgPermissionSchema = z.discriminatedUnion("subject", [
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionGatewayActions).describe(
       "Describe what action an entity can take."
     )
+  }),
+  z.object({
+    subject: z.literal(OrgPermissionSubjects.Relay).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(OrgPermissionRelayActions).describe(
+      "Describe what action an entity can take."
+    )
   })
 ]);
 
@@ -280,6 +320,11 @@ const buildAdminPermission = () => {
   const { can, rules } = new AbilityBuilder<MongoAbility<OrgPermissionSet>>(createMongoAbility);
   // ws permissions
   can(OrgPermissionActions.Create, OrgPermissionSubjects.Workspace);
+  can(OrgPermissionActions.Create, OrgPermissionSubjects.Project);
+
+  can(OrgPermissionSubOrgActions.Create, OrgPermissionSubjects.SubOrganization);
+  can(OrgPermissionSubOrgActions.DirectAccess, OrgPermissionSubjects.SubOrganization);
+
   // role permission
   can(OrgPermissionActions.Read, OrgPermissionSubjects.Role);
   can(OrgPermissionActions.Create, OrgPermissionSubjects.Role);
@@ -376,6 +421,11 @@ const buildAdminPermission = () => {
   can(OrgPermissionGatewayActions.DeleteGateways, OrgPermissionSubjects.Gateway);
   can(OrgPermissionGatewayActions.AttachGateways, OrgPermissionSubjects.Gateway);
 
+  can(OrgPermissionRelayActions.ListRelays, OrgPermissionSubjects.Relay);
+  can(OrgPermissionRelayActions.CreateRelays, OrgPermissionSubjects.Relay);
+  can(OrgPermissionRelayActions.EditRelays, OrgPermissionSubjects.Relay);
+  can(OrgPermissionRelayActions.DeleteRelays, OrgPermissionSubjects.Relay);
+
   can(OrgPermissionAdminConsoleAction.AccessAllProjects, OrgPermissionSubjects.AdminConsole);
 
   can(OrgPermissionKmipActions.Setup, OrgPermissionSubjects.Kmip);
@@ -413,6 +463,7 @@ const buildMemberPermission = () => {
   const { can, rules } = new AbilityBuilder<MongoAbility<OrgPermissionSet>>(createMongoAbility);
 
   can(OrgPermissionActions.Create, OrgPermissionSubjects.Workspace);
+  can(OrgPermissionActions.Create, OrgPermissionSubjects.Project);
   can(OrgPermissionActions.Read, OrgPermissionSubjects.Member);
   can(OrgPermissionGroupActions.Read, OrgPermissionSubjects.Groups);
   can(OrgPermissionActions.Read, OrgPermissionSubjects.Role);
@@ -436,6 +487,10 @@ const buildMemberPermission = () => {
   can(OrgPermissionGatewayActions.ListGateways, OrgPermissionSubjects.Gateway);
   can(OrgPermissionGatewayActions.CreateGateways, OrgPermissionSubjects.Gateway);
   can(OrgPermissionGatewayActions.AttachGateways, OrgPermissionSubjects.Gateway);
+
+  can(OrgPermissionRelayActions.ListRelays, OrgPermissionSubjects.Relay);
+  can(OrgPermissionRelayActions.CreateRelays, OrgPermissionSubjects.Relay);
+  can(OrgPermissionRelayActions.EditRelays, OrgPermissionSubjects.Relay);
 
   can(OrgPermissionMachineIdentityAuthTemplateActions.ListTemplates, OrgPermissionSubjects.MachineIdentityAuthTemplate);
   can(

@@ -9,15 +9,15 @@ export const NotFoundPage = () => {
       </Helmet>
       <div className="flex h-screen w-screen flex-col items-center justify-center text-gray-200">
         <p className="mt-32 text-4xl">Oops, something went wrong</p>
-        <p className="mb-1 mt-2 text-lg">
+        <p className="mt-2 mb-1 text-lg">
           Think this is a mistake? Email{" "}
           <a className="text-primary underline underline-offset-4" href="mailto:team@infisical.com">
             team@infisical.com
           </a>{" "}
           and we`ll fix it!{" "}
         </p>
-        <Link to="/organization/projects">
-          <div className="diration-200 mt-8 cursor-default rounded-md bg-mineshaft-500 px-4 py-2 font-semibold hover:bg-primary hover:text-black">
+        <Link to="/">
+          <div className="diration-200 mt-8 cursor-default rounded-md bg-mineshaft-500 px-4 py-2 font-medium hover:bg-primary hover:text-black">
             Go to Dashboard
           </div>
         </Link>

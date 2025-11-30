@@ -3,7 +3,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { createNotification } from "@app/components/notifications";
 import { DeleteActionModal, IconButton } from "@app/components/v2";
-import { useDeleteIdentityFromWorkspace } from "@app/hooks/api";
+import { useDeleteProjectIdentityMembership } from "@app/hooks/api";
 import { usePopUp } from "@app/hooks/usePopUp";
 
 import { IdentityAddToProjectModal } from "./IdentityAddToProjectModal";
@@ -14,7 +14,7 @@ type Props = {
 };
 
 export const IdentityProjectsSection = ({ identityId }: Props) => {
-  const { mutateAsync: deleteMutateAsync } = useDeleteIdentityFromWorkspace();
+  const { mutateAsync: deleteMutateAsync } = useDeleteProjectIdentityMembership();
 
   const { popUp, handlePopUpOpen, handlePopUpClose, handlePopUpToggle } = usePopUp([
     "addIdentityToProject",
@@ -22,34 +22,23 @@ export const IdentityProjectsSection = ({ identityId }: Props) => {
   ] as const);
 
   const onRemoveIdentitySubmit = async (id: string, projectId: string) => {
-    try {
-      await deleteMutateAsync({
-        identityId: id,
-        workspaceId: projectId
-      });
+    await deleteMutateAsync({
+      identityId: id,
+      projectId
+    });
 
-      createNotification({
-        text: "Successfully removed identity from project",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully removed identity from project",
+      type: "success"
+    });
 
-      handlePopUpClose("removeIdentityFromProject");
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to remove identity from project";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    handlePopUpClose("removeIdentityFromProject");
   };
 
   return (
     <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-semibold text-mineshaft-100">Projects</h3>
+        <h3 className="text-lg font-medium text-mineshaft-100">Projects</h3>
         <IconButton
           ariaLabel="copy icon"
           variant="plain"

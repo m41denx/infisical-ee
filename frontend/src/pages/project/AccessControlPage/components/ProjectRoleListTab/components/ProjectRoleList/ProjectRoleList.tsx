@@ -13,12 +13,12 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate } from "@tanstack/react-router";
+import { ServerIcon, WrenchIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   Button,
   DeleteActionModal,
   DropdownMenu,
@@ -39,7 +39,8 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { Badge, DocumentationLinkBadge } from "@app/components/v3";
+import { ProjectPermissionActions, ProjectPermissionSub, useProject } from "@app/context";
 import { getProjectBaseURL } from "@app/helpers/project";
 import { isCustomProjectRole } from "@app/helpers/roles";
 import {
@@ -67,8 +68,8 @@ export const ProjectRoleList = () => {
     "deleteRole",
     "duplicateRole"
   ] as const);
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentProject } = useProject();
+  const projectId = currentProject?.id || "";
 
   const { data: roles, isPending: isRolesLoading } = useGetProjectRoles(projectId);
 
@@ -76,17 +77,12 @@ export const ProjectRoleList = () => {
 
   const handleRoleDelete = async () => {
     const { id } = popUp?.deleteRole?.data as TProjectRole;
-    try {
-      await deleteRole({
-        projectId,
-        id
-      });
-      createNotification({ type: "success", text: "Successfully removed the role" });
-      handlePopUpClose("deleteRole");
-    } catch (err) {
-      console.log(err);
-      createNotification({ type: "error", text: "Failed to delete role" });
-    }
+    await deleteRole({
+      projectId,
+      id
+    });
+    createNotification({ type: "success", text: "Successfully removed the role" });
+    handlePopUpClose("deleteRole");
   };
 
   const {
@@ -167,17 +163,20 @@ export const ProjectRoleList = () => {
   return (
     <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="mb-4 flex justify-between">
-        <p className="text-xl font-semibold text-mineshaft-100">Project Roles</p>
+        <div className="flex items-center gap-x-2">
+          <p className="text-xl font-medium text-mineshaft-100">Project Roles</p>
+          <DocumentationLinkBadge href="https://infisical.com/docs/documentation/platform/access-controls/role-based-access-controls#project-level-access-controls" />
+        </div>
         <ProjectPermissionCan I={ProjectPermissionActions.Create} a={ProjectPermissionSub.Role}>
           {(isAllowed) => (
             <Button
-              colorSchema="secondary"
+              variant="outline_bg"
               type="submit"
               leftIcon={<FontAwesomeIcon icon={faPlus} />}
               onClick={() => handlePopUpOpen("role")}
               isDisabled={!isAllowed}
             >
-              Add Role
+              Add Project Role
             </Button>
           )}
         </ProjectPermissionCan>
@@ -250,9 +249,9 @@ export const ProjectRoleList = () => {
                   className="h-10 cursor-pointer transition-colors duration-100 hover:bg-mineshaft-700"
                   onClick={() =>
                     navigate({
-                      to: `${getProjectBaseURL(currentWorkspace.type)}/roles/$roleSlug`,
+                      to: `${getProjectBaseURL(currentProject.type)}/roles/$roleSlug`,
                       params: {
-                        projectId: currentWorkspace.id,
+                        projectId: currentProject.id,
                         roleSlug: slug
                       }
                     })
@@ -261,8 +260,18 @@ export const ProjectRoleList = () => {
                   <Td>{name}</Td>
                   <Td>{slug}</Td>
                   <Td>
-                    <Badge className="w-min whitespace-nowrap bg-mineshaft-400/50 text-bunker-200">
-                      {isCustomProjectRole(slug) ? "Custom" : "Default"}
+                    <Badge variant="ghost">
+                      {isCustomProjectRole(slug) ? (
+                        <>
+                          <WrenchIcon />
+                          Custom
+                        </>
+                      ) : (
+                        <>
+                          <ServerIcon />
+                          Platform
+                        </>
+                      )}
                     </Badge>
                   </Td>
                   <Td>
@@ -278,7 +287,7 @@ export const ProjectRoleList = () => {
                             <FontAwesomeIcon icon={faEllipsisV} />
                           </IconButton>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent className="min-w-[12rem]" sideOffset={2} align="end">
+                        <DropdownMenuContent className="min-w-48" sideOffset={2} align="end">
                           <ProjectPermissionCan
                             I={ProjectPermissionActions.Edit}
                             a={ProjectPermissionSub.Role}
@@ -292,9 +301,9 @@ export const ProjectRoleList = () => {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   navigate({
-                                    to: `${getProjectBaseURL(currentWorkspace.type)}/roles/$roleSlug`,
+                                    to: `${getProjectBaseURL(currentProject.type)}/roles/$roleSlug`,
                                     params: {
-                                      projectId: currentWorkspace.id,
+                                      projectId: currentProject.id,
                                       roleSlug: slug
                                     }
                                   });
@@ -335,7 +344,7 @@ export const ProjectRoleList = () => {
                                   icon={<FontAwesomeIcon icon={faTrash} />}
                                   className={twMerge(
                                     isAllowed
-                                      ? "hover:!bg-red-500 hover:!text-white"
+                                      ? "hover:bg-red-500! hover:text-white!"
                                       : "pointer-events-none cursor-not-allowed opacity-50",
                                     "transition-colors duration-100"
                                   )}

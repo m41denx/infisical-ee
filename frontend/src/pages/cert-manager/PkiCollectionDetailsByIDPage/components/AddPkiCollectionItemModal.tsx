@@ -4,14 +4,10 @@ import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, FormControl, Modal, ModalContent, Select, SelectItem } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
-import {
-  CaStatus,
-  useAddItemToPkiCollection,
-  useListWorkspaceCas,
-  useListWorkspaceCertificates
-} from "@app/hooks/api";
+import { useProject } from "@app/context";
+import { CaStatus, useAddItemToPkiCollection, useListWorkspaceCas } from "@app/hooks/api";
 import { PkiItemType, pkiItemTypeToNameMap } from "@app/hooks/api/pkiCollections/constants";
+import { useListWorkspaceCertificates } from "@app/hooks/api/projects";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 const schema = z
@@ -41,15 +37,15 @@ export const AddPkiCollectionItemModal = ({
   popUp,
   handlePopUpToggle
 }: Props) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   const { data: cas } = useListWorkspaceCas({
-    projectSlug: currentWorkspace?.slug || "",
+    projectId: currentProject?.id || "",
     status: CaStatus.ACTIVE
   });
 
   const { data } = useListWorkspaceCertificates({
-    projectSlug: currentWorkspace?.slug || "",
+    projectId: currentProject?.slug || "",
     offset: 0,
     limit: 25
   });

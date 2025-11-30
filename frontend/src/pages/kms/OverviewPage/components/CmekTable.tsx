@@ -23,7 +23,6 @@ import { motion } from "framer-motion";
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -44,13 +43,13 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { BadgeProps } from "@app/components/v2/Badge/Badge";
+import { Badge, TBadgeProps } from "@app/components/v3";
 import {
   ProjectPermissionActions,
   ProjectPermissionCmekActions,
   ProjectPermissionSub,
-  useProjectPermission,
-  useWorkspace
+  useProject,
+  useProjectPermission
 } from "@app/context";
 import { kmsKeyUsageOptions } from "@app/helpers/kms";
 import {
@@ -72,7 +71,7 @@ import { DeleteCmekModal } from "./DeleteCmekModal";
 
 const getStatusBadgeProps = (
   isDisabled: boolean
-): { variant: BadgeProps["variant"]; label: string } => {
+): { variant: TBadgeProps["variant"]; label: string } => {
   if (isDisabled) {
     return {
       variant: "danger",
@@ -87,10 +86,10 @@ const getStatusBadgeProps = (
 };
 
 export const CmekTable = () => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { permission } = useProjectPermission();
 
-  const projectId = currentWorkspace?.id ?? "";
+  const projectId = currentProject?.id ?? "";
 
   const {
     offset,
@@ -153,28 +152,16 @@ export const CmekTable = () => {
   const updateCmek = useUpdateCmek();
 
   const handleDisableCmek = async ({ id: keyId, isDisabled }: TCmek) => {
-    try {
-      await updateCmek.mutateAsync({
-        keyId,
-        projectId,
-        isDisabled: !isDisabled
-      });
+    await updateCmek.mutateAsync({
+      keyId,
+      projectId,
+      isDisabled: !isDisabled
+    });
 
-      createNotification({
-        text: `Key successfully ${isDisabled ? "enabled" : "disabled"}`,
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text =
-        error?.response?.data?.message ?? `Failed to ${isDisabled ? "enable" : "disable"} key`;
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    createNotification({
+      text: `Key successfully ${isDisabled ? "enabled" : "disabled"}`,
+      type: "success"
+    });
   };
 
   const cannotEditKey = permission.cannot(
@@ -216,7 +203,7 @@ export const CmekTable = () => {
     >
       <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
         <div className="mb-4 flex items-center justify-between">
-          <p className="whitespace-nowrap text-xl font-semibold text-mineshaft-100">Keys</p>
+          <p className="text-xl font-medium whitespace-nowrap text-mineshaft-100">Keys</p>
           <div className="flex w-full justify-end pr-4">
             <a
               target="_blank"

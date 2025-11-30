@@ -58,9 +58,8 @@ const formSchema = z.object({
     const valMs = ms(val);
     if (valMs < 60 * 1000)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-    // a day
-    if (valMs > 24 * 60 * 60 * 1000)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+    if (valMs > ms("10y"))
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
   }),
   maxTTL: z
     .string()
@@ -70,9 +69,8 @@ const formSchema = z.object({
       const valMs = ms(val);
       if (valMs < 60 * 1000)
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-      // a day
-      if (valMs > 24 * 60 * 60 * 1000)
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+      if (valMs > ms("10y"))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
     }),
   newName: slugSchema().optional(),
   usernameTemplate: z.string().trim().nullable().optional()
@@ -125,31 +123,24 @@ export const EditDynamicSecretElasticSearchForm = ({
     // wait till previous request is finished
     if (updateDynamicSecret.isPending) return;
     const isDefaultUsernameTemplate = usernameTemplate === "{{randomUsername}}";
-    try {
-      await updateDynamicSecret.mutateAsync({
-        name: dynamicSecret.name,
-        path: secretPath,
-        projectSlug,
-        environmentSlug: environment,
-        data: {
-          maxTTL: maxTTL || undefined,
-          defaultTTL,
-          inputs,
-          newName: newName === dynamicSecret.name ? undefined : newName,
-          usernameTemplate: !usernameTemplate || isDefaultUsernameTemplate ? null : usernameTemplate
-        }
-      });
-      onClose();
-      createNotification({
-        type: "success",
-        text: "Successfully updated dynamic secret"
-      });
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to update dynamic secret"
-      });
-    }
+    await updateDynamicSecret.mutateAsync({
+      name: dynamicSecret.name,
+      path: secretPath,
+      projectSlug,
+      environmentSlug: environment,
+      data: {
+        maxTTL: maxTTL || undefined,
+        defaultTTL,
+        inputs,
+        newName: newName === dynamicSecret.name ? undefined : newName,
+        usernameTemplate: !usernameTemplate || isDefaultUsernameTemplate ? null : usernameTemplate
+      }
+    });
+    onClose();
+    createNotification({
+      type: "success",
+      text: "Successfully updated dynamic secret"
+    });
   };
 
   const selectedAuthType = watch("inputs.auth.type");
@@ -160,7 +151,7 @@ export const EditDynamicSecretElasticSearchForm = ({
       <form onSubmit={handleSubmit(handleUpdateDynamicSecret)} autoComplete="off">
         <div>
           <div className="flex items-center space-x-2">
-            <div className="flex-grow">
+            <div className="grow">
               <Controller
                 control={control}
                 defaultValue=""
@@ -210,7 +201,7 @@ export const EditDynamicSecretElasticSearchForm = ({
             </div>
           </div>
           <div>
-            <div className="mb-4 mt-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
+            <div className="mt-4 mb-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
               Configuration
             </div>
             <div className="flex flex-col">
@@ -222,7 +213,7 @@ export const EditDynamicSecretElasticSearchForm = ({
                   render={({ field, fieldState: { error } }) => (
                     <FormControl
                       label="Host"
-                      className="flex-grow"
+                      className="grow"
                       isError={Boolean(error?.message)}
                       errorText={error?.message}
                     >
@@ -353,11 +344,11 @@ export const EditDynamicSecretElasticSearchForm = ({
                     key={`role-${i}`}
                     render={({ field, fieldState: { error } }) => (
                       <div className="flex items-center gap-2">
-                        <div className="flex-grow">
+                        <div className="grow">
                           <FormControl isError={Boolean(error?.message)} errorText={error?.message}>
                             <Input
                               placeholder="Insert role name, (superuser, kibana_admin, custom_role)"
-                              className="mb-0 flex-grow"
+                              className="mb-0 grow"
                               {...field}
                             />
                           </FormControl>

@@ -1,18 +1,19 @@
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import slugify from "@sindresorhus/slugify";
 import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, FormControl, Input, Modal, ModalClose, ModalContent } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import { useCreateWsEnvironment } from "@app/hooks/api";
-import { WorkspaceEnv } from "@app/hooks/api/workspace/types";
+import { ProjectEnv } from "@app/hooks/api/projects/types";
 import { slugSchema } from "@app/lib/schemas";
 
 type Props = {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
-  onComplete?: (environment: WorkspaceEnv) => void;
+  onComplete?: (environment: ProjectEnv) => void;
 };
 
 const schema = z.object({
@@ -25,39 +26,44 @@ const schema = z.object({
 export type FormData = z.infer<typeof schema>;
 
 type ContentProps = {
-  onComplete: (environment: WorkspaceEnv) => void;
+  onComplete: (environment: ProjectEnv) => void;
 };
 
 const Content = ({ onComplete }: ContentProps) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { mutateAsync, isPending } = useCreateWsEnvironment();
-  const { control, handleSubmit } = useForm<FormData>({
+  const {
+    control,
+    handleSubmit,
+    setValue,
+    getValues,
+    formState: { dirtyFields }
+  } = useForm<FormData>({
     resolver: zodResolver(schema)
   });
 
   const onFormSubmit = async ({ environmentName, environmentSlug }: FormData) => {
-    try {
-      if (!currentWorkspace?.id) return;
+    if (!currentProject?.id) return;
 
-      const env = await mutateAsync({
-        workspaceId: currentWorkspace.id,
-        name: environmentName,
-        slug: environmentSlug
-      });
+    const env = await mutateAsync({
+      projectId: currentProject.id,
+      name: environmentName,
+      slug: environmentSlug
+    });
 
-      createNotification({
-        text: "Successfully created environment",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully created environment",
+      type: "success"
+    });
 
-      onComplete(env);
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to create environment",
-        type: "error"
-      });
-    }
+    onComplete(env);
+  };
+
+  const handleEnvironmentNameChange = () => {
+    if (dirtyFields.environmentSlug) return;
+
+    const value = getValues("environmentName");
+    setValue("environmentSlug", slugify(value, { lowercase: true }));
   };
 
   return (
@@ -66,9 +72,15 @@ const Content = ({ onComplete }: ContentProps) => {
         control={control}
         defaultValue=""
         name="environmentName"
-        render={({ field, fieldState: { error } }) => (
+        render={({ field: { onChange, ...field }, fieldState: { error } }) => (
           <FormControl label="Environment Name" isError={Boolean(error)} errorText={error?.message}>
-            <Input {...field} />
+            <Input
+              {...field}
+              onChange={(e) => {
+                onChange(e);
+                handleEnvironmentNameChange();
+              }}
+            />
           </FormControl>
         )}
       />

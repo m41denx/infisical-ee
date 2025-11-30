@@ -1,10 +1,12 @@
 import { useState } from "react";
+import { subject } from "@casl/ability";
 import { faBan, faEdit, faKey, faPlus } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useParams } from "@tanstack/react-router";
 import { format } from "date-fns";
 
 import { createNotification } from "@app/components/notifications";
-import { OrgPermissionCan } from "@app/components/permissions";
+import { VariablePermissionCan } from "@app/components/permissions";
 import {
   Button,
   DeleteActionModal,
@@ -20,7 +22,12 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { OrgPermissionIdentityActions, OrgPermissionSubjects } from "@app/context";
+import {
+  OrgPermissionIdentityActions,
+  OrgPermissionSubjects,
+  ProjectPermissionIdentityActions,
+  ProjectPermissionSub
+} from "@app/context";
 import { usePopUp } from "@app/hooks";
 import { useRevokeIdentityTokenAuthToken } from "@app/hooks/api";
 import { IdentityAccessToken } from "@app/hooks/api/identities/types";
@@ -37,6 +44,10 @@ export const IdentityTokenAuthTokensTable = ({ tokens, identityId }: Props) => {
     "revokeToken"
   ] as const);
 
+  const { projectId } = useParams({
+    strict: false
+  });
+
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(5);
 
@@ -51,35 +62,34 @@ export const IdentityTokenAuthTokensTable = ({ tokens, identityId }: Props) => {
     tokenId: string;
     name: string;
   }) => {
-    try {
-      await revokeToken({
-        identityId: parentIdentityId,
-        tokenId
-      });
+    await revokeToken({
+      identityId: parentIdentityId,
+      tokenId
+    });
 
-      handlePopUpClose("revokeToken");
+    handlePopUpClose("revokeToken");
 
-      createNotification({
-        text: `Successfully revoked token ${name ?? ""}`,
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to revoke token";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    createNotification({
+      text: `Successfully revoked token ${name ?? ""}`,
+      type: "success"
+    });
   };
 
   return (
     <div className="col-span-2 mt-3">
       <div className="flex items-end justify-between border-b border-mineshaft-500 pb-2">
         <span className="text-bunker-300">Access Tokens</span>
-        <OrgPermissionCan I={OrgPermissionIdentityActions.Edit} a={OrgPermissionSubjects.Identity}>
+        <VariablePermissionCan
+          type={projectId ? "project" : "org"}
+          I={projectId ? ProjectPermissionIdentityActions.Edit : OrgPermissionIdentityActions.Edit}
+          a={
+            projectId
+              ? subject(ProjectPermissionSub.Identity, {
+                  identityId
+                })
+              : OrgPermissionSubjects.Identity
+          }
+        >
           {(isAllowed) => (
             <Button
               size="xs"
@@ -95,7 +105,7 @@ export const IdentityTokenAuthTokensTable = ({ tokens, identityId }: Props) => {
               Add Token
             </Button>
           )}
-        </OrgPermissionCan>
+        </VariablePermissionCan>
       </div>
       <TableContainer className="mt-4 rounded-none border-none">
         <Table>
@@ -103,7 +113,7 @@ export const IdentityTokenAuthTokensTable = ({ tokens, identityId }: Props) => {
             <THead>
               <Tr className="text-xs font-medium">
                 <Th className="py-1 font-normal">Name</Th>
-                <Th className="whitespace-nowrap py-1 font-normal">Number of Uses</Th>
+                <Th className="py-1 font-normal whitespace-nowrap">Number of Uses</Th>
                 <Th className="py-1 font-normal">Expires</Th>
                 <Th className="w-5 py-1 font-normal" />
               </Tr>
@@ -143,9 +153,20 @@ export const IdentityTokenAuthTokensTable = ({ tokens, identityId }: Props) => {
                       </Td>
                       <Td>
                         <div className="flex items-center gap-2">
-                          <OrgPermissionCan
-                            I={OrgPermissionIdentityActions.Edit}
-                            a={OrgPermissionSubjects.Identity}
+                          <VariablePermissionCan
+                            type={projectId ? "project" : "org"}
+                            I={
+                              projectId
+                                ? ProjectPermissionIdentityActions.Edit
+                                : OrgPermissionIdentityActions.Edit
+                            }
+                            a={
+                              projectId
+                                ? subject(ProjectPermissionSub.Identity, {
+                                    identityId
+                                  })
+                                : OrgPermissionSubjects.Identity
+                            }
                           >
                             {(isAllowed) => (
                               <Tooltip content={isAllowed ? "Edit Token" : "Access Restricted"}>
@@ -166,11 +187,22 @@ export const IdentityTokenAuthTokensTable = ({ tokens, identityId }: Props) => {
                                 </IconButton>
                               </Tooltip>
                             )}
-                          </OrgPermissionCan>
+                          </VariablePermissionCan>
                           {!isAccessTokenRevoked && (
-                            <OrgPermissionCan
-                              I={OrgPermissionIdentityActions.Edit}
-                              a={OrgPermissionSubjects.Identity}
+                            <VariablePermissionCan
+                              type={projectId ? "project" : "org"}
+                              I={
+                                projectId
+                                  ? ProjectPermissionIdentityActions.Edit
+                                  : OrgPermissionIdentityActions.Edit
+                              }
+                              a={
+                                projectId
+                                  ? subject(ProjectPermissionSub.Identity, {
+                                      identityId
+                                    })
+                                  : OrgPermissionSubjects.Identity
+                              }
                             >
                               {(isAllowed) => (
                                 <Tooltip content={isAllowed ? "Revoke Token" : "Access Restricted"}>
@@ -192,7 +224,7 @@ export const IdentityTokenAuthTokensTable = ({ tokens, identityId }: Props) => {
                                   </IconButton>
                                 </Tooltip>
                               )}
-                            </OrgPermissionCan>
+                            </VariablePermissionCan>
                           )}
                         </div>
                       </Td>

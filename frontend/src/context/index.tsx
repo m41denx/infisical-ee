@@ -9,11 +9,13 @@ export {
   OrgPermissionSubjects,
   useOrgPermission
 } from "./OrgPermissionContext";
+export { useProject } from "./ProjectContext";
 export type { TProjectPermission } from "./ProjectPermissionContext";
 export {
   ProjectPermissionActions,
   ProjectPermissionAuditLogsActions,
   ProjectPermissionCertificateActions,
+  ProjectPermissionCertificateProfileActions,
   ProjectPermissionCmekActions,
   ProjectPermissionDynamicSecretActions,
   ProjectPermissionGroupActions,
@@ -29,4 +31,3 @@ export {
 export { useServerConfig } from "./ServerConfigContext";
 export { useSubscription } from "./SubscriptionContext";
 export { useUser } from "./UserContext";
-export { useWorkspace } from "./WorkspaceContext";

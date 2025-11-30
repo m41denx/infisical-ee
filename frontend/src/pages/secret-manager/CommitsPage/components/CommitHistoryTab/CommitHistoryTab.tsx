@@ -39,7 +39,7 @@ const CommitItem = ({
       <div className="flex gap-2 px-4 py-3 transition-colors duration-200 hover:bg-zinc-800">
         <div className="flex min-w-0 flex-1 flex-col items-start">
           <p className="block w-full truncate text-left text-sm text-mineshaft-100">
-            {commit.message}
+            {commit.message || <span className="text-mineshaft-400 italic">No message</span>}
           </p>
           <p className="text-left text-xs text-mineshaft-300">
             {commit.actorMetadata?.email || commit.actorMetadata?.name || commit.actorType}{" "}
@@ -84,7 +84,7 @@ const DateGroup = ({
         <h2 className="ml-4 text-sm text-mineshaft-400">Commits on {date}</h2>
       </div>
       <div className="relative">
-        <div className="absolute bottom-0 left-3 top-0 w-[0.1rem] bg-mineshaft-500" />
+        <div className="absolute top-0 bottom-0 left-3 w-[0.1rem] bg-mineshaft-500" />
         <div className="ml-10">
           {commits.map((commit) => (
             <CommitItem key={commit.id} commit={commit} onSelectCommit={onSelectCommit} />
@@ -136,7 +136,7 @@ export const CommitHistoryTab = ({
     isFetchingNextPage,
     hasNextPage
   } = useGetFolderCommitHistory({
-    workspaceId: projectId,
+    projectId,
     environment,
     directory: secretPath,
     limit,
@@ -154,10 +154,10 @@ export const CommitHistoryTab = ({
 
   return (
     <div className="mt-4 w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-      <p className="mb-4 text-xl font-semibold text-mineshaft-100">Commit History</p>
+      <p className="mb-4 text-xl font-medium text-mineshaft-100">Commit History</p>
       <div className="mb-4 flex flex-col sm:flex-row sm:justify-end">
         <div className="flex w-full flex-wrap items-center gap-2">
-          <div className="relative flex-grow">
+          <div className="relative grow">
             <Input
               leftIcon={<FontAwesomeIcon icon={faSearch} aria-hidden="true" />}
               placeholder="Search commits..."
@@ -203,7 +203,7 @@ export const CommitHistoryTab = ({
               <Button
                 variant="outline_bg"
                 size="sm"
-                className="ml-10 mt-4 w-full"
+                className="mt-4 ml-10 w-full"
                 onClick={() => fetchNextPage()}
                 disabled={isFetchingNextPage}
                 isLoading={isFetchingNextPage}

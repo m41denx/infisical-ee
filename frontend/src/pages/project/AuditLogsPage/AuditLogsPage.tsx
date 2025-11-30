@@ -1,25 +1,38 @@
 import { Helmet } from "react-helmet";
+import { Link } from "@tanstack/react-router";
+import { InfoIcon } from "lucide-react";
 
 import { PageHeader } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import { LogsSection } from "@app/pages/organization/AuditLogsPage/components";
 
 export const AuditLogsPage = () => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       <Helmet>
         <title>Project Audit Logs</title>
         <link rel="icon" href="/infisical.ico" />
       </Helmet>
       <div className="flex h-full w-full justify-center bg-bunker-800 text-white">
-        <div className="w-full max-w-7xl">
+        <div className="w-full max-w-8xl">
           <PageHeader
-            title="Audit logs"
+            scope={currentProject.type}
+            title="Project Audit logs"
             description="Audit logs for security and compliance teams to monitor information access."
-          />
-          <LogsSection pageView project={currentWorkspace} />
+          >
+            <Link
+              to="/organizations/$orgId/audit-logs"
+              params={{
+                orgId: currentProject.orgId
+              }}
+              className="flex items-center gap-x-1.5 text-xs whitespace-nowrap text-neutral hover:underline"
+            >
+              <InfoIcon size={12} /> Looking for organization audit logs?
+            </Link>
+          </PageHeader>
+          <LogsSection pageView project={currentProject} />
         </div>
       </div>
     </div>

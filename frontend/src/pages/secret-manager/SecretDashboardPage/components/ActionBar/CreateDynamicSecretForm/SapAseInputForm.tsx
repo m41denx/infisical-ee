@@ -4,7 +4,6 @@ import ms from "ms";
 import { z } from "zod";
 
 import { TtlFormLabel } from "@app/components/features";
-import { createNotification } from "@app/components/notifications";
 import {
   Accordion,
   AccordionContent,
@@ -18,7 +17,7 @@ import {
 } from "@app/components/v2";
 import { useCreateDynamicSecret } from "@app/hooks/api";
 import { DynamicSecretProviders } from "@app/hooks/api/dynamicSecret/types";
-import { WorkspaceEnv } from "@app/hooks/api/types";
+import { ProjectEnv } from "@app/hooks/api/types";
 import { slugSchema } from "@app/lib/schemas";
 
 const formSchema = z.object({
@@ -35,9 +34,8 @@ const formSchema = z.object({
     const valMs = ms(val);
     if (valMs < 60 * 1000)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-    // a day
-    if (valMs > 24 * 60 * 60 * 1000)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+    if (valMs > ms("10y"))
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
   }),
   maxTTL: z
     .string()
@@ -47,9 +45,8 @@ const formSchema = z.object({
       const valMs = ms(val);
       if (valMs < 60 * 1000)
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-      // a day
-      if (valMs > 24 * 60 * 60 * 1000)
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+      if (valMs > ms("10y"))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
     }),
   name: slugSchema(),
   environment: z.object({ name: z.string(), slug: z.string() }),
@@ -62,7 +59,7 @@ type Props = {
   onCancel: () => void;
   secretPath: string;
   projectSlug: string;
-  environments: WorkspaceEnv[];
+  environments: ProjectEnv[];
   isSingleEnvironmentMode?: boolean;
 };
 
@@ -107,26 +104,19 @@ sp_droplogin '{{username}}';`
   }: TForm) => {
     // wait till previous request is finished
     if (createDynamicSecret.isPending) return;
-    try {
-      const isDefaultUsernameTemplate = usernameTemplate === "{{randomUsername}}";
-      await createDynamicSecret.mutateAsync({
-        provider: { type: DynamicSecretProviders.SapAse, inputs: provider },
-        maxTTL,
-        name,
-        path: secretPath,
-        defaultTTL,
-        projectSlug,
-        environmentSlug: environment.slug,
-        usernameTemplate:
-          !usernameTemplate || isDefaultUsernameTemplate ? undefined : usernameTemplate
-      });
-      onCompleted();
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to create dynamic secret"
-      });
-    }
+    const isDefaultUsernameTemplate = usernameTemplate === "{{randomUsername}}";
+    await createDynamicSecret.mutateAsync({
+      provider: { type: DynamicSecretProviders.SapAse, inputs: provider },
+      maxTTL,
+      name,
+      path: secretPath,
+      defaultTTL,
+      projectSlug,
+      environmentSlug: environment.slug,
+      usernameTemplate:
+        !usernameTemplate || isDefaultUsernameTemplate ? undefined : usernameTemplate
+    });
+    onCompleted();
   };
 
   return (
@@ -134,7 +124,7 @@ sp_droplogin '{{username}}';`
       <form onSubmit={handleSubmit(handleCreateDynamicSecret)} autoComplete="off">
         <div>
           <div className="flex items-center space-x-2">
-            <div className="flex-grow">
+            <div className="grow">
               <Controller
                 control={control}
                 defaultValue=""
@@ -184,7 +174,7 @@ sp_droplogin '{{username}}';`
             </div>
           </div>
           <div>
-            <div className="mb-4 mt-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
+            <div className="mt-4 mb-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
               Configuration
             </div>
             <div className="flex flex-col">
@@ -196,7 +186,7 @@ sp_droplogin '{{username}}';`
                   render={({ field, fieldState: { error } }) => (
                     <FormControl
                       label="Host"
-                      className="flex-grow"
+                      className="grow"
                       isError={Boolean(error?.message)}
                       errorText={error?.message}
                     >

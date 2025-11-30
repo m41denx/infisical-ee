@@ -435,14 +435,7 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
         projectId: z.string().trim(),
         environment: z.string().trim(),
         secretPath: z.string().trim().default("/").transform(removeTrailingSlash),
-        message: z
-          .string()
-          .trim()
-          .min(1)
-          .max(255)
-          .refine((message) => message.trim() !== "", {
-            message: "Commit message cannot be empty"
-          }),
+        message: z.string().trim().max(255).optional(),
         changes: z.object({
           secrets: z.object({
             create: z
@@ -468,7 +461,10 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
                     .transform((val) => (val.at(-1) === "\n" ? `${val.trim()}\n` : val.trim()))
                     .optional(),
                   secretComment: z.string().trim().optional().default(""),
-                  skipMultilineEncoding: z.boolean().optional(),
+                  skipMultilineEncoding: z
+                    .boolean()
+                    .nullish()
+                    .transform((val) => (val === null ? false : val)),
                   metadata: z.record(z.string()).optional(),
                   secretMetadata: ResourceMetadataSchema.optional(),
                   tagIds: z.string().array().optional()
@@ -543,7 +539,7 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
         projectId: req.body.projectId,
         environment: req.body.environment,
         secretPath: req.body.secretPath,
-        message: req.body.message,
+        message: req.body.message || "",
         changes: {
           secrets: req.body.changes.secrets,
           folders: req.body.changes.folders
@@ -561,7 +557,7 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
             projectId: req.body.projectId,
             environment: req.body.environment,
             secretPath: req.body.secretPath,
-            message: req.body.message
+            message: req.body.message || ""
           }
         }
       });

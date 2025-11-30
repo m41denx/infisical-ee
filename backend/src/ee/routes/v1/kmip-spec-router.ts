@@ -128,7 +128,8 @@ export const registerKmipSpecRouter = async (server: FastifyZodProvider) => {
         200: z.object({
           id: z.string(),
           value: z.string(),
-          algorithm: z.string()
+          algorithm: z.string(),
+          kmipMetadata: z.record(z.any()).nullish()
         })
       }
     },
@@ -181,7 +182,8 @@ export const registerKmipSpecRouter = async (server: FastifyZodProvider) => {
           algorithm: z.string(),
           isActive: z.boolean(),
           createdAt: z.date(),
-          updatedAt: z.date()
+          updatedAt: z.date(),
+          kmipMetadata: z.record(z.any()).nullish()
         })
       }
     },
@@ -383,7 +385,8 @@ export const registerKmipSpecRouter = async (server: FastifyZodProvider) => {
               isActive: z.boolean(),
               algorithm: z.string(),
               createdAt: z.date(),
-              updatedAt: z.date()
+              updatedAt: z.date(),
+              kmipMetadata: z.record(z.any()).nullish()
             })
             .array()
         })
@@ -433,7 +436,8 @@ export const registerKmipSpecRouter = async (server: FastifyZodProvider) => {
       body: z.object({
         key: z.string(),
         name: z.string(),
-        algorithm: z.nativeEnum(SymmetricKeyAlgorithm)
+        algorithm: z.nativeEnum(SymmetricKeyAlgorithm),
+        kmipMetadata: z.record(z.any()).nullish()
       }),
       response: {
         200: z.object({

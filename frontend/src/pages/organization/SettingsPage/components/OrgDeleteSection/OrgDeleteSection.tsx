@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { createNotification } from "@app/components/notifications";
 import { Button, DeleteActionModal } from "@app/components/v2";
 import { useOrganization, useOrgPermission } from "@app/context";
+import { OrgMembershipRole } from "@app/helpers/roles";
 import { useDeleteOrgById } from "@app/hooks/api";
 import { clearSession } from "@app/hooks/api/users/queries";
 import { usePopUp } from "@app/hooks/usePopUp";
@@ -11,34 +12,26 @@ export const OrgDeleteSection = () => {
   const navigate = useNavigate();
   const { currentOrg } = useOrganization();
 
-  const { membership } = useOrgPermission();
+  const { hasOrgRole } = useOrgPermission();
 
   const { popUp, handlePopUpOpen, handlePopUpToggle } = usePopUp(["deleteOrg"] as const);
 
   const { mutateAsync, isPending } = useDeleteOrgById();
 
   const handleDeleteOrgSubmit = async () => {
-    try {
-      if (!currentOrg?.id) return;
+    if (!currentOrg?.id) return;
 
-      await mutateAsync({
-        organizationId: currentOrg?.id
-      });
+    await mutateAsync({
+      organizationId: currentOrg?.id
+    });
 
-      createNotification({
-        text: "Successfully deleted organization",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully deleted organization",
+      type: "success"
+    });
 
-      clearSession();
-      navigate({ to: "/login" });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to delete organization",
-        type: "error"
-      });
-    }
+    clearSession();
+    navigate({ to: "/login" });
   };
 
   return (
@@ -52,9 +45,9 @@ export const OrgDeleteSection = () => {
           variant="outline_bg"
           type="submit"
           onClick={() => handlePopUpOpen("deleteOrg")}
-          isDisabled={Boolean(membership && membership.role !== "admin")}
+          isDisabled={Boolean(!hasOrgRole(OrgMembershipRole.Admin))}
         >
-          {`Delete ${currentOrg?.name}`}
+          {`Delete ${currentOrg.subOrganization?.name ?? currentOrg?.name}`}
         </Button>
       </div>
       <DeleteActionModal

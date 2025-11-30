@@ -23,8 +23,17 @@ export enum TableName {
   CertificateBody = "certificate_bodies",
   CertificateSecret = "certificate_secrets",
   CertificateTemplate = "certificate_templates",
+  PkiCertificateTemplateV2 = "pki_certificate_templates_v2",
+  PkiCertificateProfile = "pki_certificate_profiles",
+  PkiEstEnrollmentConfig = "pki_est_enrollment_configs",
+  PkiApiEnrollmentConfig = "pki_api_enrollment_configs",
+  PkiAcmeEnrollmentConfig = "pki_acme_enrollment_configs",
   PkiSubscriber = "pki_subscribers",
   PkiAlert = "pki_alerts",
+  PkiAlertsV2 = "pki_alerts_v2",
+  PkiAlertChannels = "pki_alert_channels",
+  PkiAlertHistory = "pki_alert_history",
+  PkiAlertHistoryCertificate = "pki_alert_history_certificate",
   PkiCollection = "pki_collections",
   PkiCollectionItem = "pki_collection_items",
   Groups = "groups",
@@ -131,6 +140,7 @@ export enum TableName {
   SecretApprovalRequestSecretTagV2 = "secret_approval_request_secret_tags_v2",
   SnapshotSecretV2 = "secret_snapshot_secrets_v2",
   ProjectSplitBackfillIds = "project_split_backfill_ids",
+  UserNotifications = "user_notifications",
   // Gateway
   OrgGatewayConfig = "org_gateway_config",
   Gateway = "gateways",
@@ -155,6 +165,8 @@ export enum TableName {
   ProjectSlackConfigs = "project_slack_configs",
   AppConnection = "app_connections",
   SecretSync = "secret_syncs",
+  PkiSync = "pki_syncs",
+  CertificateSync = "certificate_syncs",
   KmipClient = "kmip_clients",
   KmipOrgConfig = "kmip_org_configs",
   KmipOrgServerCertificates = "kmip_org_server_certificates",
@@ -176,9 +188,41 @@ export enum TableName {
   SecretScanningScan = "secret_scanning_scans",
   SecretScanningFinding = "secret_scanning_findings",
   SecretScanningConfig = "secret_scanning_configs",
+
+  Membership = "memberships",
+  MembershipRole = "membership_roles",
+  Role = "roles",
+  AdditionalPrivilege = "additional_privileges",
+
+  Namespace = "namespaces",
+
   // reminders
   Reminder = "reminders",
-  ReminderRecipient = "reminders_recipients"
+  ReminderRecipient = "reminders_recipients",
+
+  // gateway v2
+  InstanceRelayConfig = "instance_relay_config",
+  OrgRelayConfig = "org_relay_config",
+  OrgGatewayConfigV2 = "org_gateway_config_v2",
+  Relay = "relays",
+  GatewayV2 = "gateways_v2",
+
+  KeyValueStore = "key_value_store",
+
+  // PAM
+  PamFolder = "pam_folders",
+  PamResource = "pam_resources",
+  PamAccount = "pam_accounts",
+  PamSession = "pam_sessions",
+
+  VaultExternalMigrationConfig = "vault_external_migration_configs",
+
+  // PKI ACME
+  PkiAcmeAccount = "pki_acme_accounts",
+  PkiAcmeOrder = "pki_acme_orders",
+  PkiAcmeOrderAuth = "pki_acme_order_auths",
+  PkiAcmeAuth = "pki_acme_auths",
+  PkiAcmeChallenge = "pki_acme_challenges"
 }
 
 export type TImmutableDBKeys = "id" | "createdAt" | "updatedAt" | "commitId";
@@ -270,7 +314,8 @@ export enum ProjectType {
   CertificateManager = "cert-manager",
   KMS = "kms",
   SSH = "ssh",
-  SecretScanning = "secret-scanning"
+  SecretScanning = "secret-scanning",
+  PAM = "pam"
 }
 
 export enum ActionProjectType {
@@ -279,11 +324,50 @@ export enum ActionProjectType {
   KMS = ProjectType.KMS,
   SSH = ProjectType.SSH,
   SecretScanning = ProjectType.SecretScanning,
+  PAM = ProjectType.PAM,
   // project operations that happen on all types
   Any = "any"
+}
+
+export enum OrganizationActionScope {
+  ChildOrganization = "child-organization-only",
+  ParentOrganization = "parent-organization-only",
+  Any = "any"
+}
+
+export enum TemporaryPermissionMode {
+  Relative = "relative"
+}
+
+export enum MembershipActors {
+  Group = "group",
+  User = "user",
+  Identity = "identity"
 }
 
 export enum SortDirection {
   ASC = "asc",
   DESC = "desc"
 }
+
+export enum AccessScope {
+  Organization = "organization",
+  Namespace = "namespace",
+  Project = "project"
+}
+
+export type AccessScopeData =
+  | {
+      scope: AccessScope.Organization;
+      orgId: string;
+    }
+  | {
+      scope: AccessScope.Namespace;
+      orgId: string;
+      namespaceId: string;
+    }
+  | {
+      scope: AccessScope.Project;
+      orgId: string;
+      projectId: string;
+    };

@@ -29,13 +29,13 @@ import {
   ProjectPermissionActions,
   ProjectPermissionIdentityActions,
   ProjectPermissionSub,
-  useProjectPermission,
-  useWorkspace
+  useProject,
+  useProjectPermission
 } from "@app/context";
-import { useGetProjectRoles, useUpdateIdentityWorkspaceRole } from "@app/hooks/api";
-import { IdentityMembership } from "@app/hooks/api/identities/types";
+import { useGetProjectRoles, useUpdateProjectIdentityMembership } from "@app/hooks/api";
+import { IdentityProjectMembershipV1 } from "@app/hooks/api/identities/types";
 import { ProjectMembershipRole } from "@app/hooks/api/roles/types";
-import { ProjectUserMembershipTemporaryMode } from "@app/hooks/api/workspace/types";
+import { TemporaryPermissionMode } from "@app/hooks/api/shared";
 
 const roleFormSchema = z.object({
   roles: z
@@ -58,13 +58,12 @@ const roleFormSchema = z.object({
 type TRoleForm = z.infer<typeof roleFormSchema>;
 
 type Props = {
-  identityProjectMembership: IdentityMembership;
+  identityProjectMembership: IdentityProjectMembershipV1;
 };
 
 export const IdentityRoleModify = ({ identityProjectMembership }: Props) => {
-  const { currentWorkspace } = useWorkspace();
-  const workspaceId = currentWorkspace?.id || "";
-  const { data: projectRoles, isPending: isRolesLoading } = useGetProjectRoles(workspaceId);
+  const { projectId } = useProject();
+  const { data: projectRoles, isPending: isRolesLoading } = useGetProjectRoles(projectId);
   const { permission } = useProjectPermission();
   const isIdentityEditDisabled = permission.cannot(
     ProjectPermissionIdentityActions.Edit,
@@ -96,10 +95,10 @@ export const IdentityRoleModify = ({ identityProjectMembership }: Props) => {
 
   const formRoleField = roleForm.watch("roles");
 
-  const updateIdentityWorkspaceRole = useUpdateIdentityWorkspaceRole();
+  const updateProjectIdentityMembership = useUpdateProjectIdentityMembership();
 
   const handleRoleUpdate = async (data: TRoleForm) => {
-    if (updateIdentityWorkspaceRole.isPending) return;
+    if (updateProjectIdentityMembership.isPending) return;
 
     const sanitizedRoles = data.roles.map((el) => {
       const { isTemporary } = el.temporaryAccess;
@@ -109,22 +108,18 @@ export const IdentityRoleModify = ({ identityProjectMembership }: Props) => {
       return {
         role: el.slug,
         isTemporary: true as const,
-        temporaryMode: ProjectUserMembershipTemporaryMode.Relative,
+        temporaryMode: TemporaryPermissionMode.Relative,
         temporaryRange: el.temporaryAccess.temporaryRange,
         temporaryAccessStartTime: el.temporaryAccess.temporaryAccessStartTime
       };
     });
 
-    try {
-      await updateIdentityWorkspaceRole.mutateAsync({
-        workspaceId,
-        identityId: identityProjectMembership.identity.id,
-        roles: sanitizedRoles
-      });
-      createNotification({ text: "Successfully updated roles", type: "success" });
-    } catch {
-      createNotification({ text: "Failed to update roles", type: "error" });
-    }
+    await updateProjectIdentityMembership.mutateAsync({
+      projectId,
+      identityId: identityProjectMembership.identity.id,
+      roles: sanitizedRoles
+    });
+    createNotification({ text: "Successfully updated roles", type: "success" });
   };
 
   if (isRolesLoading)
@@ -168,7 +163,7 @@ export const IdentityRoleModify = ({ identityProjectMembership }: Props) => {
               />
               <Popover>
                 <PopoverTrigger disabled={isIdentityEditDisabled} asChild>
-                  <div className="flex-grow">
+                  <div className="grow">
                     <Tooltip
                       content={
                         temporaryAccess?.isTemporary

@@ -5,14 +5,12 @@ import {
   faCheck,
   faMagnifyingGlass,
   faPlus,
-  faStar as faSolidStar,
-  faTable
+  faStar as faSolidStar
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Link, linkOptions } from "@tanstack/react-router";
+import { Link, linkOptions, useParams } from "@tanstack/react-router";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
-import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
 import { NewProjectModal } from "@app/components/projects";
 import {
@@ -24,25 +22,35 @@ import {
   Input,
   Tooltip
 } from "@app/components/v2";
+import { Badge, ProjectIcon } from "@app/components/v3";
 import {
   OrgPermissionActions,
   OrgPermissionSubjects,
   useOrganization,
-  useSubscription,
-  useWorkspace
+  useProject,
+  useSubscription
 } from "@app/context";
 import { getProjectHomePage } from "@app/helpers/project";
 import { usePopUp } from "@app/hooks";
-import { useGetUserWorkspaces } from "@app/hooks/api";
+import { useGetUserProjects } from "@app/hooks/api";
+import { Project, ProjectType } from "@app/hooks/api/projects/types";
 import { useUpdateUserProjectFavorites } from "@app/hooks/api/users/mutation";
 import { useGetUserProjectFavorites } from "@app/hooks/api/users/queries";
-import { Workspace } from "@app/hooks/api/workspace/types";
 
-export const ProjectSelect = () => {
+const PROJECT_TYPE_NAME: Record<ProjectType, string> = {
+  [ProjectType.SecretManager]: "Secrets Management",
+  [ProjectType.CertificateManager]: "PKI",
+  [ProjectType.SSH]: "SSH",
+  [ProjectType.KMS]: "KMS",
+  [ProjectType.PAM]: "PAM",
+  [ProjectType.SecretScanning]: "Secret Scanning"
+};
+
+const ProjectSelectInner = () => {
   const [searchProject, setSearchProject] = useState("");
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject: currentWorkspace } = useProject();
   const { currentOrg } = useOrganization();
-  const { data: workspaces = [] } = useGetUserWorkspaces();
+  const { data: projects = [] } = useGetUserProjects();
   const { data: projectFavorites } = useGetUserProjectFavorites(currentOrg.id);
 
   const { subscription } = useSubscription();
@@ -50,31 +58,17 @@ export const ProjectSelect = () => {
   const { mutateAsync: updateUserProjectFavorites } = useUpdateUserProjectFavorites();
 
   const addProjectToFavorites = async (projectId: string) => {
-    try {
-      await updateUserProjectFavorites({
-        orgId: currentOrg!.id,
-        projectFavorites: [...(projectFavorites || []), projectId]
-      });
-    } catch {
-      createNotification({
-        text: "Failed to add project to favorites.",
-        type: "error"
-      });
-    }
+    await updateUserProjectFavorites({
+      orgId: currentOrg!.id,
+      projectFavorites: [...(projectFavorites || []), projectId]
+    });
   };
 
   const removeProjectFromFavorites = async (projectId: string) => {
-    try {
-      await updateUserProjectFavorites({
-        orgId: currentOrg!.id,
-        projectFavorites: [...(projectFavorites || []).filter((entry) => entry !== projectId)]
-      });
-    } catch {
-      createNotification({
-        text: "Failed to remove project from favorites.",
-        type: "error"
-      });
-    }
+    await updateUserProjectFavorites({
+      orgId: currentOrg!.id,
+      projectFavorites: [...(projectFavorites || []).filter((entry) => entry !== projectId)]
+    });
   };
 
   const isAddingProjectsAllowed = subscription?.workspaceLimit
@@ -86,36 +80,37 @@ export const ProjectSelect = () => {
     "upgradePlan"
   ] as const);
 
-  const projects = useMemo(() => {
-    const projectOptions = workspaces
-      .map((w): Workspace & { isFavorite: boolean } => ({
+  const projectsSortedByFav = useMemo(() => {
+    const projectOptions = projects
+      .map((w): Project & { isFavorite: boolean } => ({
         ...w,
         isFavorite: Boolean(projectFavorites?.includes(w.id))
       }))
       .sort((a, b) => Number(b.isFavorite) - Number(a.isFavorite));
 
     return projectOptions;
-  }, [workspaces, projectFavorites, currentWorkspace]);
+  }, [projects, projectFavorites, currentWorkspace]);
 
   return (
-    <div className="-mr-2 flex w-full items-center gap-1">
+    <div className="relative mr-2 flex min-w-16 items-center gap-1 self-end rounded-t-md border-x border-t border-project/10 bg-gradient-to-b from-project/10 to-project/[0.075] pt-1.5 pr-1 pb-2.5 pl-3">
+      {/* scott: the below is used to hide the top border from the org nav bar */}
+      <div className="absolute -bottom-px left-0 h-px w-full bg-mineshaft-900">
+        <div className="h-full bg-project/[0.075]" />
+      </div>
       <DropdownMenu modal={false}>
         <Link
           to={getProjectHomePage(currentWorkspace.type, currentWorkspace.environments)}
           params={{
-            projectId: currentWorkspace.id
+            projectId: currentWorkspace.id,
+            orgId: currentWorkspace.orgId
           }}
+          className="group flex cursor-pointer items-center gap-x-2 overflow-hidden pt-0.5 text-sm text-white"
         >
-          <div className="flex cursor-pointer items-center gap-2 text-sm text-white duration-100 hover:text-primary">
-            <div>
-              <FontAwesomeIcon icon={faTable} className="text-xs text-bunker-300" />
-            </div>
-            <Tooltip content={currentWorkspace.name} className="max-w-96 break-words">
-              <div className="max-w-44 overflow-hidden text-ellipsis whitespace-nowrap">
-                {currentWorkspace?.name}
-              </div>
-            </Tooltip>
-          </div>
+          <ProjectIcon className="size-[14px] shrink-0 text-project" />
+          <span className="truncate">{currentWorkspace?.name}</span>
+          <Badge variant="project" className="hidden lg:inline-flex">
+            {currentWorkspace.type ? PROJECT_TYPE_NAME[currentWorkspace.type] : "Project"}
+          </Badge>
         </Link>
         <DropdownMenuTrigger asChild>
           <div>
@@ -123,7 +118,7 @@ export const ProjectSelect = () => {
               variant="plain"
               colorSchema="secondary"
               ariaLabel="switch-project"
-              className="px-2 py-1"
+              className="top-px px-2 py-1"
             >
               <FontAwesomeIcon icon={faCaretDown} className="text-xs text-bunker-300" />
             </IconButton>
@@ -135,7 +130,7 @@ export const ProjectSelect = () => {
           className="mt-6 cursor-default p-1 shadow-mineshaft-600 drop-shadow-md"
           style={{ minWidth: "220px" }}
         >
-          <div className="px-2 py-1 text-xs capitalize text-mineshaft-400">Projects</div>
+          <div className="px-2 py-1 text-xs text-mineshaft-400 capitalize">Projects</div>
           <div className="mb-1 border-b border-b-mineshaft-600 py-1 pb-1">
             <Input
               value={searchProject}
@@ -146,8 +141,8 @@ export const ProjectSelect = () => {
               placeholder="Search projects"
             />
           </div>
-          <div className="thin-scrollbar max-h-80 overflow-auto">
-            {projects
+          <div className="max-h-80 thin-scrollbar overflow-auto">
+            {projectsSortedByFav
               ?.filter((el) => el.name?.toLowerCase().includes(searchProject.toLowerCase()))
               ?.map((workspace) => {
                 return (
@@ -160,10 +155,23 @@ export const ProjectSelect = () => {
                       const url = linkOptions({
                         to: getProjectHomePage(workspace.type, workspace.environments),
                         params: {
-                          projectId: workspace.id
+                          projectId: workspace.id,
+                          orgId: workspace.orgId
+                        },
+                        search: {
+                          subOrganization: currentOrg?.subOrganization?.name
                         }
                       });
-                      window.location.assign(url.to.replaceAll("$projectId", workspace.id));
+                      const urlInstance = new URL(
+                        `${window.location.origin}${url.to.replaceAll("$orgId", url.params.orgId).replaceAll("$projectId", url.params.projectId)}`
+                      );
+                      if (currentOrg?.subOrganization) {
+                        urlInstance.searchParams.set(
+                          "subOrganization",
+                          currentOrg.subOrganization.name
+                        );
+                      }
+                      window.location.assign(urlInstance);
                     }}
                     icon={
                       currentWorkspace?.id === workspace.id && (
@@ -174,7 +182,7 @@ export const ProjectSelect = () => {
                     <div className="flex items-center">
                       <div className="flex flex-1 items-center justify-between overflow-hidden">
                         <Tooltip side="right" className="break-words" content={workspace.name}>
-                          <div className="max-w-40 overflow-hidden truncate whitespace-nowrap">
+                          <div className="max-w-40 truncate overflow-hidden whitespace-nowrap">
                             {workspace.name}
                           </div>
                         </Tooltip>
@@ -200,16 +208,20 @@ export const ProjectSelect = () => {
           </div>
           <div className="mt-1 h-1 border-t border-mineshaft-600" />
           <OrgPermissionCan I={OrgPermissionActions.Create} a={OrgPermissionSubjects.Workspace}>
-            {(isAllowed) => (
-              <DropdownMenuItem
-                isDisabled={!isAllowed}
-                icon={<FontAwesomeIcon icon={faPlus} />}
-                onClick={() =>
-                  handlePopUpOpen(isAddingProjectsAllowed ? "addNewWs" : "upgradePlan")
-                }
-              >
-                New Project
-              </DropdownMenuItem>
+            {(isOldProjectPermissionAllowed) => (
+              <OrgPermissionCan I={OrgPermissionActions.Create} a={OrgPermissionSubjects.Project}>
+                {(isAllowed) => (
+                  <DropdownMenuItem
+                    isDisabled={!isAllowed && !isOldProjectPermissionAllowed}
+                    icon={<FontAwesomeIcon icon={faPlus} />}
+                    onClick={() =>
+                      handlePopUpOpen(isAddingProjectsAllowed ? "addNewWs" : "upgradePlan")
+                    }
+                  >
+                    New Project
+                  </DropdownMenuItem>
+                )}
+              </OrgPermissionCan>
             )}
           </OrgPermissionCan>
         </DropdownMenuContent>
@@ -217,7 +229,7 @@ export const ProjectSelect = () => {
       <UpgradePlanModal
         isOpen={popUp.upgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text="You have exceeded the number of projects allowed on the free plan."
+        text="You’ve reached the maximum number of projects available on the Free plan. Upgrade to the Infisical Pro plan to create more projects."
       />
       <NewProjectModal
         isOpen={popUp.addNewWs.isOpen}
@@ -225,4 +237,15 @@ export const ProjectSelect = () => {
       />
     </div>
   );
+};
+
+export const ProjectSelect = () => {
+  const params = useParams({ strict: false });
+
+  // Return null during navigation when projectId is not available
+  if (!params.projectId) {
+    return null;
+  }
+
+  return <ProjectSelectInner />;
 };

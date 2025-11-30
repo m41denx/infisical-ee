@@ -1,24 +1,21 @@
 import { useCallback } from "react";
 import {
-  faBan,
   faCheck,
   faCopy,
   faEllipsisV,
   faExpand,
-  faInfoCircle,
-  faSearch,
-  faWarning
+  faInfoCircle
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate } from "@tanstack/react-router";
 import { formatDistance } from "date-fns";
+import { AlertTriangleIcon, BanIcon, ScanTextIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { SecretScanningScanStatusBadge } from "@app/components/secret-scanning";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -28,6 +25,8 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
+import { useOrganization } from "@app/context";
 import {
   ProjectPermissionSecretScanningDataSourceActions,
   ProjectPermissionSub
@@ -53,6 +52,7 @@ export const SecretScanningResourceRow = ({ resource, dataSource }: Props) => {
   const { id, name, lastScannedAt, lastScanStatus, unresolvedFindings, lastScanStatusMessage } =
     resource;
 
+  const { currentOrg } = useOrganization();
   let isActive: boolean;
 
   switch (dataSource.type) {
@@ -83,24 +83,17 @@ export const SecretScanningResourceRow = ({ resource, dataSource }: Props) => {
   const navigate = useNavigate();
 
   const handleTriggerScan = async () => {
-    try {
-      await triggerDataSourceScan.mutateAsync({
-        dataSourceId: dataSource.id,
-        type: dataSource.type,
-        projectId: dataSource.projectId,
-        resourceId: id
-      });
+    await triggerDataSourceScan.mutateAsync({
+      dataSourceId: dataSource.id,
+      type: dataSource.type,
+      projectId: dataSource.projectId,
+      resourceId: id
+    });
 
-      createNotification({
-        text: `Successfully triggered scan for ${name}`,
-        type: "success"
-      });
-    } catch {
-      createNotification({
-        text: `Failed to trigger scan for ${name}`,
-        type: "error"
-      });
-    }
+    createNotification({
+      text: `Successfully triggered scan for ${name}`,
+      type: "success"
+    });
   };
 
   const [isIdCopied, setIsIdCopied] = useToggle(false);
@@ -133,7 +126,7 @@ export const SecretScanningResourceRow = ({ resource, dataSource }: Props) => {
       )}
       key={`resource-${id}`}
     >
-      <Td className="!min-w-[8rem] max-w-0">
+      <Td className="max-w-0 min-w-32!">
         <div className="flex w-full items-center">
           <p className="truncate">{name}</p>
         </div>
@@ -141,45 +134,39 @@ export const SecretScanningResourceRow = ({ resource, dataSource }: Props) => {
       <Td>
         {/* eslint-disable-next-line no-nested-ternary */}
         {lastScanStatus?.match(/queued|scanning/) ? (
-          <Badge
-            variant="primary"
-            className="flex h-5 w-min animate-pulse items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300"
-          >
-            <FontAwesomeIcon icon={faSearch} />
-            <span>Scanning For Leaks</span>
+          <Badge variant="neutral">
+            <ScanTextIcon />
+            Scanning For Leaks
           </Badge>
         ) : // eslint-disable-next-line no-nested-ternary
         lastScannedAt ? (
           // eslint-disable-next-line no-nested-ternary
           unresolvedFindings ? (
-            <Badge
-              onClick={() =>
-                navigate({
-                  to: "/projects/secret-scanning/$projectId/findings",
-                  params: {
-                    projectId: dataSource.projectId
-                  },
-                  search: {
-                    search: name,
-                    status: SecretScanningFindingStatus.Unresolved
-                  }
-                })
-              }
-              variant="primary"
-              className="flex h-5 w-min cursor-pointer items-center gap-1.5 whitespace-nowrap"
-            >
-              <FontAwesomeIcon icon={faWarning} />
-              <span>
+            <Badge asChild variant="warning">
+              <button
+                type="button"
+                onClick={() =>
+                  navigate({
+                    to: "/organizations/$orgId/projects/secret-scanning/$projectId/findings",
+                    params: {
+                      orgId: currentOrg.id,
+                      projectId: dataSource.projectId
+                    },
+                    search: {
+                      search: name,
+                      status: SecretScanningFindingStatus.Unresolved
+                    }
+                  })
+                }
+              >
+                <AlertTriangleIcon />
                 {unresolvedFindings} Secret{unresolvedFindings > 1 ? "s" : ""} Detected
-              </span>
+              </button>
             </Badge>
           ) : lastScanStatus === SecretScanningScanStatus.Failed ? (
             <span className="text-mineshaft-400">No findings</span>
           ) : (
-            <Badge
-              variant="success"
-              className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap"
-            >
+            <Badge variant="success">
               <FontAwesomeIcon icon={faCheck} />
               No Secrets Detected
             </Badge>
@@ -209,12 +196,10 @@ export const SecretScanningResourceRow = ({ resource, dataSource }: Props) => {
               className="text-xs"
               content={`This ${resourceDetails.singularNoun} will not be scanned due to exclusion in Data Source configuration.`}
             >
-              <div className="ml-auto">
-                <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                  <FontAwesomeIcon icon={faBan} />
-                  <span>Inactive</span>
-                </Badge>
-              </div>
+              <Badge className="ml-auto" variant="neutral">
+                <BanIcon />
+                Inactive
+              </Badge>
             </Tooltip>
           )}
           <Tooltip className="max-w-sm text-center" content="Options">

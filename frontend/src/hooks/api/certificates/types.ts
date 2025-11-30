@@ -4,25 +4,33 @@ export type TCertificate = {
   id: string;
   caId: string;
   certificateTemplateId?: string;
+  profileId?: string;
   status: CertStatus;
   friendlyName: string;
   commonName: string;
-  altNames: string;
+  subjectAltNames: string;
+  altNames?: string;
   serialNumber: string;
   notBefore: string;
   notAfter: string;
   keyUsages: CertKeyUsage[];
   extendedKeyUsages: CertExtendedKeyUsage[];
+  renewBeforeDays?: number;
+  renewedBy?: string;
+  renewedFromCertificateId?: string;
+  renewedByCertificateId?: string;
+  renewalError?: string;
+  hasPrivateKey?: boolean;
 };
 
 export type TDeleteCertDTO = {
-  projectSlug: string;
-  serialNumber: string;
+  id: string;
+  projectId: string;
 };
 
 export type TRevokeCertDTO = {
-  projectSlug: string;
-  serialNumber: string;
+  projectId: string;
+  id: string;
   revocationReason: string;
 };
 
@@ -42,4 +50,32 @@ export type TImportCertificateResponse = {
   certificateChain: string;
   privateKey: string;
   serialNumber: string;
+};
+
+export type TRenewCertificateDTO = {
+  certificateId: string;
+};
+
+export type TRenewCertificateResponse = {
+  certificate: string;
+  issuingCaCertificate: string;
+  certificateChain: string;
+  privateKey?: string;
+  serialNumber: string;
+  certificateId: string;
+  projectId: string;
+};
+
+export type TUpdateRenewalConfigDTO = {
+  certificateId: string;
+  renewBeforeDays?: number;
+  enableAutoRenewal?: boolean;
+  projectSlug: string;
+};
+
+export type TDownloadPkcs12DTO = {
+  certificateId: string;
+  projectSlug: string;
+  password: string;
+  alias: string;
 };

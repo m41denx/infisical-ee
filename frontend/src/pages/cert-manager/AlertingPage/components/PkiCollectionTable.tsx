@@ -19,7 +19,12 @@ import {
   THead,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import {
+  ProjectPermissionActions,
+  ProjectPermissionSub,
+  useOrganization,
+  useProject
+} from "@app/context";
 import { useListWorkspacePkiCollections } from "@app/hooks/api";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
@@ -31,12 +36,13 @@ type Props = {
 };
 
 export const PkiCollectionTable = ({ handlePopUpOpen }: Props) => {
+  const { currentOrg } = useOrganization();
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentProject } = useProject();
+  const projectId = currentProject?.id || "";
 
   const { data, isPending } = useListWorkspacePkiCollections({
-    workspaceId: projectId
+    projectId
   });
 
   return (
@@ -60,8 +66,9 @@ export const PkiCollectionTable = ({ handlePopUpOpen }: Props) => {
                     key={`pki-collection-${pkiCollection.id}`}
                     onClick={() =>
                       navigate({
-                        to: "/projects/cert-management/$projectId/pki-collections/$collectionId",
+                        to: "/organizations/$orgId/projects/cert-management/$projectId/pki-collections/$collectionId",
                         params: {
+                          orgId: currentOrg.id,
                           projectId,
                           collectionId: pkiCollection.id
                         }
@@ -107,7 +114,7 @@ export const PkiCollectionTable = ({ handlePopUpOpen }: Props) => {
                               <DropdownMenuItem
                                 className={twMerge(
                                   isAllowed
-                                    ? "hover:!bg-red-500 hover:!text-white"
+                                    ? "hover:bg-red-500! hover:text-white!"
                                     : "pointer-events-none cursor-not-allowed opacity-50"
                                 )}
                                 onClick={(e) => {

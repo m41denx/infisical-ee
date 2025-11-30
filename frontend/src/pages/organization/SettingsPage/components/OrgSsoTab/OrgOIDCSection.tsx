@@ -30,49 +30,41 @@ export const OrgOIDCSection = (): JSX.Element => {
   ] as const);
 
   const handleOIDCToggle = async (value: boolean) => {
-    try {
-      if (!currentOrg?.id) return;
+    if (!currentOrg?.id) return;
 
-      if (!subscription?.oidcSSO) {
-        handlePopUpOpen("upgradePlan");
-        return;
-      }
-
-      await mutateAsync({
-        organizationId: currentOrg?.id,
-        isActive: value
-      });
-
-      createNotification({
-        text: `Successfully ${value ? "enabled" : "disabled"} OIDC SSO`,
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
+    if (!subscription?.oidcSSO) {
+      handlePopUpOpen("upgradePlan");
+      return;
     }
+
+    await mutateAsync({
+      organizationId: currentOrg?.id,
+      isActive: value
+    });
+
+    createNotification({
+      text: `Successfully ${value ? "enabled" : "disabled"} OIDC SSO`,
+      type: "success"
+    });
   };
 
   const handleOIDCGroupManagement = async (value: boolean) => {
-    try {
-      if (!currentOrg?.id) return;
+    if (!currentOrg?.id) return;
 
-      if (!subscription?.oidcSSO) {
-        handlePopUpOpen("upgradePlan");
-        return;
-      }
-
-      await mutateAsync({
-        organizationId: currentOrg?.id,
-        manageGroupMemberships: value
-      });
-
-      createNotification({
-        text: `Successfully ${value ? "enabled" : "disabled"} OIDC group membership mapping`,
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
+    if (!subscription?.oidcSSO) {
+      handlePopUpOpen("upgradePlan");
+      return;
     }
+
+    await mutateAsync({
+      organizationId: currentOrg?.id,
+      manageGroupMemberships: value
+    });
+
+    createNotification({
+      text: `Successfully ${value ? "enabled" : "disabled"} OIDC group membership mapping`,
+      type: "success"
+    });
   };
 
   const addOidcButtonClick = async () => {
@@ -83,11 +75,13 @@ export const OrgOIDCSection = (): JSX.Element => {
     }
   };
 
+  const isGoogleOAuthEnabled = currentOrg.googleSsoAuthEnforced;
+
   return (
     <div className="mb-4 rounded-lg border-mineshaft-600 bg-mineshaft-900">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <p className="text-xl font-semibold text-gray-200">OIDC</p>
+          <p className="text-xl font-medium text-gray-200">OIDC</p>
           <p className="mb-2 text-gray-400">Manage OIDC authentication configuration</p>
         </div>
 
@@ -106,14 +100,29 @@ export const OrgOIDCSection = (): JSX.Element => {
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-md text-mineshaft-100">Enable OIDC</h2>
             {!isPending && (
-              <OrgPermissionCan I={OrgPermissionActions.Edit} a={OrgPermissionSubjects.Sso}>
+              <OrgPermissionCan
+                I={OrgPermissionActions.Edit}
+                a={OrgPermissionSubjects.Sso}
+                tooltipProps={{
+                  className: "max-w-sm",
+                  side: "left"
+                }}
+                allowedLabel={
+                  isGoogleOAuthEnabled
+                    ? "You cannot enable OIDC SSO while Google OAuth is enforced. Disable Google OAuth enforcement to enable OIDC SSO."
+                    : undefined
+                }
+                renderTooltip={isGoogleOAuthEnabled}
+              >
                 {(isAllowed) => (
-                  <Switch
-                    id="enable-oidc-sso"
-                    onCheckedChange={(value) => handleOIDCToggle(value)}
-                    isChecked={data ? data.isActive : false}
-                    isDisabled={!isAllowed}
-                  />
+                  <div>
+                    <Switch
+                      id="enable-oidc-sso"
+                      onCheckedChange={(value) => handleOIDCToggle(value)}
+                      isChecked={data ? data.isActive : false}
+                      isDisabled={!isAllowed || isGoogleOAuthEnabled}
+                    />
+                  </div>
                 )}
               </OrgPermissionCan>
             )}
@@ -163,7 +172,7 @@ export const OrgOIDCSection = (): JSX.Element => {
               <FontAwesomeIcon
                 icon={faInfoCircle}
                 size="sm"
-                className="ml-1 mt-0.5 inline-block text-mineshaft-400"
+                className="mt-0.5 ml-1 inline-block text-mineshaft-400"
               />
             </Tooltip>
           </div>
@@ -190,7 +199,7 @@ export const OrgOIDCSection = (): JSX.Element => {
       <UpgradePlanModal
         isOpen={popUp.upgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text="You can use OIDC SSO if you switch to Infisical's Pro plan."
+        text="Your current plan does not include access to OIDC SSO. To unlock this feature, please upgrade to Infisical Pro plan."
       />
     </div>
   );

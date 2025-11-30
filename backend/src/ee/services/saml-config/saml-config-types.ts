@@ -1,4 +1,4 @@
-import { TSamlConfigs } from "@app/db/schemas";
+import { TOrganizations, TSamlConfigs, TUsers } from "@app/db/schemas";
 import { TOrgPermission } from "@app/lib/types";
 import { ActorAuthMethod, ActorType } from "@app/services/auth/auth-type";
 
@@ -17,6 +17,7 @@ export type TCreateSamlCfgDTO = {
   entryPoint: string;
   issuer: string;
   idpCert: string;
+  enableGroupSync?: boolean;
 } & TOrgPermission;
 
 export type TUpdateSamlCfgDTO = Partial<{
@@ -25,6 +26,7 @@ export type TUpdateSamlCfgDTO = Partial<{
   entryPoint: string;
   issuer: string;
   idpCert: string;
+  enableGroupSync?: boolean;
 }> &
   TOrgPermission;
 
@@ -35,7 +37,7 @@ export type TGetSamlCfgDTO =
       actor: ActorType;
       actorId: string;
       actorAuthMethod: ActorAuthMethod;
-      actorOrgId: string | undefined;
+      actorOrgId: string;
     }
   | {
       type: "orgSlug";
@@ -71,9 +73,12 @@ export type TSamlConfigServiceFactory = {
     issuer: string;
     cert: string;
     lastUsed: Date | null | undefined;
+    enableGroupSync?: boolean;
   }>;
   samlLogin: (arg: TSamlLoginDTO) => Promise<{
     isUserCompleted: boolean;
     providerAuthToken: string;
+    user: TUsers;
+    organization: TOrganizations;
   }>;
 };

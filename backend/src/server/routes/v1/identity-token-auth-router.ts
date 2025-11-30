@@ -20,7 +20,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
     schema: {
       hide: false,
       tags: [ApiDocsTags.TokenAuth],
-      description: "Attach Token Auth configuration onto identity",
+      description: "Attach Token Auth configuration onto machine identity",
       security: [
         {
           bearerAuth: []
@@ -112,7 +112,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
     schema: {
       hide: false,
       tags: [ApiDocsTags.TokenAuth],
-      description: "Update Token Auth configuration on identity",
+      description: "Update Token Auth configuration on machine identity",
       security: [
         {
           bearerAuth: []
@@ -198,7 +198,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
     schema: {
       hide: false,
       tags: [ApiDocsTags.TokenAuth],
-      description: "Retrieve Token Auth configuration on identity",
+      description: "Retrieve Token Auth configuration on machine identity",
       security: [
         {
           bearerAuth: []
@@ -247,7 +247,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
     schema: {
       hide: false,
       tags: [ApiDocsTags.TokenAuth],
-      description: "Delete Token Auth configuration on identity",
+      description: "Delete Token Auth configuration on machine identity",
       security: [
         {
           bearerAuth: []
@@ -297,7 +297,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
     schema: {
       hide: false,
       tags: [ApiDocsTags.TokenAuth],
-      description: "Create token for identity with Token Auth",
+      description: "Create token for machine identity with Token Auth",
       security: [
         {
           bearerAuth: []
@@ -314,12 +314,13 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
           accessToken: z.string(),
           expiresIn: z.coerce.number(),
           accessTokenMaxTTL: z.coerce.number(),
-          tokenType: z.literal("Bearer")
+          tokenType: z.literal("Bearer"),
+          tokenData: IdentityAccessTokensSchema
         })
       }
     },
     handler: async (req) => {
-      const { identityTokenAuth, accessToken, identityAccessToken, identityMembershipOrg } =
+      const { identityTokenAuth, accessToken, identityAccessToken, identity } =
         await server.services.identityTokenAuth.createTokenAuthToken({
           actor: req.permission.type,
           actorId: req.permission.id,
@@ -332,7 +333,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
 
       await server.services.auditLog.createAuditLog({
         ...req.auditLogInfo,
-        orgId: identityMembershipOrg.orgId,
+        orgId: identity.orgId,
         event: {
           type: EventType.CREATE_TOKEN_IDENTITY_TOKEN_AUTH,
           metadata: {
@@ -346,7 +347,8 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
         accessToken,
         tokenType: "Bearer" as const,
         expiresIn: identityTokenAuth.accessTokenTTL,
-        accessTokenMaxTTL: identityTokenAuth.accessTokenMaxTTL
+        accessTokenMaxTTL: identityTokenAuth.accessTokenMaxTTL,
+        tokenData: identityAccessToken
       };
     }
   });
@@ -361,7 +363,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
     schema: {
       hide: false,
       tags: [ApiDocsTags.TokenAuth],
-      description: "Get tokens for identity with Token Auth",
+      description: "Get tokens for machine identity with Token Auth",
       security: [
         {
           bearerAuth: []
@@ -393,7 +395,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
 
       await server.services.auditLog.createAuditLog({
         ...req.auditLogInfo,
-        orgId: identityMembershipOrg.orgId,
+        orgId: identityMembershipOrg.scopeOrgId,
         event: {
           type: EventType.GET_TOKENS_IDENTITY_TOKEN_AUTH,
           metadata: {
@@ -407,6 +409,60 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
   });
 
   server.route({
+    method: "GET",
+    url: "/token-auth/identities/:identityId/tokens/:tokenId",
+    config: {
+      rateLimit: readLimit
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    schema: {
+      hide: false,
+      tags: [ApiDocsTags.TokenAuth],
+      description: "Get token for machine identity with Token Auth",
+      security: [
+        {
+          bearerAuth: []
+        }
+      ],
+      params: z.object({
+        identityId: z.string().describe(TOKEN_AUTH.GET_TOKEN.identityId),
+        tokenId: z.string().describe(TOKEN_AUTH.GET_TOKEN.tokenId)
+      }),
+      response: {
+        200: z.object({
+          token: IdentityAccessTokensSchema
+        })
+      }
+    },
+    handler: async (req) => {
+      const { token, identityMembershipOrg } = await server.services.identityTokenAuth.getTokenAuthTokenById({
+        identityId: req.params.identityId,
+        tokenId: req.params.tokenId,
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorOrgId: req.permission.orgId,
+        actorAuthMethod: req.permission.authMethod,
+        isActorSuperAdmin: isSuperAdmin(req.auth)
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        orgId: identityMembershipOrg.scopeOrgId,
+        event: {
+          type: EventType.GET_TOKEN_IDENTITY_TOKEN_AUTH,
+          metadata: {
+            identityId: token.identityId,
+            identityName: identityMembershipOrg.identity.name,
+            tokenId: token.id
+          }
+        }
+      });
+
+      return { token };
+    }
+  });
+
+  server.route({
     method: "PATCH",
     url: "/token-auth/tokens/:tokenId",
     config: {
@@ -416,7 +472,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
     schema: {
       hide: false,
       tags: [ApiDocsTags.TokenAuth],
-      description: "Update token for identity with Token Auth",
+      description: "Update token for machine identity with Token Auth",
       security: [
         {
           bearerAuth: []
@@ -447,7 +503,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
 
       await server.services.auditLog.createAuditLog({
         ...req.auditLogInfo,
-        orgId: identityMembershipOrg.orgId,
+        orgId: identityMembershipOrg.scopeOrgId,
         event: {
           type: EventType.UPDATE_TOKEN_IDENTITY_TOKEN_AUTH,
           metadata: {
@@ -472,7 +528,7 @@ export const registerIdentityTokenAuthRouter = async (server: FastifyZodProvider
     schema: {
       hide: false,
       tags: [ApiDocsTags.TokenAuth],
-      description: "Revoke token for identity with Token Auth",
+      description: "Revoke token for machine identity with Token Auth",
       security: [
         {
           bearerAuth: []

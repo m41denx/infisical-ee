@@ -1,12 +1,14 @@
-import { faBan, faEye } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faBan } from "@fortawesome/free-solid-svg-icons";
+import { EyeIcon } from "lucide-react";
 
-import { Badge, EmptyState, Spinner, Tooltip } from "@app/components/v2";
-import { useGetIdentityLdapAuth } from "@app/hooks/api";
+import { EmptyState, Spinner, Tooltip } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
+import { useClearIdentityLdapAuthLockouts, useGetIdentityLdapAuth } from "@app/hooks/api";
 import { IdentityLdapAuthForm } from "@app/pages/organization/AccessManagementPage/components/OrgIdentityTab/components/IdentitySection/IdentityLdapAuthForm";
 import { ViewIdentityContentWrapper } from "@app/pages/organization/IdentityDetailsByIDPage/components/ViewIdentityAuthModal/ViewIdentityContentWrapper";
 
 import { IdentityAuthFieldDisplay } from "./IdentityAuthFieldDisplay";
+import { LockoutFields } from "./IdentityAuthLockoutFields";
 import { ViewAuthMethodProps } from "./types";
 
 export const ViewIdentityLdapAuthContent = ({
@@ -14,9 +16,12 @@ export const ViewIdentityLdapAuthContent = ({
   handlePopUpToggle,
   handlePopUpOpen,
   onDelete,
-  popUp
+  popUp,
+  lockedOut,
+  onResetAllLockouts
 }: ViewAuthMethodProps) => {
   const { data, isPending } = useGetIdentityLdapAuth(identityId);
+  const clearLockoutsResult = useClearIdentityLdapAuthLockouts();
 
   if (isPending) {
     return (
@@ -47,6 +52,7 @@ export const ViewIdentityLdapAuthContent = ({
     <ViewIdentityContentWrapper
       onEdit={() => handlePopUpOpen("identityAuthMethod")}
       onDelete={onDelete}
+      identityId={identityId}
     >
       <IdentityAuthFieldDisplay label="Access Token TTL (seconds)">
         {data.accessTokenTTL}
@@ -66,14 +72,12 @@ export const ViewIdentityLdapAuthContent = ({
         <Tooltip
           side="right"
           className="max-w-xl p-2"
-          content={<p className="break-words rounded bg-mineshaft-600 p-2">{data.bindPass}</p>}
+          content={<p className="rounded-sm bg-mineshaft-600 p-2 break-words">{data.bindPass}</p>}
         >
-          <div className="w-min">
-            <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-              <FontAwesomeIcon icon={faEye} />
-              <span>Reveal</span>
-            </Badge>
-          </div>
+          <Badge variant="neutral">
+            <EyeIcon />
+            Reveal
+          </Badge>
         </Tooltip>
       </IdentityAuthFieldDisplay>
       <IdentityAuthFieldDisplay label="Search Base / DN">
@@ -86,18 +90,30 @@ export const ViewIdentityLdapAuthContent = ({
             side="right"
             className="max-w-xl p-2"
             content={
-              <p className="break-words rounded bg-mineshaft-600 p-2">{data.ldapCaCertificate}</p>
+              <p className="rounded-sm bg-mineshaft-600 p-2 break-words">
+                {data.ldapCaCertificate}
+              </p>
             }
           >
-            <div className="w-min">
-              <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                <FontAwesomeIcon icon={faEye} />
-                <span>Reveal</span>
-              </Badge>
-            </div>
+            <Badge variant="neutral">
+              <EyeIcon />
+              Reveal
+            </Badge>
           </Tooltip>
         )}
       </IdentityAuthFieldDisplay>
+      <IdentityAuthFieldDisplay label="Lockout">
+        {data.lockoutEnabled ? "Enabled" : "Disabled"}
+      </IdentityAuthFieldDisplay>
+      {data.lockoutEnabled && (
+        <LockoutFields
+          identityId={identityId}
+          lockedOut={lockedOut}
+          clearLockoutsResult={clearLockoutsResult}
+          data={data}
+          onResetAllLockouts={onResetAllLockouts}
+        />
+      )}
     </ViewIdentityContentWrapper>
   );
 };

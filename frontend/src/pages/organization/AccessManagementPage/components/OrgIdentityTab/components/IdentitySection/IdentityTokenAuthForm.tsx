@@ -3,6 +3,7 @@ import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { faPlus, faXmark } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useParams } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
@@ -49,7 +50,10 @@ const schema = z
 export type FormData = z.infer<typeof schema>;
 
 type Props = {
-  handlePopUpOpen: (popUpName: keyof UsePopUpState<["upgradePlan"]>) => void;
+  handlePopUpOpen: (
+    popUpName: keyof UsePopUpState<["upgradePlan"]>,
+    data?: { featureName?: string }
+  ) => void;
   handlePopUpToggle: (
     popUpName: keyof UsePopUpState<["identityAuthMethod"]>,
     state?: boolean
@@ -67,7 +71,9 @@ export const IdentityTokenAuthForm = ({
   const { currentOrg } = useOrganization();
   const orgId = currentOrg?.id || "";
   const { subscription } = useSubscription();
-
+  const { projectId } = useParams({
+    strict: false
+  });
   const { mutateAsync: addMutateAsync } = useAddIdentityTokenAuth();
   const { mutateAsync: updateMutateAsync } = useUpdateIdentityTokenAuth();
   const [tabValue, setTabValue] = useState<IdentityFormTab>(IdentityFormTab.Configuration);
@@ -127,43 +133,36 @@ export const IdentityTokenAuthForm = ({
     accessTokenNumUsesLimit,
     accessTokenTrustedIps
   }: FormData) => {
-    try {
-      if (!identityId) return;
+    if (!identityId) return;
 
-      if (data) {
-        await updateMutateAsync({
-          organizationId: orgId,
-          identityId,
-          accessTokenTTL: Number(accessTokenTTL),
-          accessTokenMaxTTL: Number(accessTokenMaxTTL),
-          accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit),
-          accessTokenTrustedIps
-        });
-      } else {
-        await addMutateAsync({
-          organizationId: orgId,
-          identityId,
-          accessTokenTTL: Number(accessTokenTTL),
-          accessTokenMaxTTL: Number(accessTokenMaxTTL),
-          accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit),
-          accessTokenTrustedIps
-        });
-      }
-
-      handlePopUpToggle("identityAuthMethod", false);
-
-      createNotification({
-        text: `Successfully ${isUpdate ? "updated" : "configured"} auth method`,
-        type: "success"
+    if (data) {
+      await updateMutateAsync({
+        ...(projectId ? { projectId } : { organizationId: orgId }),
+        identityId,
+        accessTokenTTL: Number(accessTokenTTL),
+        accessTokenMaxTTL: Number(accessTokenMaxTTL),
+        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit),
+        accessTokenTrustedIps
       });
-
-      reset();
-    } catch {
-      createNotification({
-        text: `Failed to ${isUpdate ? "update" : "configure"} identity`,
-        type: "error"
+    } else {
+      await addMutateAsync({
+        ...(projectId ? { projectId } : { organizationId: orgId }),
+        identityId,
+        accessTokenTTL: Number(accessTokenTTL),
+        accessTokenMaxTTL: Number(accessTokenMaxTTL),
+        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit),
+        accessTokenTrustedIps
       });
     }
+
+    handlePopUpToggle("identityAuthMethod", false);
+
+    createNotification({
+      text: `Successfully ${isUpdate ? "updated" : "configured"} auth method`,
+      type: "success"
+    });
+
+    reset();
   };
 
   return (
@@ -235,7 +234,7 @@ export const IdentityTokenAuthForm = ({
                 render={({ field, fieldState: { error } }) => {
                   return (
                     <FormControl
-                      className="mb-0 flex-grow"
+                      className="mb-0 grow"
                       label={index === 0 ? "Access Token Trusted IPs" : undefined}
                       isError={Boolean(error)}
                       errorText={error?.message}
@@ -248,7 +247,9 @@ export const IdentityTokenAuthForm = ({
                             return;
                           }
 
-                          handlePopUpOpen("upgradePlan");
+                          handlePopUpOpen("upgradePlan", {
+                            featureName: "IP allowlisting"
+                          });
                         }}
                         placeholder="123.456.789.0"
                       />
@@ -263,7 +264,9 @@ export const IdentityTokenAuthForm = ({
                     return;
                   }
 
-                  handlePopUpOpen("upgradePlan");
+                  handlePopUpOpen("upgradePlan", {
+                    featureName: "IP allowlisting"
+                  });
                 }}
                 size="lg"
                 colorSchema="danger"
@@ -286,7 +289,9 @@ export const IdentityTokenAuthForm = ({
                   return;
                 }
 
-                handlePopUpOpen("upgradePlan");
+                handlePopUpOpen("upgradePlan", {
+                  featureName: "IP allowlisting"
+                });
               }}
               leftIcon={<FontAwesomeIcon icon={faPlus} />}
               size="xs"

@@ -31,26 +31,18 @@ export const UserProjectsSection = ({ membershipId }: Props) => {
   ] as const);
 
   const handleRemoveUser = async (projectId: string, username: string) => {
-    try {
-      await removeUserFromWorkspace({ workspaceId: projectId, usernames: [username], orgId });
-      createNotification({
-        text: "Successfully removed user from project",
-        type: "success"
-      });
-    } catch (error) {
-      console.error(error);
-      createNotification({
-        text: "Failed to remove user from the project",
-        type: "error"
-      });
-    }
+    await removeUserFromWorkspace({ projectId, usernames: [username], orgId });
+    createNotification({
+      text: "Successfully removed user from project",
+      type: "success"
+    });
     handlePopUpClose("removeUserFromProject");
   };
 
   return membership ? (
     <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-semibold text-mineshaft-100">Projects</h3>
+        <h3 className="text-lg font-medium text-mineshaft-100">Projects</h3>
         {userId !== membership.user.id && membership.status !== "invited" && (
           <IconButton
             ariaLabel="copy icon"

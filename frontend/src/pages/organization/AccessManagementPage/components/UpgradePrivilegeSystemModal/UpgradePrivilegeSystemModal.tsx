@@ -6,6 +6,7 @@ import { z } from "zod";
 import { createNotification } from "@app/components/notifications";
 import { Button, Checkbox, Modal, ModalContent, Tooltip } from "@app/components/v2";
 import { useOrgPermission } from "@app/context";
+import { OrgMembershipRole } from "@app/helpers/roles";
 import { useUpgradePrivilegeSystem } from "@app/hooks/api";
 
 const formSchema = z.object({
@@ -21,7 +22,7 @@ type Props = {
 };
 
 export const UpgradePrivilegeSystemModal = ({ isOpen, onOpenChange }: Props) => {
-  const { membership } = useOrgPermission();
+  const { hasOrgRole } = useOrgPermission();
   const [step, setStep] = useState<"info" | "upgrade">("info");
 
   const {
@@ -43,21 +44,14 @@ export const UpgradePrivilegeSystemModal = ({ isOpen, onOpenChange }: Props) => 
     acknowledgesPermanentChange;
 
   const handlePrivilegeSystemUpgrade = async () => {
-    try {
-      await upgradePrivilegeSystem();
+    await upgradePrivilegeSystem();
 
-      createNotification({
-        text: "Privilege system upgrade completed",
-        type: "success"
-      });
+    createNotification({
+      text: "Privilege system upgrade completed",
+      type: "success"
+    });
 
-      onOpenChange(false);
-    } catch {
-      createNotification({
-        text: "Failed to upgrade privilege system",
-        type: "error"
-      });
-    }
+    onOpenChange(false);
   };
 
   const handleClose = () => {
@@ -65,7 +59,7 @@ export const UpgradePrivilegeSystemModal = ({ isOpen, onOpenChange }: Props) => 
     setStep("info");
   };
 
-  const isAdmin = membership?.role === "admin";
+  const isAdmin = hasOrgRole(OrgMembershipRole.Admin);
 
   return (
     <Modal isOpen={isOpen} onOpenChange={handleClose}>
@@ -274,7 +268,7 @@ export const UpgradePrivilegeSystemModal = ({ isOpen, onOpenChange }: Props) => 
                 <Tooltip
                   content={
                     !isAdmin
-                      ? `You cannot perform this upgrade because you are not an organization admin. (Your current role: ${membership?.role ?? "Unknown"})`
+                      ? "You cannot perform this upgrade because you are not an organization admin."
                       : undefined
                   }
                 >

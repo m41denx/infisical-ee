@@ -1,20 +1,18 @@
 import {
   faCheck,
   faChevronRight,
-  faCode,
   faCopy,
   faEye,
   faFolder,
-  faKey,
-  faTags
+  faKey
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate } from "@tanstack/react-router";
+import { CurlyBracesIcon, TagsIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -25,13 +23,16 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
+import { useProject } from "@app/context";
 import { reverseTruncate } from "@app/helpers/reverseTruncate";
 import { useTimedReset } from "@app/hooks";
+import { fetchSecretValue } from "@app/hooks/api/dashboard/queries";
 import { TDashboardProjectSecretsQuickSearch } from "@app/hooks/api/dashboard/types";
-import { WorkspaceEnv } from "@app/hooks/api/workspace/types";
+import { ProjectEnv } from "@app/hooks/api/projects/types";
 
 type Props = {
-  environments: WorkspaceEnv[];
+  environments: ProjectEnv[];
   secretGroup: TDashboardProjectSecretsQuickSearch["secrets"][string];
   onClose: () => void;
   isSingleEnv?: boolean;
@@ -47,11 +48,15 @@ export const QuickSearchSecretItem = ({
   isSingleEnv,
   search
 }: Props) => {
-  const navigate = useNavigate({ from: "/projects/secret-management/$projectId/overview" });
+  const navigate = useNavigate({
+    from: "/organizations/$orgId/projects/secret-management/$projectId/overview"
+  });
   const envSlugMap = new Map(environments.map((env) => [env.slug, env]));
   const [isUrlCopied, , setIsUrlCopied] = useTimedReset<boolean>({
     initialState: false
   });
+
+  const { currentProject } = useProject();
 
   const [groupSecret] = secretGroup;
 
@@ -67,14 +72,29 @@ export const QuickSearchSecretItem = ({
     onClose();
   };
 
-  const handleCopy = (value: string, env: string) => {
-    navigator.clipboard.writeText(value);
-    createNotification({
-      type: "info",
-      title: isSingleEnv ? "Secret value copied." : `Secret value copied from ${env}.`,
-      text: ""
-    });
-    setIsUrlCopied(true);
+  const handleCopy = async (env: string) => {
+    try {
+      const data = await fetchSecretValue({
+        environment: groupSecret.env,
+        secretPath: groupSecret.path!,
+        secretKey: groupSecret.key,
+        projectId: currentProject.id
+      });
+
+      navigator.clipboard.writeText(data.valueOverride ?? data.value!);
+      createNotification({
+        type: "info",
+        title: isSingleEnv ? "Secret value copied." : `Secret value copied from ${env}.`,
+        text: ""
+      });
+      setIsUrlCopied(true);
+    } catch (error) {
+      console.error(error);
+      createNotification({
+        type: "error",
+        text: "Error fetching secret value"
+      });
+    }
   };
 
   const secretGroupTags = secretGroup.flatMap((secret) => secret.tags);
@@ -107,7 +127,7 @@ export const QuickSearchSecretItem = ({
           </span>
           <span className="text-xs text-mineshaft-400">
             <FontAwesomeIcon size="xs" className="mr-0.5 text-yellow-700" icon={faFolder} />{" "}
-            <Tooltip className="max-w-7xl" content={groupSecret.path}>
+            <Tooltip className="max-w-8xl" content={groupSecret.path}>
               <span>{reverseTruncate(groupSecret.path ?? "")}</span>
             </Tooltip>
           </span>
@@ -116,15 +136,15 @@ export const QuickSearchSecretItem = ({
       <Td>
         <div className="flex w-full items-center justify-end gap-4">
           {tagMatch && (
-            <Badge variant="primary" className="flex items-center gap-1 whitespace-nowrap">
-              <FontAwesomeIcon size="xs" icon={faTags} />
+            <Badge variant="neutral">
+              <TagsIcon />
               {tagMatch.slug}
             </Badge>
           )}
           {metadataMatch && !tagMatch && (
-            <Badge variant="primary" className="flex items-center gap-1 whitespace-nowrap">
-              <FontAwesomeIcon size="xs" icon={faCode} />
-              <p className="truncate">Metadata Match</p>
+            <Badge variant="neutral">
+              <CurlyBracesIcon />
+              Metadata
             </Badge>
           )}
           {isSingleEnv ? (
@@ -146,7 +166,7 @@ export const QuickSearchSecretItem = ({
                   e.stopPropagation();
                   const el = envSlugMap.get(groupSecret.env)?.name;
                   if (el) {
-                    handleCopy(groupSecret.value!, el);
+                    handleCopy(el);
                   }
                 }}
               >
@@ -173,7 +193,7 @@ export const QuickSearchSecretItem = ({
                       e.stopPropagation();
                       const el = envSlugMap.get(secret.env)?.name;
                       if (el) {
-                        handleCopy(secret.value!, el);
+                        handleCopy(el);
                       }
                     }}
                     key={secret.id}
@@ -214,7 +234,7 @@ export const QuickSearchSecretItem = ({
                     e.stopPropagation();
                     const el = envSlugMap.get(secret.env)?.name;
                     if (el) {
-                      handleCopy(secret.value!, el);
+                      handleCopy(el);
                     }
                   }}
                   key={secret.id}
@@ -228,13 +248,13 @@ export const QuickSearchSecretItem = ({
                       )}
                       <p
                         className={twMerge(
-                          "hidden w-[12rem] max-w-[12rem] truncate text-sm group-hover:block",
+                          "hidden w-48 max-w-48 truncate text-sm group-hover:block",
                           !secret.value && "text-mineshaft-400"
                         )}
                       >
                         {secret.value || "EMPTY"}
                       </p>
-                      <p className="w-[12rem] text-sm group-hover:hidden">
+                      <p className="w-48 text-sm group-hover:!hidden">
                         ***************************
                       </p>
                     </div>

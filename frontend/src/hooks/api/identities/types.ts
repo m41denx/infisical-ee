@@ -1,7 +1,9 @@
+import { TemporaryPermissionMode } from "@app/hooks/api/shared";
+
 import { OrderByDirection } from "../generic/types";
 import { OrgIdentityOrderBy } from "../organization/types";
+import { Project } from "../projects/types";
 import { TOrgRole } from "../roles/types";
-import { ProjectUserMembershipTemporaryMode, Workspace } from "../workspace/types";
 import { IdentityAuthMethod, IdentityJwtConfigurationType } from "./enums";
 
 export type IdentityTrustedIp = {
@@ -20,6 +22,9 @@ export type Identity = {
   createdAt: string;
   updatedAt: string;
   isInstanceAdmin?: boolean;
+  orgId: string;
+  projectId?: string | null;
+  metadata?: { key: string; value: string; id: string }[];
 };
 
 export type IdentityAccessToken = {
@@ -51,10 +56,10 @@ export type IdentityMembershipOrg = {
   updatedAt: string;
 };
 
-export type IdentityMembership = {
+export type IdentityProjectMembershipV1 = {
   id: string;
   identity: Identity;
-  project: Pick<Workspace, "id" | "name" | "type">;
+  project: Pick<Project, "id" | "name" | "type">;
   roles: Array<
     {
       id: string;
@@ -73,7 +78,7 @@ export type IdentityMembership = {
       | {
           isTemporary: true;
           temporaryRange: string;
-          temporaryMode: ProjectUserMembershipTemporaryMode;
+          temporaryMode: TemporaryPermissionMode;
           temporaryAccessEndTime: string;
           temporaryAccessStartTime: string;
         }
@@ -81,6 +86,41 @@ export type IdentityMembership = {
   >;
   createdAt: string;
   updatedAt: string;
+  lastLoginTime?: string;
+  lastLoginAuthMethod?: IdentityAuthMethod;
+};
+
+export type IdentityProjectMembershipV2 = {
+  id: string;
+  identity: Identity;
+  roles: Array<
+    {
+      id: string;
+      role: "owner" | "admin" | "member" | "no-access" | "custom";
+      customRoleId: string;
+      customRoleName: string;
+      customRoleSlug: string;
+    } & (
+      | {
+          isTemporary: false;
+          temporaryRange: null;
+          temporaryMode: null;
+          temporaryAccessEndTime: null;
+          temporaryAccessStartTime: null;
+        }
+      | {
+          isTemporary: true;
+          temporaryRange: string;
+          temporaryMode: TemporaryPermissionMode;
+          temporaryAccessEndTime: string;
+          temporaryAccessStartTime: string;
+        }
+    )
+  >;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginTime?: string;
+  lastLoginAuthMethod?: IdentityAuthMethod;
 };
 
 export type CreateIdentityDTO = {
@@ -121,7 +161,8 @@ export type IdentityUniversalAuth = {
 };
 
 export type AddIdentityUniversalAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   clientSecretTrustedIps: {
     ipAddress: string;
@@ -137,10 +178,11 @@ export type AddIdentityUniversalAuthDTO = {
   lockoutThreshold: number;
   lockoutDurationSeconds: number;
   lockoutCounterResetSeconds: number;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityUniversalAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   clientSecretTrustedIps?: {
     ipAddress: string;
@@ -156,12 +198,13 @@ export type UpdateIdentityUniversalAuthDTO = {
   lockoutThreshold?: number;
   lockoutDurationSeconds?: number;
   lockoutCounterResetSeconds?: number;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityUniversalAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityGcpAuth = {
   identityId: string;
@@ -176,7 +219,8 @@ export type IdentityGcpAuth = {
 };
 
 export type AddIdentityGcpAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   type: "iam" | "gce";
   allowedServiceAccounts: string;
@@ -188,10 +232,11 @@ export type AddIdentityGcpAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityGcpAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   type?: "iam" | "gce";
   allowedServiceAccounts?: string;
@@ -203,12 +248,13 @@ export type UpdateIdentityGcpAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityGcpAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityOidcAuth = {
   identityId: string;
@@ -226,7 +272,8 @@ export type IdentityOidcAuth = {
 };
 
 export type AddIdentityOidcAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   oidcDiscoveryUrl: string;
   caCert: string;
@@ -241,10 +288,11 @@ export type AddIdentityOidcAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityOidcAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   oidcDiscoveryUrl?: string;
   caCert?: string;
@@ -259,12 +307,13 @@ export type UpdateIdentityOidcAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityOidcAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityAwsAuth = {
   identityId: string;
@@ -279,7 +328,8 @@ export type IdentityAwsAuth = {
 };
 
 export type AddIdentityAwsAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   stsEndpoint: string;
   allowedPrincipalArns: string;
@@ -290,10 +340,11 @@ export type AddIdentityAwsAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityAwsAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   stsEndpoint?: string;
   allowedPrincipalArns?: string;
@@ -307,9 +358,10 @@ export type UpdateIdentityAwsAuthDTO = {
 };
 
 export type DeleteIdentityAwsAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityAliCloudAuth = {
   identityId: string;
@@ -322,7 +374,8 @@ export type IdentityAliCloudAuth = {
 };
 
 export type AddIdentityAliCloudAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   allowedArns: string;
   accessTokenTTL: number;
@@ -331,10 +384,11 @@ export type AddIdentityAliCloudAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityAliCloudAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   allowedArns: string;
   accessTokenTTL?: number;
@@ -343,12 +397,13 @@ export type UpdateIdentityAliCloudAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityAliCloudAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityOciAuth = {
   identityId: string;
@@ -362,7 +417,8 @@ export type IdentityOciAuth = {
 };
 
 export type AddIdentityOciAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   tenancyOcid: string;
   allowedUsernames?: string | null;
@@ -372,10 +428,11 @@ export type AddIdentityOciAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityOciAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   tenancyOcid?: string;
   allowedUsernames?: string | null;
@@ -385,12 +442,13 @@ export type UpdateIdentityOciAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityOciAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityAzureAuth = {
   identityId: string;
@@ -404,7 +462,8 @@ export type IdentityAzureAuth = {
 };
 
 export type AddIdentityAzureAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   tenantId: string;
   resource: string;
@@ -415,10 +474,11 @@ export type AddIdentityAzureAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityAzureAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   tenantId?: string;
   resource?: string;
@@ -429,12 +489,13 @@ export type UpdateIdentityAzureAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityAzureAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export enum IdentityKubernetesAuthTokenReviewMode {
   Api = "api",
@@ -458,7 +519,8 @@ export type IdentityKubernetesAuth = {
 };
 
 export type AddIdentityKubernetesAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   kubernetesHost: string | null;
   tokenReviewerJwt?: string;
@@ -474,10 +536,11 @@ export type AddIdentityKubernetesAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityKubernetesAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   kubernetesHost?: string | null;
   tokenReviewerJwt?: string | null;
@@ -493,12 +556,13 @@ export type UpdateIdentityKubernetesAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityKubernetesAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityTlsCertAuth = {
   identityId: string;
@@ -511,7 +575,8 @@ export type IdentityTlsCertAuth = {
 };
 
 export type AddIdentityTlsCertAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   caCertificate: string;
   allowedCommonNames?: string;
@@ -521,10 +586,11 @@ export type AddIdentityTlsCertAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityTlsCertAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   caCertificate: string;
   allowedCommonNames?: string | null;
@@ -534,12 +600,13 @@ export type UpdateIdentityTlsCertAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityTlsCertAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type CreateIdentityUniversalAuthClientSecretDTO = {
   identityId: string;
@@ -584,7 +651,8 @@ export type IdentityTokenAuth = {
 };
 
 export type AddIdentityLdapAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   templateId?: string;
   url?: string;
@@ -603,11 +671,17 @@ export type AddIdentityLdapAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+
+  lockoutEnabled: boolean;
+  lockoutThreshold: number;
+  lockoutDurationSeconds: number;
+  lockoutCounterResetSeconds: number;
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityLdapAuthDTO = {
   identityId: string;
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   templateId?: string;
   url?: string;
   bindDN?: string;
@@ -625,12 +699,18 @@ export type UpdateIdentityLdapAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+
+  lockoutEnabled?: boolean;
+  lockoutThreshold?: number;
+  lockoutDurationSeconds?: number;
+  lockoutCounterResetSeconds?: number;
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityLdapAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityLdapAuth = {
   url?: string;
@@ -650,10 +730,20 @@ export type IdentityLdapAuth = {
   accessTokenMaxTTL: number;
   accessTokenNumUsesLimit: number;
   accessTokenTrustedIps: IdentityTrustedIp[];
+
+  lockoutEnabled: boolean;
+  lockoutThreshold: number;
+  lockoutDurationSeconds: number;
+  lockoutCounterResetSeconds: number;
+};
+
+export type ClearIdentityLdapAuthLockoutsDTO = {
+  identityId: string;
 };
 
 export type AddIdentityTokenAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   accessTokenTTL: number;
   accessTokenMaxTTL: number;
@@ -661,10 +751,11 @@ export type AddIdentityTokenAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityTokenAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   accessTokenTTL?: number;
   accessTokenMaxTTL?: number;
@@ -672,12 +763,13 @@ export type UpdateIdentityTokenAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityTokenAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type IdentityJwtAuth = {
   identityId: string;
@@ -696,7 +788,8 @@ export type IdentityJwtAuth = {
 };
 
 export type AddIdentityJwtAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   configurationType: string;
   jwksUrl?: string;
@@ -712,10 +805,11 @@ export type AddIdentityJwtAuthDTO = {
   accessTokenTrustedIps: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type UpdateIdentityJwtAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
   configurationType?: string;
   jwksUrl?: string;
@@ -731,12 +825,13 @@ export type UpdateIdentityJwtAuthDTO = {
   accessTokenTrustedIps?: {
     ipAddress: string;
   }[];
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type DeleteIdentityJwtAuthDTO = {
-  organizationId: string;
+  organizationId?: string;
+  projectId?: string;
   identityId: string;
-};
+} & ({ organizationId: string } | { projectId: string });
 
 export type CreateTokenIdentityTokenAuthDTO = {
   identityId: string;
@@ -745,9 +840,7 @@ export type CreateTokenIdentityTokenAuthDTO = {
 
 export type CreateTokenIdentityTokenAuthRes = {
   accessToken: string;
-  tokenType: string;
-  expiresIn: number;
-  accessTokenMaxTTL: number;
+  tokenData: IdentityAccessToken;
 };
 
 export type UpdateTokenIdentityTokenAuthDTO = {
@@ -765,8 +858,13 @@ export type RevokeTokenRes = {
   message: string;
 };
 
-export type TProjectIdentitiesList = {
-  identityMemberships: IdentityMembership[];
+export type TProjectIdentityMembershipsList = {
+  identityMemberships: IdentityProjectMembershipV1[];
+  totalCount: number;
+};
+
+export type TProjectIdentityMembershipsListV2 = {
+  identityMemberships: IdentityProjectMembershipV2[];
   totalCount: number;
 };
 

@@ -7,12 +7,13 @@ import { SubscriptionPlan } from "./types";
 // import { Workspace } from './types';
 
 export const subscriptionQueryKeys = {
-  getOrgSubsription: (orgID: string) => ["plan", { orgID }] as const
+  all: () => ["plan"] as const,
+  getOrgSubsription: (orgID: string) => [...subscriptionQueryKeys.all(), { orgID }] as const
 };
 
-export const fetchOrgSubscription = async (orgID: string) => {
+export const fetchOrgSubscription = async (orgID: string, refreshCache: boolean = false) => {
   const { data } = await apiRequest.get<{ plan: SubscriptionPlan }>(
-    `/api/v1/organizations/${orgID}/plan`
+    `/api/v1/organizations/${orgID}/plan${refreshCache ? "?refreshCache=true" : ""}`
   );
 
   return data.plan;

@@ -68,28 +68,20 @@ export const ProjectTemplateEnvironmentsForm = ({
   const updateProjectTemplate = useUpdateProjectTemplate();
 
   const onFormSubmit = async (form: TFormSchema) => {
-    try {
-      const { environments: updatedEnvs } = await updateProjectTemplate.mutateAsync({
-        environments: form.environments?.map((env, index) => ({
-          ...env,
-          position: index + 1
-        })),
-        templateId: projectTemplate.id
-      });
+    const { environments: updatedEnvs } = await updateProjectTemplate.mutateAsync({
+      environments: form.environments?.map((env, index) => ({
+        ...env,
+        position: index + 1
+      })),
+      templateId: projectTemplate.id
+    });
 
-      reset({ environments: updatedEnvs });
+    reset({ environments: updatedEnvs });
 
-      createNotification({
-        text: "Project template updated successfully",
-        type: "success"
-      });
-    } catch (e: any) {
-      console.error(e);
-      createNotification({
-        text: e.message ?? "Failed to update project template",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Project template updated successfully",
+      type: "success"
+    });
   };
 
   const isEnvironmentLimitExceeded =
@@ -102,7 +94,7 @@ export const ProjectTemplateEnvironmentsForm = ({
     >
       <div className="mb-4 flex items-center justify-between border-b border-mineshaft-400 pb-4">
         <div>
-          <h2 className="text-lg font-semibold">Project Environments</h2>
+          <h2 className="text-lg font-medium">Project Environments</h2>
           {!isInfisicalTemplate && (
             <p className="text-sm text-mineshaft-400">
               Add, rename, remove and reorder environments for this project template
@@ -185,7 +177,7 @@ export const ProjectTemplateEnvironmentsForm = ({
                             <FormControl
                               isError={Boolean(error?.message)}
                               errorText={error?.message}
-                              className="mb-0 flex-grow"
+                              className="mb-0 grow"
                             >
                               <Input isDisabled={!isAllowed} {...field} placeholder="Name..." />
                             </FormControl>
@@ -211,7 +203,7 @@ export const ProjectTemplateEnvironmentsForm = ({
                             <FormControl
                               isError={Boolean(error?.message)}
                               errorText={error?.message}
-                              className="mb-0 flex-grow"
+                              className="mb-0 grow"
                             >
                               <Input isDisabled={!isAllowed} {...field} placeholder="Slug..." />
                             </FormControl>

@@ -15,7 +15,7 @@ import {
   SelectItem,
   TextArea
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useCreateSshCa, useGetSshCaById, useUpdateSshCa } from "@app/hooks/api";
 import {
   SshCaKeySource,
@@ -54,8 +54,9 @@ export type FormData = z.infer<typeof schema>;
 
 export const SshCaModal = ({ popUp, handlePopUpToggle }: Props) => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentProject } = useProject();
+  const { currentOrg } = useOrganization();
+  const projectId = currentProject?.id || "";
   const { data: ca } = useGetSshCaById((popUp?.sshCa?.data as { caId: string })?.caId || "");
 
   const { mutateAsync: createMutateAsync } = useCreateSshCa();
@@ -106,47 +107,40 @@ export const SshCaModal = ({ popUp, handlePopUpToggle }: Props) => {
     publicKey,
     privateKey
   }: FormData) => {
-    try {
-      if (!projectId) return;
+    if (!projectId) return;
 
-      if (ca) {
-        await updateMutateAsync({
-          caId: ca.id,
-          friendlyName
-        });
-      } else {
-        const { id: newCaId } = await createMutateAsync({
-          projectId,
-          friendlyName,
-          keySource,
-          keyAlgorithm,
-          publicKey,
-          privateKey
-        });
-
-        navigate({
-          to: "/projects/ssh/$projectId/ca/$caId",
-          params: {
-            projectId,
-            caId: newCaId
-          }
-        });
-      }
-
-      reset();
-      handlePopUpToggle("sshCa", false);
-
-      createNotification({
-        text: `Successfully ${ca ? "updated" : "created"} SSH CA`,
-        type: "success"
+    if (ca) {
+      await updateMutateAsync({
+        caId: ca.id,
+        friendlyName
       });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: `Failed to ${ca ? "update" : "create"} SSH CA`,
-        type: "error"
+    } else {
+      const { id: newCaId } = await createMutateAsync({
+        projectId,
+        friendlyName,
+        keySource,
+        keyAlgorithm,
+        publicKey,
+        privateKey
+      });
+
+      navigate({
+        to: "/organizations/$orgId/projects/ssh/$projectId/ca/$caId",
+        params: {
+          orgId: currentOrg.id,
+          projectId,
+          caId: newCaId
+        }
       });
     }
+
+    reset();
+    handlePopUpToggle("sshCa", false);
+
+    createNotification({
+      text: `Successfully ${ca ? "updated" : "created"} SSH CA`,
+      type: "success"
+    });
   };
 
   return (

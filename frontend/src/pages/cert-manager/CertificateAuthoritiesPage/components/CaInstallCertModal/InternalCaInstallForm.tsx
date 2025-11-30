@@ -6,11 +6,11 @@ import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, FormControl, Input, Select, SelectItem } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   CaStatus,
-  useGetCaById,
   useGetCaCsr,
+  useGetInternalCaById,
   useImportCaCertificate,
   useListWorkspaceCas,
   useSignIntermediate
@@ -46,16 +46,16 @@ type Props = {
 };
 
 export const InternalCaInstallForm = ({ caId, handlePopUpToggle }: Props) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { data: cas } = useListWorkspaceCas({
-    projectSlug: currentWorkspace?.slug ?? "",
+    projectId: currentProject.id,
     status: CaStatus.ACTIVE
   });
-  const { data: ca } = useGetCaById(caId);
+  const { data: ca } = useGetInternalCaById(caId);
   const { data: csr } = useGetCaCsr(caId);
 
   const { mutateAsync: signIntermediate } = useSignIntermediate();
-  const { mutateAsync: importCaCertificate } = useImportCaCertificate(currentWorkspace.id);
+  const { mutateAsync: importCaCertificate } = useImportCaCertificate(currentProject.id);
 
   const {
     control,
@@ -83,55 +83,51 @@ export const InternalCaInstallForm = ({ caId, handlePopUpToggle }: Props) => {
 
   const parentCaId = watch("parentCaId");
 
-  const { data: parentCa } = useGetCaById(parentCaId);
+  const { data: parentCa } = useGetInternalCaById(parentCaId);
 
   useEffect(() => {
-    if (parentCa?.maxPathLength) {
+    if (parentCa?.configuration.maxPathLength) {
       setValue(
         "maxPathLength",
-        (parentCa.maxPathLength === -1 ? 3 : parentCa.maxPathLength - 1).toString()
+        (parentCa.configuration.maxPathLength === -1
+          ? 3
+          : parentCa.configuration.maxPathLength - 1
+        ).toString()
       );
     }
 
-    if (parentCa?.notAfter) {
-      const parentCaNotAfter = new Date(parentCa.notAfter);
+    if (parentCa?.configuration.notAfter) {
+      const parentCaNotAfter = new Date(parentCa.configuration.notAfter);
       const middleDate = getMiddleDate(new Date(), parentCaNotAfter);
       setValue("notAfter", format(middleDate, "yyyy-MM-dd"));
     }
   }, [parentCa]);
 
   const onFormSubmit = async ({ notAfter, maxPathLength }: FormData) => {
-    try {
-      if (!csr || !caId || !currentWorkspace?.slug) return;
+    if (!csr || !caId || !currentProject?.slug) return;
 
-      const { certificate, certificateChain } = await signIntermediate({
-        caId: parentCaId,
-        csr,
-        maxPathLength: Number(maxPathLength),
-        notAfter,
-        notBefore: new Date().toISOString()
-      });
+    const { certificate, certificateChain } = await signIntermediate({
+      caId: parentCaId,
+      csr,
+      maxPathLength: Number(maxPathLength),
+      notAfter,
+      notBefore: new Date().toISOString()
+    });
 
-      await importCaCertificate({
-        caId,
-        projectSlug: currentWorkspace?.slug,
-        certificate,
-        certificateChain
-      });
+    await importCaCertificate({
+      caId,
+      projectSlug: currentProject?.slug,
+      certificate,
+      certificateChain
+    });
 
-      reset();
+    reset();
 
-      createNotification({
-        text: "Successfully installed certificate for CA",
-        type: "success"
-      });
-      handlePopUpToggle("installCaCert", false);
-    } catch {
-      createNotification({
-        text: "Failed to install certificate for CA",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully installed certificate for CA",
+      type: "success"
+    });
+    handlePopUpToggle("installCaCert", false);
   };
 
   function generatePathLengthOpts(parentCaMaxPathLength: number): number[] {
@@ -204,7 +200,7 @@ export const InternalCaInstallForm = ({ caId, handlePopUpToggle }: Props) => {
               onValueChange={onChange}
               className="w-full"
             >
-              {generatePathLengthOpts(parentCa?.maxPathLength || 0).map((value) => (
+              {generatePathLengthOpts(parentCa?.configuration.maxPathLength || 0).map((value) => (
                 <SelectItem value={String(value)} key={`ca-path-length-${value}`}>
                   {`${value}`}
                 </SelectItem>

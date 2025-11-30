@@ -1,8 +1,11 @@
 import { TAuditLogDALFactory } from "@app/ee/services/audit-log/audit-log-dal";
+import { TScimServiceFactory } from "@app/ee/services/scim/scim-types";
 import { TSnapshotDALFactory } from "@app/ee/services/secret-snapshot/snapshot-dal";
+import { TKeyValueStoreDALFactory } from "@app/keystore/key-value-store-dal";
 import { getConfig } from "@app/lib/config/env";
 import { logger } from "@app/lib/logger";
 import { QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue";
+import { TUserNotificationDALFactory } from "@app/services/notification/user-notification-dal";
 
 import { TIdentityAccessTokenDALFactory } from "../identity-access-token/identity-access-token-dal";
 import { TIdentityUaClientSecretDALFactory } from "../identity-ua/identity-ua-client-secret-dal";
@@ -25,6 +28,9 @@ type TDailyResourceCleanUpQueueServiceFactoryDep = {
   serviceTokenService: Pick<TServiceTokenServiceFactory, "notifyExpiringTokens">;
   queueService: TQueueServiceFactory;
   orgService: TOrgServiceFactory;
+  userNotificationDAL: Pick<TUserNotificationDALFactory, "pruneNotifications">;
+  keyValueStoreDAL: Pick<TKeyValueStoreDALFactory, "pruneExpiredKeys">;
+  scimService: Pick<TScimServiceFactory, "notifyExpiringTokens">;
 };
 
 export type TDailyResourceCleanUpQueueServiceFactory = ReturnType<typeof dailyResourceCleanUpQueueServiceFactory>;
@@ -40,7 +46,10 @@ export const dailyResourceCleanUpQueueServiceFactory = ({
   secretVersionV2DAL,
   identityUniversalAuthClientSecretDAL,
   serviceTokenService,
-  orgService
+  scimService,
+  orgService,
+  userNotificationDAL,
+  keyValueStoreDAL
 }: TDailyResourceCleanUpQueueServiceFactoryDep) => {
   const appCfg = getConfig();
 
@@ -49,6 +58,10 @@ export const dailyResourceCleanUpQueueServiceFactory = ({
   }
 
   const init = async () => {
+    if (appCfg.isSecondaryInstance) {
+      return;
+    }
+
     await queueService.stopRepeatableJob(
       QueueName.AuditLogPrune,
       QueueJobs.AuditLogPrune,
@@ -76,8 +89,11 @@ export const dailyResourceCleanUpQueueServiceFactory = ({
           await secretVersionV2DAL.pruneExcessVersions();
           await secretFolderVersionDAL.pruneExcessVersions();
           await serviceTokenService.notifyExpiringTokens();
+          await scimService.notifyExpiringTokens();
           await orgService.notifyInvitedUsers();
           await auditLogDAL.pruneAuditLog();
+          await userNotificationDAL.pruneNotifications();
+          await keyValueStoreDAL.pruneExpiredKeys();
           logger.info(`${QueueName.DailyResourceCleanUp}: queue task completed`);
         } catch (error) {
           logger.error(error, `${QueueName.DailyResourceCleanUp}: resource cleanup failed`);

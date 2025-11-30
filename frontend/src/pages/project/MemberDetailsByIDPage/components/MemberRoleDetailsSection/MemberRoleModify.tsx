@@ -29,14 +29,14 @@ import {
   ProjectPermissionActions,
   ProjectPermissionMemberActions,
   ProjectPermissionSub,
+  useProject,
   useProjectPermission,
-  useSubscription,
-  useWorkspace
+  useSubscription
 } from "@app/context";
 import { useGetProjectRoles, useUpdateUserWorkspaceRole } from "@app/hooks/api";
+import { ProjectUserMembershipTemporaryMode } from "@app/hooks/api/projects/types";
 import { ProjectMembershipRole } from "@app/hooks/api/roles/types";
 import { TWorkspaceUser } from "@app/hooks/api/types";
-import { ProjectUserMembershipTemporaryMode } from "@app/hooks/api/workspace/types";
 
 const roleFormSchema = z.object({
   roles: z
@@ -60,14 +60,13 @@ type TRoleForm = z.infer<typeof roleFormSchema>;
 
 type Props = {
   projectMember: TWorkspaceUser;
-  onOpenUpgradeModal: (title: string) => void;
+  onOpenUpgradeModal: () => void;
 };
 
 export const MemberRoleModify = ({ projectMember, onOpenUpgradeModal }: Props) => {
   const { subscription } = useSubscription();
-  const { currentWorkspace } = useWorkspace();
-  const workspaceId = currentWorkspace?.id || "";
-  const { data: projectRoles, isPending: isRolesLoading } = useGetProjectRoles(workspaceId);
+  const { projectId } = useProject();
+  const { data: projectRoles, isPending: isRolesLoading } = useGetProjectRoles(projectId);
   const { permission } = useProjectPermission();
   const isMemberEditDisabled = permission.cannot(
     ProjectPermissionMemberActions.Edit,
@@ -123,22 +122,16 @@ export const MemberRoleModify = ({ projectMember, onOpenUpgradeModal }: Props) =
     );
 
     if (hasCustomRoleSelected && subscription && !subscription?.rbac) {
-      onOpenUpgradeModal(
-        "You can assign custom roles to members if you upgrade your Infisical plan."
-      );
+      onOpenUpgradeModal();
       return;
     }
 
-    try {
-      await updateMembershipRole.mutateAsync({
-        workspaceId,
-        membershipId: projectMember.id,
-        roles: sanitizedRoles
-      });
-      createNotification({ text: "Successfully updated roles", type: "success" });
-    } catch {
-      createNotification({ text: "Failed to update roles", type: "error" });
-    }
+    await updateMembershipRole.mutateAsync({
+      projectId,
+      membershipId: projectMember.id,
+      roles: sanitizedRoles
+    });
+    createNotification({ text: "Successfully updated roles", type: "success" });
   };
 
   if (isRolesLoading)
@@ -182,7 +175,7 @@ export const MemberRoleModify = ({ projectMember, onOpenUpgradeModal }: Props) =
               />
               <Popover>
                 <PopoverTrigger disabled={isMemberEditDisabled} asChild>
-                  <div className="flex-grow">
+                  <div className="grow">
                     <Tooltip
                       content={
                         temporaryAccess?.isTemporary

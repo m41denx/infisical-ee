@@ -13,10 +13,11 @@ export const AccessManagementPage = () => {
       <Helmet>
         <title>{t("common.head-title", { title: "Access Control" })}</title>
       </Helmet>
-      <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
-        <div className="mx-auto mb-6 w-full max-w-7xl">
+      <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+        <div className="mx-auto mb-6 w-full max-w-8xl">
           <PageHeader
-            title="Access Control"
+            scope="instance"
+            title="Server Admin Access Control"
             description="Manage server admins within your Infisical instance."
           />
           <ServerAdminsTable />

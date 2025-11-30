@@ -7,7 +7,6 @@ import { twMerge } from "tailwind-merge";
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   Button,
   DeleteActionModal,
   DropdownMenu,
@@ -24,6 +23,7 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { OrgPermissionActions, OrgPermissionSubjects, useOrganization } from "@app/context";
 import { withPermission } from "@app/hoc";
 import { usePopUp } from "@app/hooks";
@@ -48,7 +48,7 @@ const renderStatus = (status: WorkflowIntegrationStatus) => {
   }
 
   if (status === WorkflowIntegrationStatus.Pending) {
-    return <Badge variant="primary">Pending</Badge>;
+    return <Badge variant="warning">Pending</Badge>;
   }
 
   return <Badge variant="danger">Failed</Badge>;
@@ -132,7 +132,7 @@ export const OrgWorkflowIntegrationTab = withPermission(
     return (
       <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
         <div className="flex justify-between">
-          <p className="text-xl font-semibold text-mineshaft-100">Workflow Integrations</p>
+          <p className="text-xl font-medium text-mineshaft-100">Workflow Integrations</p>
           <OrgPermissionCan I={OrgPermissionActions.Create} an={OrgPermissionSubjects.Settings}>
             {(isAllowed) => (
               <Button

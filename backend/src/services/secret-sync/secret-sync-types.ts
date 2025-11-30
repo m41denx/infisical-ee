@@ -2,6 +2,12 @@ import { Job } from "bullmq";
 
 import { AuditLogInfo } from "@app/ee/services/audit-log/audit-log-types";
 import {
+  TChefSync,
+  TChefSyncInput,
+  TChefSyncListItem,
+  TChefSyncWithCredentials
+} from "@app/ee/services/secret-sync/chef";
+import {
   TOCIVaultSync,
   TOCIVaultSyncInput,
   TOCIVaultSyncListItem,
@@ -117,7 +123,19 @@ import {
   THumanitecSyncListItem,
   THumanitecSyncWithCredentials
 } from "./humanitec";
+import {
+  TLaravelForgeSync,
+  TLaravelForgeSyncInput,
+  TLaravelForgeSyncListItem,
+  TLaravelForgeSyncWithCredentials
+} from "./laravel-forge";
 import { TNetlifySync, TNetlifySyncInput, TNetlifySyncListItem, TNetlifySyncWithCredentials } from "./netlify";
+import {
+  TNorthflankSync,
+  TNorthflankSyncInput,
+  TNorthflankSyncListItem,
+  TNorthflankSyncWithCredentials
+} from "./northflank";
 import {
   TRailwaySync,
   TRailwaySyncInput,
@@ -157,6 +175,7 @@ export type TSecretSync =
   | TGitHubSync
   | TGcpSync
   | TAzureKeyVaultSync
+  | TChefSync
   | TAzureAppConfigurationSync
   | TAzureDevOpsSync
   | TDatabricksSync
@@ -164,6 +183,7 @@ export type TSecretSync =
   | TTerraformCloudSync
   | TCamundaSync
   | TVercelSync
+  | TLaravelForgeSync
   | TWindmillSync
   | THCVaultSync
   | TTeamCitySync
@@ -180,6 +200,7 @@ export type TSecretSync =
   | TChecklySync
   | TSupabaseSync
   | TNetlifySync
+  | TNorthflankSync
   | TBitbucketSync;
 
 export type TSecretSyncWithCredentials =
@@ -188,6 +209,7 @@ export type TSecretSyncWithCredentials =
   | TGitHubSyncWithCredentials
   | TGcpSyncWithCredentials
   | TAzureKeyVaultSyncWithCredentials
+  | TChefSyncWithCredentials
   | TAzureAppConfigurationSyncWithCredentials
   | TAzureDevOpsSyncWithCredentials
   | TDatabricksSyncWithCredentials
@@ -212,7 +234,9 @@ export type TSecretSyncWithCredentials =
   | TSupabaseSyncWithCredentials
   | TDigitalOceanAppPlatformSyncWithCredentials
   | TNetlifySyncWithCredentials
-  | TBitbucketSyncWithCredentials;
+  | TNorthflankSyncWithCredentials
+  | TBitbucketSyncWithCredentials
+  | TLaravelForgeSyncWithCredentials;
 
 export type TSecretSyncInput =
   | TAwsParameterStoreSyncInput
@@ -220,6 +244,7 @@ export type TSecretSyncInput =
   | TGitHubSyncInput
   | TGcpSyncInput
   | TAzureKeyVaultSyncInput
+  | TChefSyncInput
   | TAzureAppConfigurationSyncInput
   | TAzureDevOpsSyncInput
   | TDatabricksSyncInput
@@ -244,7 +269,9 @@ export type TSecretSyncInput =
   | TSupabaseSyncInput
   | TDigitalOceanAppPlatformSyncInput
   | TNetlifySyncInput
-  | TBitbucketSyncInput;
+  | TNorthflankSyncInput
+  | TBitbucketSyncInput
+  | TLaravelForgeSyncInput;
 
 export type TSecretSyncListItem =
   | TAwsParameterStoreSyncListItem
@@ -252,6 +279,7 @@ export type TSecretSyncListItem =
   | TGitHubSyncListItem
   | TGcpSyncListItem
   | TAzureKeyVaultSyncListItem
+  | TChefSyncListItem
   | TAzureAppConfigurationSyncListItem
   | TAzureDevOpsSyncListItem
   | TDatabricksSyncListItem
@@ -259,6 +287,7 @@ export type TSecretSyncListItem =
   | TTerraformCloudSyncListItem
   | TCamundaSyncListItem
   | TVercelSyncListItem
+  | TLaravelForgeSyncListItem
   | TWindmillSyncListItem
   | THCVaultSyncListItem
   | TTeamCitySyncListItem
@@ -276,6 +305,7 @@ export type TSecretSyncListItem =
   | TSupabaseSyncListItem
   | TDigitalOceanAppPlatformSyncListItem
   | TNetlifySyncListItem
+  | TNorthflankSyncListItem
   | TBitbucketSyncListItem;
 
 export type TSyncOptionsConfig = {
@@ -322,6 +352,13 @@ export type TDeleteSecretSyncDTO = {
   destination: SecretSync;
   syncId: string;
   removeSecrets: boolean;
+};
+
+export type TCheckDuplicateDestinationDTO = {
+  destination: SecretSync;
+  destinationConfig: Record<string, unknown>;
+  excludeSyncId?: string;
+  projectId: string;
 };
 
 export enum SecretSyncStatus {
@@ -408,3 +445,8 @@ export type TSecretMap = Record<
     secretMetadata?: ResourceMetadataDTO;
   }
 >;
+
+export type DestinationDuplicateCheckFn = (
+  existingConfig: Record<string, unknown>,
+  newConfig: Record<string, unknown>
+) => boolean;

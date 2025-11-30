@@ -14,7 +14,7 @@ import {
   Select,
   SelectItem
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   SshCertTemplateStatus,
   useGetSshCertTemplate,
@@ -71,8 +71,8 @@ enum SshCertificateOperation {
 }
 
 export const SshCertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentProject } = useProject();
+  const projectId = currentProject?.id || "";
   const [operation, setOperation] = useState<SshCertificateOperation>(
     SshCertificateOperation.SIGN_SSH_KEY
   );
@@ -122,65 +122,57 @@ export const SshCertificateModal = ({ popUp, handlePopUpToggle }: Props) => {
     ttl,
     keyId
   }: FormData) => {
-    try {
-      if (!templateData) return;
-      if (!projectId) return;
+    if (!templateData) return;
+    if (!projectId) return;
 
-      switch (operation) {
-        case SshCertificateOperation.SIGN_SSH_KEY: {
-          const { serialNumber, signedKey } = await signSshKey({
-            projectId,
-            certificateTemplateId: templateData.id,
-            publicKey: existingPublicKey,
-            certType,
-            principals: principals.split(",").map((user) => user.trim()),
-            ttl,
-            keyId
-          });
+    switch (operation) {
+      case SshCertificateOperation.SIGN_SSH_KEY: {
+        const { serialNumber, signedKey } = await signSshKey({
+          projectId,
+          certificateTemplateId: templateData.id,
+          publicKey: existingPublicKey,
+          certType,
+          principals: principals.split(",").map((user) => user.trim()),
+          ttl,
+          keyId
+        });
 
-          setCertificateDetails({
-            serialNumber,
-            signedKey
-          });
-          break;
-        }
-        case SshCertificateOperation.ISSUE_SSH_CREDS: {
-          const { serialNumber, publicKey, privateKey, signedKey } = await issueSshCreds({
-            projectId,
-            certificateTemplateId: templateData.id,
-            keyAlgorithm,
-            certType,
-            principals: principals.split(",").map((user) => user.trim()),
-            ttl,
-            keyId
-          });
-
-          setCertificateDetails({
-            serialNumber,
-            privateKey,
-            publicKey,
-            signedKey
-          });
-          break;
-        }
-        default: {
-          break;
-        }
+        setCertificateDetails({
+          serialNumber,
+          signedKey
+        });
+        break;
       }
+      case SshCertificateOperation.ISSUE_SSH_CREDS: {
+        const { serialNumber, publicKey, privateKey, signedKey } = await issueSshCreds({
+          projectId,
+          certificateTemplateId: templateData.id,
+          keyAlgorithm,
+          certType,
+          principals: principals.split(",").map((user) => user.trim()),
+          ttl,
+          keyId
+        });
 
-      reset();
-
-      createNotification({
-        text: "Successfully created SSH certificate",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to create SSH certificate",
-        type: "error"
-      });
+        setCertificateDetails({
+          serialNumber,
+          privateKey,
+          publicKey,
+          signedKey
+        });
+        break;
+      }
+      default: {
+        break;
+      }
     }
+
+    reset();
+
+    createNotification({
+      text: "Successfully created SSH certificate",
+      type: "success"
+    });
   };
 
   return (

@@ -9,17 +9,15 @@ import {
   faUsers,
   faUserShield,
   faUserXmark,
-  faWarning,
   faXmark
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { InfiniteData } from "@tanstack/react-query";
+import { AlertTriangleIcon, UserCogIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
 import {
-  Badge,
   Button,
   Checkbox,
   DeleteActionModal,
@@ -31,6 +29,7 @@ import {
   EmptyState,
   IconButton,
   Input,
+  Pagination,
   Table,
   TableContainer,
   TableSkeleton,
@@ -41,8 +40,14 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { useSubscription, useUser } from "@app/context";
-import { useDebounce, usePopUp } from "@app/hooks";
+import {
+  getUserTablePreference,
+  PreferenceKey,
+  setUserTablePreference
+} from "@app/helpers/userTablePreferences";
+import { useDebounce, usePagination, usePopUp } from "@app/hooks";
 import {
   useAdminBulkDeleteUsers,
   useAdminDeleteUser,
@@ -53,22 +58,21 @@ import {
 import { User } from "@app/hooks/api/users/types";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
-const addServerAdminUpgradePlanMessage = "Granting another user Server Admin permissions";
-const removeServerAdminUpgradePlanMessage = "Removing Server Admin permissions from user";
-
 const UserPanelTable = ({
   handlePopUpOpen,
-  users: usersPages,
+  users,
   isPending,
   adminsOnly,
   searchUserFilter,
   setSearchUserFilter,
   setAdminsOnly,
-  isFetchingNextPage,
-  fetchNextPage,
-  hasNextPage,
   selectedUsers,
-  setSelectedUsers
+  setSelectedUsers,
+  totalCount,
+  page,
+  perPage,
+  setPage,
+  handlePerPageChange
 }: {
   handlePopUpOpen: (
     popUpName: keyof UsePopUpState<
@@ -77,26 +81,26 @@ const UserPanelTable = ({
     data?: {
       username: string;
       id: string;
-      message?: string;
+      text?: string;
     }
   ) => void;
   isPending: boolean;
-  users: InfiniteData<User[], unknown> | undefined;
+  users: User[] | undefined;
   adminsOnly: boolean;
   setAdminsOnly: (adminsOnly: boolean) => void;
   searchUserFilter: string;
   setSearchUserFilter: (filter: string) => void;
   selectedUsers: User[];
   setSelectedUsers: Dispatch<SetStateAction<User[]>>;
-  isFetchingNextPage: boolean;
-  fetchNextPage: () => void;
-  hasNextPage: boolean;
+  totalCount: number;
+  page: number;
+  perPage: number;
+  setPage: Dispatch<SetStateAction<number>>;
+  handlePerPageChange: (newPerPage: number) => void;
 }) => {
   const { subscription } = useSubscription();
 
-  const users = usersPages?.pages.flat();
-
-  const isEmpty = !isPending && !users?.length;
+  const isEmpty = !isPending && totalCount === 0;
   const isTableFiltered = Boolean(adminsOnly);
 
   const selectedUserIds = selectedUsers.map((user) => user.id);
@@ -146,7 +150,7 @@ const UserPanelTable = ({
               icon={adminsOnly && <FontAwesomeIcon icon={faCheckCircle} />}
               iconPos="right"
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-x-2">
                 <FontAwesomeIcon icon={faUserShield} className="text-yellow-700" />
                 <span>Server Admins</span>
               </div>
@@ -211,7 +215,8 @@ const UserPanelTable = ({
                             {name ?? <span className="text-mineshaft-400">Not Set</span>}
                           </p>
                           {superAdmin && (
-                            <Badge variant="primary" className="ml-2 whitespace-nowrap">
+                            <Badge variant="info" className="ml-2">
+                              <UserCogIcon />
                               Server Admin
                             </Badge>
                           )}
@@ -252,7 +257,7 @@ const UserPanelTable = ({
                                       handlePopUpOpen("upgradePlan", {
                                         username,
                                         id,
-                                        message: addServerAdminUpgradePlanMessage
+                                        text: "Your current plan does not allow setting additional server admins. To unlock this feature, please upgrade to Infisical Pro plan."
                                       });
                                       return;
                                     }
@@ -268,7 +273,7 @@ const UserPanelTable = ({
                                     <div className="relative">
                                       <FontAwesomeIcon icon={faShieldHalved} />
                                       <FontAwesomeIcon
-                                        className="absolute -bottom-[0.01rem] -right-1"
+                                        className="absolute -right-1 -bottom-[0.01rem]"
                                         size="2xs"
                                         icon={faXmark}
                                       />
@@ -280,7 +285,7 @@ const UserPanelTable = ({
                                       handlePopUpOpen("upgradePlan", {
                                         username,
                                         id,
-                                        message: removeServerAdminUpgradePlanMessage
+                                        text: "Your current plan does not allow removing server admins. To unlock this feature, please upgrade to Infisical Pro plan."
                                       });
                                       return;
                                     }
@@ -302,16 +307,13 @@ const UserPanelTable = ({
           {!isPending && isEmpty && <EmptyState title="No users found" icon={faUsers} />}
         </TableContainer>
         {!isEmpty && (
-          <Button
-            className="mt-4 py-3 text-sm"
-            isFullWidth
-            variant="outline_bg"
-            isLoading={isFetchingNextPage}
-            isDisabled={isFetchingNextPage || !hasNextPage}
-            onClick={() => fetchNextPage()}
-          >
-            {hasNextPage ? "Load More" : "End of List"}
-          </Button>
+          <Pagination
+            count={totalCount}
+            page={page}
+            perPage={perPage}
+            onChangePage={(newPage) => setPage(newPage)}
+            onChangePerPage={handlePerPageChange}
+          />
         )}
       </div>
     </>
@@ -341,33 +343,32 @@ export const UserIdentitiesTable = () => {
   const [adminsOnly, setAdminsOnly] = useState(false);
   const [debouncedSearchTerm] = useDebounce(searchUserFilter, 500);
 
-  const {
-    data: users,
-    isPending,
-    isFetchingNextPage,
-    hasNextPage,
-    fetchNextPage
-  } = useAdminGetUsers({
-    limit: 20,
+  const { offset, limit, setPage, perPage, page, setPerPage } = usePagination("", {
+    initPerPage: getUserTablePreference("ResourceOverviewUsersTable", PreferenceKey.PerPage, 20)
+  });
+
+  const handlePerPageChange = (newPerPage: number) => {
+    setPerPage(newPerPage);
+    setUserTablePreference("ResourceOverviewUsersTable", PreferenceKey.PerPage, newPerPage);
+  };
+
+  const { data, isPending } = useAdminGetUsers({
+    limit,
+    offset,
     searchTerm: debouncedSearchTerm,
     adminsOnly
   });
 
+  const { users, totalCount = 0 } = data ?? {};
+
   const handleRemoveUser = async () => {
     const { id } = popUp?.removeUser?.data as { id: string; username: string };
 
-    try {
-      await deleteUser(id);
-      createNotification({
-        type: "success",
-        text: "Successfully deleted user"
-      });
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Error deleting user"
-      });
-    }
+    await deleteUser(id);
+    createNotification({
+      type: "success",
+      text: "Successfully deleted user"
+    });
 
     handlePopUpClose("removeUser");
   };
@@ -375,18 +376,11 @@ export const UserIdentitiesTable = () => {
   const handleGrantServerAdminAccess = async () => {
     const { id } = popUp?.upgradeToServerAdmin?.data as { id: string; username: string };
 
-    try {
-      await grantAdminAccess(id);
-      createNotification({
-        type: "success",
-        text: "Successfully granted server admin access to user"
-      });
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Error granting server admin access to user"
-      });
-    }
+    await grantAdminAccess(id);
+    createNotification({
+      type: "success",
+      text: "Successfully granted server admin access to user"
+    });
 
     handlePopUpClose("upgradeToServerAdmin");
   };
@@ -394,46 +388,32 @@ export const UserIdentitiesTable = () => {
   const handleRemoveServerAdminAccess = async () => {
     const { id } = popUp?.removeServerAdmin?.data as { id: string; username: string };
 
-    try {
-      await removeAdminAccess(id);
-      createNotification({
-        type: "success",
-        text: "Successfully removed server admin access from user"
-      });
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Error removing server admin access from user"
-      });
-    }
+    await removeAdminAccess(id);
+    createNotification({
+      type: "success",
+      text: "Successfully removed server admin access from user"
+    });
 
     handlePopUpClose("removeServerAdmin");
   };
 
   const handleRemoveUsers = async () => {
-    try {
-      await deleteUsers(selectedUsers.map((user) => user.id));
+    await deleteUsers(selectedUsers.map((user) => user.id));
 
-      createNotification({
-        text: "Successfully removed users",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully removed users",
+      type: "success"
+    });
 
-      setSelectedUsers([]);
-      handlePopUpClose("removeUsers");
-    } catch {
-      createNotification({
-        text: "Failed to remove users",
-        type: "error"
-      });
-    }
+    setSelectedUsers([]);
+    handlePopUpClose("removeUsers");
   };
 
   return (
     <>
       <div
         className={twMerge(
-          "h-0 flex-shrink-0 overflow-hidden transition-all",
+          "h-0 shrink-0 overflow-hidden transition-all",
           selectedUsers.length > 0 && "h-16"
         )}
       >
@@ -465,7 +445,7 @@ export const UserIdentitiesTable = () => {
       <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <p className="text-xl font-semibold text-mineshaft-100">User Identities</p>
+            <p className="text-xl font-medium text-mineshaft-100">User Identities</p>
             <p className="text-sm text-bunker-300">Manage user identities across your instance.</p>
           </div>
         </div>
@@ -479,9 +459,11 @@ export const UserIdentitiesTable = () => {
           isPending={isPending}
           adminsOnly={adminsOnly}
           setAdminsOnly={setAdminsOnly}
-          isFetchingNextPage={isFetchingNextPage}
-          hasNextPage={hasNextPage}
-          fetchNextPage={fetchNextPage}
+          page={page}
+          perPage={perPage}
+          setPage={setPage}
+          handlePerPageChange={handlePerPageChange}
+          totalCount={totalCount}
         />
         <DeleteActionModal
           isOpen={popUp.removeUser.isOpen}
@@ -517,7 +499,7 @@ export const UserIdentitiesTable = () => {
         <UpgradePlanModal
           isOpen={popUp.upgradePlan.isOpen}
           onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-          text={`${popUp?.upgradePlan?.data?.message} is only available on Infisical's Pro plan and above.`}
+          text={popUp.upgradePlan.data?.text}
         />
         <DeleteActionModal
           isOpen={popUp.removeUsers.isOpen}
@@ -530,13 +512,13 @@ export const UserIdentitiesTable = () => {
           <div className="mt-4 text-sm text-mineshaft-400">
             The following users will be deleted:
           </div>
-          <div className="mt-2 max-h-[20rem] overflow-y-auto rounded border border-mineshaft-600 bg-red/10 p-4 pl-8 text-sm text-red-200">
+          <div className="mt-2 max-h-80 overflow-y-auto rounded-sm border border-mineshaft-600 bg-red/10 p-4 pl-8 text-sm text-red-200">
             <ul className="list-disc">
               {selectedUsers?.map((user) => {
                 const email = user.email ?? user.username;
                 return (
                   <li key={user.id}>
-                    <div className="flex items-center">
+                    <div className="flex items-center gap-x-1">
                       <p>
                         {user.firstName || user.lastName ? (
                           <>
@@ -549,15 +531,10 @@ export const UserIdentitiesTable = () => {
                       </p>
                       {userId === user.id && (
                         <Tooltip content="Are you sure you want to remove yourself from this instance?">
-                          <div className="inline-block">
-                            <Badge
-                              variant="primary"
-                              className="ml-1 mt-[0.05rem] inline-flex w-min items-center gap-1.5 whitespace-nowrap"
-                            >
-                              <FontAwesomeIcon icon={faWarning} />
-                              <span>Deleting Yourself</span>
-                            </Badge>
-                          </div>
+                          <Badge variant="danger">
+                            <AlertTriangleIcon />
+                            Deleting Yourself
+                          </Badge>
                         </Tooltip>
                       )}
                     </div>

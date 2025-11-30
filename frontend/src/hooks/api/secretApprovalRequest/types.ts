@@ -54,8 +54,9 @@ export type TSecretApprovalRequest = {
     lastName: string;
     username: string;
     isOrgMembershipActive: boolean;
+    createdAt: Date;
   }[];
-  workspace: string;
+  project: string;
   environment: string;
   folderId: string;
   secretPath: string;
@@ -110,7 +111,7 @@ export type TSecretApprovalRequestCount = {
 };
 
 export type TGetSecretApprovalRequestList = {
-  workspaceId: string;
+  projectId: string;
   environment?: string;
   status?: "open" | "close";
   committer?: string;
@@ -120,7 +121,7 @@ export type TGetSecretApprovalRequestList = {
 };
 
 export type TGetSecretApprovalRequestCount = {
-  workspaceId: string;
+  projectId: string;
   policyId?: string;
 };
 
@@ -137,11 +138,11 @@ export type TUpdateSecretApprovalReviewStatusDTO = {
 export type TUpdateSecretApprovalRequestStatusDTO = {
   status: "open" | "close";
   id: string;
-  workspaceId: string;
+  projectId: string;
 };
 
 export type TPerformSecretApprovalRequestMerge = {
   id: string;
-  workspaceId: string;
+  projectId: string;
   bypassReason?: string;
 };

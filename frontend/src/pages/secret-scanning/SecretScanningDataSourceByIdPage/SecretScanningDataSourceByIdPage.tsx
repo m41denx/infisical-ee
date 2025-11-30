@@ -22,7 +22,7 @@ import {
 
 const PageContent = () => {
   const navigate = useNavigate();
-  const { type, dataSourceId, projectId } = useParams({
+  const { type, dataSourceId, projectId, orgId } = useParams({
     from: ROUTE_PATHS.SecretScanning.DataSourceByIdPage.id,
     select: (params) => ({
       ...params,
@@ -55,16 +55,17 @@ const PageContent = () => {
   }
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 font-inter text-white">
-      <div className="mx-auto mb-6 w-full max-w-7xl">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 font-inter text-white">
+      <div className="mx-auto mb-6 w-full max-w-8xl">
         <Button
           variant="link"
           type="submit"
           leftIcon={<FontAwesomeIcon icon={faChevronLeft} />}
           onClick={() => {
             navigate({
-              to: "/projects/secret-scanning/$projectId/data-sources",
+              to: "/organizations/$orgId/projects/secret-scanning/$projectId/data-sources",
               params: {
+                orgId,
                 projectId
               }
             });
@@ -76,10 +77,10 @@ const PageContent = () => {
           <img
             alt={`${details.name} data source`}
             src={`/images/integrations/${details.image}`}
-            className="ml-1 mt-3 w-14"
+            className="mt-3 ml-1 w-14"
           />
           <div>
-            <p className="text-3xl font-semibold text-white">{dataSource.name}</p>
+            <p className="text-3xl font-medium text-white">{dataSource.name}</p>
             <p className="leading-3 text-bunker-300">{details.name} Data Source</p>
           </div>
         </div>

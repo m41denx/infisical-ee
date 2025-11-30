@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, FilterableSelect, FormControl, Modal, ModalContent } from "@app/components/v2";
-import { useOrganization, useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import {
   useAddGroupToWorkspace,
   useGetOrganizationGroups,
@@ -31,14 +31,14 @@ type Props = {
 
 const Content = ({ popUp, handlePopUpToggle }: Props) => {
   const { currentOrg } = useOrganization();
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   const orgId = currentOrg?.id || "";
 
   const { data: groups } = useGetOrganizationGroups(orgId);
-  const { data: groupMemberships } = useListWorkspaceGroups(currentWorkspace?.id || "");
+  const { data: groupMemberships } = useListWorkspaceGroups(currentProject?.id || "");
 
-  const { data: roles } = useGetProjectRoles(currentWorkspace?.id || "");
+  const { data: roles } = useGetProjectRoles(currentProject?.id || "");
 
   const { mutateAsync: addGroupToWorkspaceMutateAsync } = useAddGroupToWorkspace();
 
@@ -62,26 +62,19 @@ const Content = ({ popUp, handlePopUpToggle }: Props) => {
   });
 
   const onFormSubmit = async ({ group, role }: FormData) => {
-    try {
-      await addGroupToWorkspaceMutateAsync({
-        projectId: currentWorkspace?.id || "",
-        groupId: group.id,
-        role: role.slug || undefined
-      });
+    await addGroupToWorkspaceMutateAsync({
+      projectId: currentProject?.id || "",
+      groupId: group.id,
+      role: role.slug || undefined
+    });
 
-      reset();
-      handlePopUpToggle("group", false);
+    reset();
+    handlePopUpToggle("group", false);
 
-      createNotification({
-        text: "Successfully added group to project",
-        type: "success"
-      });
-    } catch {
-      createNotification({
-        text: "Failed to add group to project",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully added group to project",
+      type: "success"
+    });
   };
 
   return filteredGroupMembershipOrgs.length ? (
@@ -147,7 +140,7 @@ const Content = ({ popUp, handlePopUpToggle }: Props) => {
       <div className="text-sm">
         All groups in your organization have already been added to this project.
       </div>
-      <Link to={"/organization/access-management" as const}>
+      <Link to={"/organizations/$orgId/access-management" as const} params={{ orgId }}>
         <Button variant="outline_bg">Create a new group</Button>
       </Link>
     </div>

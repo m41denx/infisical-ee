@@ -7,7 +7,6 @@ import { twMerge } from "tailwind-merge";
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   Button,
   Checkbox,
   DropdownMenu,
@@ -20,19 +19,17 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import {
   ProjectPermissionSecretScanningFindingActions,
   ProjectPermissionSub
 } from "@app/context/ProjectPermissionContext/types";
 import {
   SECRET_SCANNING_DATA_SOURCE_MAP,
-  SECRET_SCANNING_FINDING_STATUS_ICON_MAP
+  SECRET_SCANNING_FINDING_STATUS_MAP
 } from "@app/helpers/secretScanningV2";
 import { useToggle } from "@app/hooks";
-import {
-  SecretScanningFindingStatus,
-  TSecretScanningFinding
-} from "@app/hooks/api/secretScanningV2";
+import { TSecretScanningFinding } from "@app/hooks/api/secretScanningV2";
 
 type Props = {
   isSelected: boolean;
@@ -83,6 +80,8 @@ export const SecretScanningFindingRow = ({
 
   const [isExpanded, setIsExpanded] = useToggle(false);
 
+  const StatusIcon = SECRET_SCANNING_FINDING_STATUS_MAP[status].Icon;
+
   return (
     <>
       <Tr
@@ -102,7 +101,7 @@ export const SecretScanningFindingRow = ({
             }}
           />
         </Td>
-        <Td className="!min-w-[4rem] max-w-0">
+        <Td className="max-w-0 min-w-16!">
           <div className="flex w-full items-center">
             <img
               alt={`${sourceDetails.name} Data Source`}
@@ -118,7 +117,7 @@ export const SecretScanningFindingRow = ({
             <p className="text-mineshaft-300">{format(createdAt, "h:mm aa")}</p>
           </div>
         </Td>
-        <Td className="!min-w-[8rem] max-w-0">
+        <Td className="max-w-0 min-w-32!">
           <div className="w-full items-center">
             <p className="truncate">{resourceName}</p>
             <p className="truncate text-xs text-mineshaft-400">{dataSourceName}</p>
@@ -127,20 +126,10 @@ export const SecretScanningFindingRow = ({
         <Td className="whitespace-nowrap">{rule}</Td>
         <Td className="whitespace-nowrap">
           <Tooltip position="left" content={remarks}>
-            <div className="w-min">
-              <Badge
-                variant={status === SecretScanningFindingStatus.Resolved ? "success" : "primary"}
-                className={twMerge(
-                  "flex h-5 w-min items-center gap-1.5 whitespace-nowrap",
-                  (status === SecretScanningFindingStatus.FalsePositive ||
-                    status === SecretScanningFindingStatus.Ignore) &&
-                    "bg-mineshaft-400/50 text-bunker-300"
-                )}
-              >
-                <FontAwesomeIcon icon={SECRET_SCANNING_FINDING_STATUS_ICON_MAP[status].icon} />
-                <span className="capitalize">{status.replace("-", " ")}</span>
-              </Badge>
-            </div>
+            <Badge variant={SECRET_SCANNING_FINDING_STATUS_MAP[status].variant}>
+              <StatusIcon />
+              <span className="capitalize">{status.replace("-", " ")}</span>
+            </Badge>
           </Tooltip>
         </Td>
         <Td>
@@ -172,10 +161,10 @@ export const SecretScanningFindingRow = ({
         </Td>
       </Tr>
       <Tr>
-        <Td colSpan={6} className="!border-none p-0">
+        <Td colSpan={7} className="border-none! p-0">
           <div
             className={`w-full overflow-hidden bg-mineshaft-900/75 transition-all duration-500 ${
-              isExpanded ? "max-h-[50rem] opacity-100" : "max-h-0"
+              isExpanded ? "max-h-200 opacity-100" : "max-h-0"
             }`}
           >
             <div className="grid gap-4 p-4 2xl:grid-cols-6">
@@ -225,9 +214,11 @@ export const SecretScanningFindingRow = ({
                     colorSchema="secondary"
                     isDisabled={!isAllowed}
                     leftIcon={
-                      <FontAwesomeIcon
-                        className={SECRET_SCANNING_FINDING_STATUS_ICON_MAP[status].className}
-                        icon={SECRET_SCANNING_FINDING_STATUS_ICON_MAP[status].icon}
+                      <StatusIcon
+                        className={twMerge(
+                          "size-4",
+                          SECRET_SCANNING_FINDING_STATUS_MAP[status].className
+                        )}
                       />
                     }
                   >

@@ -11,7 +11,6 @@ import { twMerge } from "tailwind-merge";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -27,10 +26,12 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import {
   ProjectPermissionPkiSubscriberActions,
   ProjectPermissionSub,
-  useWorkspace
+  useOrganization,
+  useProject
 } from "@app/context";
 import { useListWorkspacePkiSubscribers } from "@app/hooks/api";
 import {
@@ -49,8 +50,9 @@ type Props = {
 
 export const PkiSubscribersTable = ({ handlePopUpOpen }: Props) => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
-  const { data, isPending } = useListWorkspacePkiSubscribers(currentWorkspace?.id || "");
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
+  const { data, isPending } = useListWorkspacePkiSubscribers(currentProject?.id || "");
   return (
     <div>
       <TableContainer>
@@ -75,9 +77,10 @@ export const PkiSubscribersTable = ({ handlePopUpOpen }: Props) => {
                     key={`pki-subscriber-${subscriber.id}`}
                     onClick={() =>
                       navigate({
-                        to: "/projects/cert-management/$projectId/subscribers/$subscriberName",
+                        to: "/organizations/$orgId/projects/cert-management/$projectId/subscribers/$subscriberName",
                         params: {
-                          projectId: currentWorkspace.id,
+                          orgId: currentOrg.id,
+                          projectId: currentProject.id,
                           subscriberName: subscriber.name
                         }
                       })

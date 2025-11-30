@@ -18,8 +18,9 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionSub } from "@app/context";
-import { ProjectType } from "@app/hooks/api/workspace/types";
+import { ProjectPermissionSub, useProject } from "@app/context";
+import { useGetWorkspaceIntegrations } from "@app/hooks/api";
+import { ProjectType } from "@app/hooks/api/projects/types";
 
 import {
   EXCLUDED_PERMISSION_SUBS,
@@ -46,6 +47,9 @@ type TForm = { permissions: Record<ProjectPermissionSub, boolean> };
 const Content = ({ onClose, type: projectType }: ContentProps) => {
   const rootForm = useFormContext<TFormSchema>();
   const [search, setSearch] = useState("");
+  const { currentProject } = useProject();
+  const { data: integrations = [] } = useGetWorkspaceIntegrations(currentProject?.id ?? "");
+
   const {
     control,
     handleSubmit,
@@ -60,6 +64,8 @@ const Content = ({ onClose, type: projectType }: ContentProps) => {
     }
   });
 
+  const hasNativeIntegrations = integrations.length > 0;
+
   const filteredPolicies = Object.entries(PROJECT_PERMISSION_OBJECT)
     .filter(
       ([subject, { title }]) =>
@@ -68,6 +74,11 @@ const Content = ({ onClose, type: projectType }: ContentProps) => {
         ] && (search ? title.toLowerCase().includes(search.toLowerCase()) : true)
     )
     .filter(([subject]) => !EXCLUDED_PERMISSION_SUBS.includes(subject as ProjectPermissionSub))
+    .filter(
+      ([subject]) =>
+        // Hide Native Integrations policy if project has no integrations
+        subject !== ProjectPermissionSub.Integrations || hasNativeIntegrations
+    )
     .sort((a, b) => a[1].title.localeCompare(b[1].title))
     .map(([subject]) => subject);
 
@@ -119,8 +130,8 @@ const Content = ({ onClose, type: projectType }: ContentProps) => {
           ) : null
         }
       />
-      <TableContainer className="thin-scrollbar mt-4 max-h-[28rem]">
-        <div className="sticky top-0 z-30 flex justify-between border-b border-b-mineshaft-600 bg-mineshaft-800 py-3 pl-5 pr-4 font-inter text-sm font-medium text-bunker-300">
+      <TableContainer className="mt-4 max-h-112 thin-scrollbar">
+        <div className="sticky top-0 z-30 flex justify-between border-b border-b-mineshaft-600 bg-mineshaft-800 py-3 pr-4 pl-5 font-inter text-sm font-medium text-bunker-300">
           <span>Resource</span>
           <div className="flex gap-2">
             <Button
@@ -182,7 +193,7 @@ const Content = ({ onClose, type: projectType }: ContentProps) => {
           <EmptyState
             iconSize="2x"
             icon={faSearch}
-            className="!pb-4 !pt-8"
+            className="pt-8! pb-4!"
             title="No policies match search"
           />
         )}

@@ -70,7 +70,7 @@ const createServiceToken = async (
 const deleteServiceToken = async () => {
   const serviceTokenListRes = await testServer.inject({
     method: "GET",
-    url: `/api/v1/workspace/${seedData1.project.id}/service-token-data`,
+    url: `/api/v1/projects/${seedData1.project.id}/service-token-data`,
     headers: {
       authorization: `Bearer ${jwtAuthToken}`
     }
@@ -146,7 +146,8 @@ describe("Service token secret ops", async () => {
   let folderId = "";
   beforeAll(async () => {
     initLogger();
-    await initEnvConfig(testSuperAdminDAL, logger);
+
+    await initEnvConfig(testHsmService, testKmsRootConfigDAL, testSuperAdminDAL, logger);
 
     serviceToken = await createServiceToken(
       [{ secretPath: "/**", environment: seedData1.environment.slug }],

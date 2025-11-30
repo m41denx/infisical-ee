@@ -29,6 +29,7 @@ export enum AppConnection {
   Flyio = "flyio",
   GitLab = "gitlab",
   Cloudflare = "cloudflare",
+  DNSMadeEasy = "dns-made-easy",
   Zabbix = "zabbix",
   Railway = "railway",
   Bitbucket = "bitbucket",
@@ -36,7 +37,11 @@ export enum AppConnection {
   Supabase = "supabase",
   DigitalOcean = "digital-ocean",
   Netlify = "netlify",
-  Okta = "okta"
+  Okta = "okta",
+  Redis = "redis",
+  LaravelForge = "laravel-forge",
+  Chef = "chef",
+  Northflank = "northflank"
 }
 
 export enum AWSRegion {

@@ -14,13 +14,13 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate } from "@tanstack/react-router";
+import { ServerIcon, WrenchIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   Button,
   DeleteActionModal,
   DropdownMenu,
@@ -41,13 +41,14 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge, DocumentationLinkBadge } from "@app/components/v3";
 import {
   OrgPermissionActions,
   OrgPermissionSubjects,
   useOrganization,
   useSubscription
 } from "@app/context";
-import { isCustomOrgRole, isCustomProjectRole } from "@app/helpers/roles";
+import { isCustomOrgRole } from "@app/helpers/roles";
 import {
   getUserTablePreference,
   PreferenceKey,
@@ -68,7 +69,7 @@ enum RolesOrderBy {
 
 export const OrgRoleTable = () => {
   const navigate = useNavigate();
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isSubOrganization } = useOrganization();
   const orgId = currentOrg?.id || "";
 
   const { popUp, handlePopUpOpen, handlePopUpClose, handlePopUpToggle } = usePopUp([
@@ -85,17 +86,12 @@ export const OrgRoleTable = () => {
 
   const handleRoleDelete = async () => {
     const { id } = popUp?.deleteRole?.data as TOrgRole;
-    try {
-      await deleteRole({
-        orgId,
-        id
-      });
-      createNotification({ type: "success", text: "Successfully removed the role" });
-      handlePopUpClose("deleteRole");
-    } catch (err) {
-      console.log(err);
-      createNotification({ type: "error", text: "Failed to delete role" });
-    }
+    await deleteRole({
+      orgId,
+      id
+    });
+    createNotification({ type: "success", text: "Successfully removed the role" });
+    handlePopUpClose("deleteRole");
   };
 
   const handleSetRoleAsDefault = async (defaultMembershipRoleSlug: string) => {
@@ -103,23 +99,17 @@ export const OrgRoleTable = () => {
 
     if (isCustomRole && subscription && !subscription?.rbac) {
       handlePopUpOpen("upgradePlan", {
-        description:
-          "You can set the default org role to a custom role if you upgrade your Infisical plan."
+        text: "Your current plan does not include access to set a custom default organization role. To unlock this feature, please upgrade to Infisical Pro plan."
       });
       return;
     }
 
-    try {
-      await updateOrg({
-        orgId,
-        defaultMembershipRoleSlug
-      });
-      createNotification({ type: "success", text: "Successfully updated default membership role" });
-      handlePopUpClose("deleteRole");
-    } catch (err) {
-      console.log(err);
-      createNotification({ type: "error", text: "Failed to update default membership role" });
-    }
+    await updateOrg({
+      orgId,
+      defaultMembershipRoleSlug
+    });
+    createNotification({ type: "success", text: "Successfully updated default membership role" });
+    handlePopUpClose("deleteRole");
   };
 
   const {
@@ -199,12 +189,17 @@ export const OrgRoleTable = () => {
 
   return (
     <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-      <div className="mb-4 flex items-center justify-between">
-        <p className="text-xl font-semibold text-mineshaft-100">Organization Roles</p>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-x-2">
+          <p className="text-xl font-medium text-mineshaft-100">
+            {isSubOrganization ? "Sub-" : ""}Organization Roles
+          </p>
+          <DocumentationLinkBadge href="https://infisical.com/docs/documentation/platform/organization#roles-and-access-control" />
+        </div>
         <OrgPermissionCan I={OrgPermissionActions.Create} a={OrgPermissionSubjects.Role}>
           {(isAllowed) => (
             <Button
-              colorSchema="secondary"
+              variant="outline_bg"
               type="submit"
               leftIcon={<FontAwesomeIcon icon={faPlus} />}
               onClick={() => {
@@ -212,7 +207,7 @@ export const OrgRoleTable = () => {
               }}
               isDisabled={!isAllowed}
             >
-              Add Role
+              Add Organization Role
             </Button>
           )}
         </OrgPermissionCan>
@@ -221,7 +216,7 @@ export const OrgRoleTable = () => {
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
-        placeholder="Search roles..."
+        placeholder="Search organization roles..."
         className="flex-1"
         containerClassName="mb-4"
       />
@@ -285,25 +280,22 @@ export const OrgRoleTable = () => {
                   className="h-10 cursor-pointer transition-colors duration-100 hover:bg-mineshaft-700"
                   onClick={() =>
                     navigate({
-                      to: "/organization/roles/$roleId",
+                      to: "/organizations/$orgId/roles/$roleId",
                       params: {
-                        roleId: id
+                        roleId: id,
+                        orgId
                       }
                     })
                   }
                 >
                   <Td className="max-w-md">
-                    <div className="flex">
+                    <div className="flex gap-x-1.5">
                       <p className="overflow-hidden text-ellipsis whitespace-nowrap">{name}</p>
                       {isDefaultOrgRole && (
                         <Tooltip
                           content={`Members joining your organization will be assigned the ${name} role unless otherwise specified.`}
                         >
-                          <div>
-                            <Badge variant="success" className="ml-1">
-                              Default
-                            </Badge>
-                          </div>
+                          <Badge variant="info">Default</Badge>
                         </Tooltip>
                       )}
                     </div>
@@ -312,8 +304,18 @@ export const OrgRoleTable = () => {
                     {slug}
                   </Td>
                   <Td>
-                    <Badge className="w-min whitespace-nowrap bg-mineshaft-400/50 text-bunker-200">
-                      {isCustomProjectRole(slug) ? "Custom" : "Default"}
+                    <Badge variant="ghost">
+                      {isCustomOrgRole(slug) ? (
+                        <>
+                          <WrenchIcon />
+                          Custom
+                        </>
+                      ) : (
+                        <>
+                          <ServerIcon />
+                          Platform
+                        </>
+                      )}
                     </Badge>
                   </Td>
                   <Td>
@@ -328,7 +330,7 @@ export const OrgRoleTable = () => {
                           <FontAwesomeIcon icon={faEllipsisV} />
                         </IconButton>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent className="min-w-[12rem]" sideOffset={2} align="end">
+                      <DropdownMenuContent className="min-w-48" sideOffset={2} align="end">
                         <OrgPermissionCan
                           I={OrgPermissionActions.Edit}
                           a={OrgPermissionSubjects.Role}
@@ -338,9 +340,10 @@ export const OrgRoleTable = () => {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 navigate({
-                                  to: "/organization/roles/$roleId",
+                                  to: "/organizations/$orgId/roles/$roleId",
                                   params: {
-                                    roleId: id
+                                    roleId: id,
+                                    orgId
                                   }
                                 });
                               }}
@@ -438,7 +441,7 @@ export const OrgRoleTable = () => {
           <EmptyState
             title={
               roles?.length
-                ? "No roles match search..."
+                ? "No organization roles match search..."
                 : "This organization does not have any roles"
             }
             icon={roles?.length ? faSearch : undefined}
@@ -459,7 +462,7 @@ export const OrgRoleTable = () => {
       <UpgradePlanModal
         isOpen={popUp.upgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text={(popUp.upgradePlan?.data as { description: string })?.description}
+        text={popUp.upgradePlan?.data?.text}
       />
       <DuplicateOrgRoleModal
         isOpen={popUp.duplicateRole.isOpen}

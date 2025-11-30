@@ -77,30 +77,23 @@ export const EditDynamicSecretGcpIamForm = ({
   const handleUpdateDynamicSecret = async ({ inputs, maxTTL, defaultTTL, newName }: TForm) => {
     // wait till previous request is finished
     if (updateDynamicSecret.isPending) return;
-    try {
-      await updateDynamicSecret.mutateAsync({
-        name: dynamicSecret.name,
-        path: secretPath,
-        projectSlug,
-        environmentSlug: environment,
-        data: {
-          maxTTL: maxTTL || undefined,
-          defaultTTL,
-          inputs,
-          newName: newName === dynamicSecret.name ? undefined : newName
-        }
-      });
-      onClose();
-      createNotification({
-        type: "success",
-        text: "Successfully updated dynamic secret"
-      });
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to update dynamic secret"
-      });
-    }
+    await updateDynamicSecret.mutateAsync({
+      name: dynamicSecret.name,
+      path: secretPath,
+      projectSlug,
+      environmentSlug: environment,
+      data: {
+        maxTTL: maxTTL || undefined,
+        defaultTTL,
+        inputs,
+        newName: newName === dynamicSecret.name ? undefined : newName
+      }
+    });
+    onClose();
+    createNotification({
+      type: "success",
+      text: "Successfully updated dynamic secret"
+    });
   };
 
   return (
@@ -108,7 +101,7 @@ export const EditDynamicSecretGcpIamForm = ({
       <form onSubmit={handleSubmit(handleUpdateDynamicSecret)} autoComplete="off">
         <div>
           <div className="flex items-center space-x-2">
-            <div className="flex-grow">
+            <div className="grow">
               <Controller
                 control={control}
                 name="newName"
@@ -155,7 +148,7 @@ export const EditDynamicSecretGcpIamForm = ({
             </div>
           </div>
           <div>
-            <div className="mb-4 mt-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
+            <div className="mt-4 mb-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
               Configuration
             </div>
 
@@ -165,7 +158,7 @@ export const EditDynamicSecretGcpIamForm = ({
               render={({ field, fieldState: { error } }) => (
                 <FormControl
                   label="Service Account Email"
-                  className="flex-grow"
+                  className="grow"
                   isError={Boolean(error?.message)}
                   errorText={error?.message}
                 >

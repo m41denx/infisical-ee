@@ -1,6 +1,8 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { faChevronLeft } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { formatRelative } from "date-fns";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
@@ -19,7 +21,7 @@ import {
   ProjectPermissionMemberActions,
   ProjectPermissionSub,
   useOrganization,
-  useWorkspace
+  useProject
 } from "@app/context";
 import { getProjectBaseURL, getProjectHomePage } from "@app/helpers/project";
 import { usePopUp } from "@app/hooks";
@@ -29,6 +31,7 @@ import {
   useGetWorkspaceUserDetails
 } from "@app/hooks/api";
 import { ActorType } from "@app/hooks/api/auditLogs/enums";
+import { ProjectAccessControlTabs } from "@app/types/project";
 
 import { MemberProjectAdditionalPrivilegeSection } from "./components/MemberProjectAdditionalPrivilegeSection";
 import { MemberRoleDetailsSection } from "./components/MemberRoleDetailsSection";
@@ -39,13 +42,11 @@ export const Page = () => {
     strict: false,
     select: (el) => el.membershipId as string
   });
-  const { currentOrg } = useOrganization();
-  const { currentWorkspace } = useWorkspace();
-
-  const workspaceId = currentWorkspace?.id || "";
+  const { currentOrg, isSubOrganization } = useOrganization();
+  const { currentProject, projectId } = useProject();
 
   const { data: membershipDetails, isPending: isMembershipDetailsLoading } =
-    useGetWorkspaceUserDetails(workspaceId, membershipId);
+    useGetWorkspaceUserDetails(projectId, membershipId);
 
   const { mutateAsync: removeUserFromWorkspace, isPending: isRemovingUserFromWorkspace } =
     useDeleteUserFromWorkspace();
@@ -63,7 +64,7 @@ export const Page = () => {
       {
         actorId: userId,
         actorType: ActorType.USER,
-        projectId: workspaceId
+        projectId
       },
       {
         onSuccess: () => {
@@ -72,39 +73,34 @@ export const Page = () => {
             text: "User privilege assumption has started"
           });
 
-          const url = getProjectHomePage(currentWorkspace.type, currentWorkspace.environments);
-          window.location.href = url.replace("$projectId", currentWorkspace.id);
+          const url = `${getProjectHomePage(currentProject.type, currentProject.environments)}${isSubOrganization ? `?subOrganization=${currentOrg.slug}` : ""}`;
+          window.location.assign(
+            url.replace("$orgId", currentOrg.id).replace("$projectId", currentProject.id)
+          );
         }
       }
     );
   };
 
   const handleRemoveUser = async () => {
-    if (!currentOrg?.id || !currentWorkspace?.id || !membershipDetails?.user?.username) return;
+    if (!currentOrg?.id || !currentProject?.id || !membershipDetails?.user?.username) return;
 
-    try {
-      await removeUserFromWorkspace({
-        workspaceId: currentWorkspace.id,
-        usernames: [membershipDetails?.user?.username],
+    await removeUserFromWorkspace({
+      projectId,
+      usernames: [membershipDetails?.user?.username],
+      orgId: currentOrg.id
+    });
+    createNotification({
+      text: "Successfully removed user from project",
+      type: "success"
+    });
+    navigate({
+      to: `${getProjectBaseURL(currentProject.type)}/access-management` as const,
+      params: {
+        projectId: currentProject.id,
         orgId: currentOrg.id
-      });
-      createNotification({
-        text: "Successfully removed user from project",
-        type: "success"
-      });
-      navigate({
-        to: `${getProjectBaseURL(currentWorkspace.type)}/access-management` as const,
-        params: {
-          projectId: currentWorkspace.id
-        }
-      });
-    } catch (error) {
-      console.error(error);
-      createNotification({
-        text: "Failed to remove user from the project",
-        type: "error"
-      });
-    }
+      }
+    });
     handlePopUpClose("removeMember");
   };
 
@@ -117,10 +113,25 @@ export const Page = () => {
   }
 
   return (
-    <div className="container mx-auto flex max-w-7xl flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex max-w-8xl flex-col justify-between bg-bunker-800 text-white">
       {membershipDetails ? (
         <>
+          <Link
+            to={`${getProjectBaseURL(currentProject.type)}/access-management`}
+            params={{
+              projectId: currentProject.id,
+              orgId: currentOrg.id
+            }}
+            search={{
+              selectedTab: ProjectAccessControlTabs.Member
+            }}
+            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+          >
+            <FontAwesomeIcon icon={faChevronLeft} />
+            Project Users
+          </Link>
           <PageHeader
+            scope={currentProject.type}
             title={
               membershipDetails.user.firstName || membershipDetails.user.lastName
                 ? `${membershipDetails.user.firstName} ${membershipDetails.user.lastName}`
@@ -175,8 +186,7 @@ export const Page = () => {
             isMembershipDetailsLoading={isMembershipDetailsLoading}
             onOpenUpgradeModal={() =>
               handlePopUpOpen("upgradePlan", {
-                description:
-                  "You can assign custom roles to members if you upgrade your Infisical plan."
+                text: "Assigning custom roles to members can be unlocked if you upgrade to Infisical Pro plan."
               })
             }
           />
@@ -200,7 +210,7 @@ export const Page = () => {
           <UpgradePlanModal
             isOpen={popUp.upgradePlan.isOpen}
             onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-            text={(popUp.upgradePlan?.data as { description: string })?.description}
+            text={popUp.upgradePlan?.data?.text}
           />
         </>
       ) : (

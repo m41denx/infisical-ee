@@ -33,7 +33,6 @@ import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { CreateSecretRotationV2Modal } from "@app/components/secret-rotations-v2";
 import {
-  Badge,
   Button,
   DeleteActionModal,
   DropdownMenu,
@@ -51,19 +50,22 @@ import {
   ModalContent,
   Tooltip
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import {
   ProjectPermissionActions,
   ProjectPermissionDynamicSecretActions,
   ProjectPermissionSub,
+  useOrgPermission,
+  useProject,
   useProjectPermission,
-  useSubscription,
-  useWorkspace
+  useSubscription
 } from "@app/context";
 import {
   ProjectPermissionCommitsActions,
   ProjectPermissionSecretActions,
   ProjectPermissionSecretRotationActions
 } from "@app/context/ProjectPermissionContext/types";
+import { OrgMembershipRole } from "@app/helpers/roles";
 import { usePopUp } from "@app/hooks";
 import {
   useCreateFolder,
@@ -77,6 +79,11 @@ import {
   fetchDashboardProjectSecretsByKeys
 } from "@app/hooks/api/dashboard/queries";
 import { UsedBySecretSyncs } from "@app/hooks/api/dashboard/types";
+import {
+  useGetVaultExternalMigrationConfigs,
+  useImportVaultSecrets
+} from "@app/hooks/api/migration";
+import { VaultImportStatus } from "@app/hooks/api/migration/types";
 import { secretApprovalRequestKeys } from "@app/hooks/api/secretApprovalRequest/queries";
 import { PendingAction } from "@app/hooks/api/secretFolders/types";
 import { fetchProjectSecrets, secretKeys } from "@app/hooks/api/secrets/queries";
@@ -98,6 +105,7 @@ import { CreateDynamicSecretForm } from "./CreateDynamicSecretForm";
 import { CreateSecretImportForm } from "./CreateSecretImportForm";
 import { FolderForm } from "./FolderForm";
 import { MoveSecretsModal } from "./MoveSecretsModal";
+import { VaultSecretImportModal } from "./VaultSecretImportModal";
 
 type TParsedEnv = { value: string; comments: string[]; secretPath?: string; secretKey: string }[];
 type TParsedFolderEnv = Record<
@@ -109,9 +117,6 @@ type TSecOverwriteOpt = { update: TParsedEnv; create: TParsedEnv };
 type Props = {
   // switch the secrets type as it gets decrypted after api call
   environment: string;
-  // @depreciated will be moving all these details to zustand
-  workspaceId: string;
-  projectSlug: string;
   secretPath?: string;
   filter: Filter;
   tags?: WsTag[];
@@ -142,8 +147,6 @@ type Props = {
 
 export const ActionBar = ({
   environment,
-  workspaceId,
-  projectSlug,
   secretPath = "/",
   filter,
   tags = [],
@@ -164,6 +167,7 @@ export const ActionBar = ({
   hasPathPolicies,
   onClearFilters
 }: Props) => {
+  const { projectId, currentProject } = useProject();
   const { handlePopUpOpen, handlePopUpToggle, handlePopUpClose, popUp } = usePopUp([
     "addFolder",
     "addDynamicSecret",
@@ -175,7 +179,8 @@ export const ActionBar = ({
     "upgradePlan",
     "replicateFolder",
     "confirmUpload",
-    "requestAccess"
+    "requestAccess",
+    "importFromVault"
   ] as const);
   const isProtectedBranch = Boolean(protectedBranchPolicyName);
   const { subscription } = useSubscription();
@@ -189,6 +194,7 @@ export const ActionBar = ({
   const { mutateAsync: createSecretBatch, isPending: isCreatingSecrets } = useCreateSecretBatch({
     options: { onSuccess: undefined }
   });
+  const { mutateAsync: importVaultSecrets } = useImportVaultSecrets();
   const queryClient = useQueryClient();
   const { addPendingChange } = useBatchModeActions();
 
@@ -196,58 +202,53 @@ export const ActionBar = ({
   const { reset: resetSelectedSecret } = useSelectedSecretActions();
   const isMultiSelectActive = Boolean(Object.keys(selectedSecrets).length);
 
-  const { currentWorkspace } = useWorkspace();
   const { permission } = useProjectPermission();
+  const { data: vaultConfigs = [] } = useGetVaultExternalMigrationConfigs();
+  const hasVaultConnection = vaultConfigs.some((config) => config.connectionId);
+  const { hasOrgRole } = useOrgPermission();
+  const isOrgAdmin = hasOrgRole(OrgMembershipRole.Admin);
 
   const handleFolderCreate = async (folderName: string, description: string | null) => {
-    try {
-      if (isBatchMode) {
-        const folderId = `${folderName}`;
-        const pendingFolderCreate: PendingFolderCreate = {
-          id: folderId,
-          resourceType: "folder",
-          type: PendingAction.Create,
-          folderName,
-          description: description || undefined,
-          parentPath: secretPath,
-          timestamp: Date.now()
-        };
+    if (isBatchMode) {
+      const folderId = `${folderName}`;
+      const pendingFolderCreate: PendingFolderCreate = {
+        id: folderId,
+        resourceType: "folder",
+        type: PendingAction.Create,
+        folderName,
+        description: description || undefined,
+        parentPath: secretPath,
+        timestamp: Date.now()
+      };
 
-        addPendingChange(pendingFolderCreate, {
-          workspaceId,
-          environment,
-          secretPath
-        });
-
-        handlePopUpClose("addFolder");
-        return;
-      }
-
-      await createFolder({
-        name: folderName,
-        path: secretPath,
+      addPendingChange(pendingFolderCreate, {
+        projectId,
         environment,
-        projectId: workspaceId,
-        description
+        secretPath
       });
+
       handlePopUpClose("addFolder");
-      createNotification({
-        type: "success",
-        text: "Successfully created folder"
-      });
-    } catch (error) {
-      console.log(error);
-      createNotification({
-        type: "error",
-        text: "Failed to create folder"
-      });
+      return;
     }
+
+    await createFolder({
+      name: folderName,
+      path: secretPath,
+      environment,
+      projectId,
+      description
+    });
+    handlePopUpClose("addFolder");
+    createNotification({
+      type: "success",
+      text: "Successfully created folder"
+    });
   };
 
   const handleSecretDownload = async () => {
     try {
       const { secrets: localSecrets, imports: localImportedSecrets } = await fetchProjectSecrets({
-        workspaceId,
+        projectId,
         expandSecretReferences: true,
         includeImports: true,
         environment,
@@ -314,26 +315,18 @@ export const ActionBar = ({
 
   const handleSecretBulkDelete = async () => {
     const bulkDeletedSecrets = Object.values(selectedSecrets);
-    try {
-      await deleteBatchSecretV3({
-        secretPath,
-        workspaceId,
-        environment,
-        secrets: bulkDeletedSecrets.map(({ key }) => ({ secretKey: key, type: SecretType.Shared }))
-      });
-      resetSelectedSecret();
-      handlePopUpClose("bulkDeleteSecrets");
-      createNotification({
-        type: "success",
-        text: "Successfully deleted secrets"
-      });
-    } catch (error) {
-      console.log(error);
-      createNotification({
-        type: "error",
-        text: "Failed to delete secrets"
-      });
-    }
+    await deleteBatchSecretV3({
+      secretPath,
+      projectId,
+      environment,
+      secrets: bulkDeletedSecrets.map(({ key }) => ({ secretKey: key, type: SecretType.Shared }))
+    });
+    resetSelectedSecret();
+    handlePopUpClose("bulkDeleteSecrets");
+    createNotification({
+      type: "success",
+      text: "Successfully deleted secrets"
+    });
   };
 
   const handleSecretsMove = async ({
@@ -348,13 +341,13 @@ export const ActionBar = ({
     try {
       const secretsToMove = Object.values(selectedSecrets);
       const { isDestinationUpdated, isSourceUpdated } = await moveSecrets({
-        projectSlug,
         shouldOverwrite,
         sourceEnvironment: environment,
         sourceSecretPath: secretPath,
         destinationEnvironment,
         destinationSecretPath,
-        projectId: workspaceId,
+        projectId,
+        projectSlug: currentProject.slug,
         secretIds: secretsToMove.map((sec) => sec.id)
       });
 
@@ -385,7 +378,7 @@ export const ActionBar = ({
     }
   };
 
-  // Replicate Folder Logic
+  // Replicate Secrets Logic
   const createSecretCount = Object.keys(
     (popUp.confirmUpload?.data as TSecOverwriteOpt)?.create || {}
   ).length;
@@ -444,17 +437,22 @@ export const ActionBar = ({
           const processBatches = async () => {
             await secretBatches.reduce(async (previous, batch) => {
               await previous;
+              try {
+                const { secrets: batchSecrets } = await fetchDashboardProjectSecretsByKeys({
+                  secretPath: normalizedPath,
+                  environment,
+                  projectId,
+                  keys: batch
+                });
 
-              const { secrets: batchSecrets } = await fetchDashboardProjectSecretsByKeys({
-                secretPath: normalizedPath,
-                environment,
-                projectId: workspaceId,
-                keys: batch
-              });
-
-              batchSecrets.forEach((secret) => {
-                existingSecretLookup.add(`${normalizedPath}-${secret.secretKey}`);
-              });
+                batchSecrets.forEach((secret) => {
+                  existingSecretLookup.add(`${normalizedPath}-${secret.secretKey}`);
+                });
+              } catch (error) {
+                if (!(error instanceof AxiosError && error.response?.status === 404)) {
+                  throw error;
+                }
+              }
             }, Promise.resolve());
           };
 
@@ -566,7 +564,7 @@ export const ActionBar = ({
             name: folderName,
             path: parentPath,
             environment,
-            projectId: workspaceId
+            projectId
           });
 
           createdFolders.add(fullPath);
@@ -598,7 +596,7 @@ export const ActionBar = ({
           Object.entries(groupedCreateSecrets).map(([path, secrets]) =>
             createSecretBatch({
               secretPath: path,
-              workspaceId,
+              projectId,
               environment,
               secrets
             })
@@ -628,7 +626,7 @@ export const ActionBar = ({
           Object.entries(groupedUpdateSecrets).map(([path, secrets]) =>
             updateSecretBatch({
               secretPath: path,
-              workspaceId,
+              projectId,
               environment,
               secrets
             })
@@ -638,13 +636,12 @@ export const ActionBar = ({
 
       // Invalidate appropriate queries to refresh UI
       queryClient.invalidateQueries({
-        queryKey: secretKeys.getProjectSecret({ workspaceId, environment, secretPath })
+        queryKey: secretKeys.getProjectSecret({ projectId, environment, secretPath })
       });
+      queryClient.invalidateQueries({});
+      dashboardKeys.getDashboardSecrets({ projectId, secretPath });
       queryClient.invalidateQueries({
-        queryKey: dashboardKeys.getDashboardSecrets({ projectId: workspaceId, secretPath })
-      });
-      queryClient.invalidateQueries({
-        queryKey: secretApprovalRequestKeys.count({ workspaceId })
+        queryKey: secretApprovalRequestKeys.count({ projectId })
       });
 
       // Close the modal and show notification
@@ -664,6 +661,28 @@ export const ActionBar = ({
     }
   };
 
+  const handleVaultImport = async (vaultPath: string, namespace: string) => {
+    const result = await importVaultSecrets({
+      projectId,
+      environment,
+      secretPath,
+      vaultNamespace: namespace,
+      vaultSecretPath: vaultPath
+    });
+
+    if (result.status === VaultImportStatus.ApprovalRequired) {
+      createNotification({
+        type: "info",
+        text: "Secret change request created successfully. Awaiting approval."
+      });
+    } else {
+      createNotification({
+        type: "success",
+        text: "Successfully imported secrets from HashiCorp Vault"
+      });
+    }
+  };
+
   const isTableFiltered =
     Object.values(filter.tags).some(Boolean) || Object.values(filter.include).some(Boolean);
 
@@ -671,14 +690,14 @@ export const ActionBar = ({
 
   return (
     <>
-      <div className="mt-4 flex items-center space-x-2">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <SecretSearchInput
           isSingleEnv
           className="w-2/5"
           value={filter.searchFilter}
           onChange={onSearchChange}
-          environments={[currentWorkspace.environments.find((env) => env.slug === environment)!]}
-          projectId={workspaceId}
+          environments={[currentProject.environments.find((env) => env.slug === environment)!]}
+          projectId={projectId}
           tags={tags}
         />
         <div>
@@ -688,7 +707,7 @@ export const ActionBar = ({
                 size="sm"
                 variant="outline_bg"
                 className={twMerge(
-                  "flex h-[2.5rem]",
+                  "flex h-10",
                   isTableFiltered && "border-primary/40 bg-primary/10"
                 )}
                 leftIcon={
@@ -782,10 +801,12 @@ export const ActionBar = ({
                   >
                     <div className="flex w-full justify-between">
                       <span>Tags</span>
-                      {Boolean(filteredTags) && <Badge>{filteredTags} Applied</Badge>}
+                      {Boolean(filteredTags) && (
+                        <Badge variant="info">{filteredTags} Applied</Badge>
+                      )}
                     </div>
                   </DropdownSubMenuTrigger>
-                  <DropdownSubMenuContent className="thin-scrollbar max-h-[20rem] overflow-y-auto rounded-l-none">
+                  <DropdownSubMenuContent className="max-h-80 thin-scrollbar overflow-y-auto rounded-l-none">
                     <DropdownMenuLabel className="sticky top-0 bg-mineshaft-900">
                       <div className="flex w-full items-center justify-between">
                         <span>Filter by Secret Tags</span>
@@ -824,7 +845,7 @@ export const ActionBar = ({
             Clear Filters
           </Button>
         )}
-        <div className="flex-grow" />
+        <div className="grow" />
         <div>
           {isProtectedBranch && (
             <Tooltip content={`Protected by policy ${protectedBranchPolicyName}`}>
@@ -862,7 +883,9 @@ export const ActionBar = ({
                     return;
                   }
 
-                  handlePopUpOpen("upgradePlan");
+                  handlePopUpOpen("upgradePlan", {
+                    featureName: "PIT Recovery"
+                  });
                 }}
                 leftIcon={<FontAwesomeIcon icon={faCodeCommit} />}
                 isLoading={isSnapshotCountLoading}
@@ -976,7 +999,10 @@ export const ActionBar = ({
                           handlePopUpClose("misc");
                           return;
                         }
-                        handlePopUpOpen("upgradePlan");
+                        handlePopUpOpen("upgradePlan", {
+                          featureName: "Dynamic Secrets",
+                          isEnterpriseFeature: true
+                        });
                       }}
                       isDisabled={!isAllowed}
                       variant="outline_bg"
@@ -1003,7 +1029,9 @@ export const ActionBar = ({
                           handlePopUpClose("misc");
                           return;
                         }
-                        handlePopUpOpen("upgradePlan");
+                        handlePopUpOpen("upgradePlan", {
+                          featureName: "Secret Rotation"
+                        });
                       }}
                       variant="outline_bg"
                       className="h-10 text-left"
@@ -1056,10 +1084,51 @@ export const ActionBar = ({
                       className="h-10 text-left"
                       isFullWidth
                     >
-                      Replicate Folder
+                      Replicate Secrets
                     </Button>
                   )}
                 </ProjectPermissionCan>
+                {hasVaultConnection && (
+                  <ProjectPermissionCan
+                    I={ProjectPermissionActions.Create}
+                    a={subject(ProjectPermissionSub.Secrets, {
+                      environment,
+                      secretPath,
+                      secretName: "*",
+                      secretTags: ["*"]
+                    })}
+                  >
+                    {(isAllowed) => (
+                      <Tooltip
+                        content={
+                          !isOrgAdmin
+                            ? "Only organization admins can import secrets from HashiCorp Vault"
+                            : undefined
+                        }
+                      >
+                        <Button
+                          leftIcon={
+                            <img
+                              src="/images/integrations/Vault.png"
+                              alt="HashiCorp Vault"
+                              className="h-4 w-4"
+                            />
+                          }
+                          onClick={() => {
+                            handlePopUpOpen("importFromVault");
+                            handlePopUpClose("misc");
+                          }}
+                          isDisabled={!isAllowed || !isOrgAdmin}
+                          variant="outline_bg"
+                          className="h-10 text-left"
+                          isFullWidth
+                        >
+                          Add from HashiCorp Vault
+                        </Button>
+                      </Tooltip>
+                    )}
+                  </ProjectPermissionCan>
+                )}
               </div>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1067,7 +1136,7 @@ export const ActionBar = ({
       </div>
       <div
         className={twMerge(
-          "h-0 flex-shrink-0 overflow-hidden transition-all",
+          "h-0 shrink-0 overflow-hidden transition-all",
           isMultiSelectActive && "h-16"
         )}
       >
@@ -1134,9 +1203,13 @@ export const ActionBar = ({
       {/* all the side triggers from actions like modals etc */}
       <CreateSecretImportForm
         environment={environment}
-        workspaceId={workspaceId}
         secretPath={secretPath}
-        onUpgradePlan={() => handlePopUpOpen("upgradePlan")}
+        projectId={projectId}
+        onUpgradePlan={() =>
+          handlePopUpOpen("upgradePlan", {
+            featureName: "Secret Imports"
+          })
+        }
         isOpen={popUp.addSecretImport.isOpen}
         onClose={() => handlePopUpClose("addSecretImport")}
         onTogglePopUp={(isOpen) => handlePopUpToggle("addSecretImport", isOpen)}
@@ -1144,7 +1217,7 @@ export const ActionBar = ({
       <CreateDynamicSecretForm
         isOpen={popUp.addDynamicSecret.isOpen}
         onToggle={(isOpen) => handlePopUpToggle("addDynamicSecret", isOpen)}
-        projectSlug={projectSlug}
+        projectSlug={currentProject.slug}
         environments={[{ slug: environment, name: environment, id: "not-used" }]}
         secretPath={secretPath}
         isSingleEnvironmentMode
@@ -1190,19 +1263,16 @@ export const ActionBar = ({
         onToggle={(isOpen) => handlePopUpToggle("replicateFolder", isOpen)}
         onParsedEnv={handleParsedEnvMultiFolder}
         environment={environment}
-        environments={currentWorkspace.environments}
-        workspaceId={workspaceId}
+        environments={currentProject.environments}
+        projectId={projectId}
         secretPath={secretPath}
       />
       {subscription && (
         <UpgradePlanModal
           isOpen={popUp.upgradePlan.isOpen}
           onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-          text={
-            subscription.slug === null
-              ? "You can perform this action under an Enterprise license"
-              : "You can perform this action if you switch to Infisical's Team plan"
-          }
+          isEnterpriseFeature={popUp.upgradePlan.data?.isEnterpriseFeature}
+          text={`Your current plan does not include access to ${popUp.upgradePlan.data?.featureName}. To unlock this feature, please upgrade to Infisical ${popUp.upgradePlan.data?.isEnterpriseFeature ? "Enterprise" : "Pro"} plan.`}
         />
       )}
       <Modal
@@ -1278,6 +1348,13 @@ export const ActionBar = ({
           </div>
         </ModalContent>
       </Modal>
+      <VaultSecretImportModal
+        isOpen={popUp.importFromVault.isOpen}
+        onOpenChange={(isOpen) => handlePopUpToggle("importFromVault", isOpen)}
+        environment={environment}
+        secretPath={secretPath}
+        onImport={handleVaultImport}
+      />
     </>
   );
 };

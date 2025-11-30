@@ -1,6 +1,8 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { faChevronLeft } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
@@ -19,9 +21,11 @@ import { ROUTE_PATHS } from "@app/const/routes";
 import {
   ProjectPermissionPkiSubscriberActions,
   ProjectPermissionSub,
-  useWorkspace
+  useOrganization,
+  useProject
 } from "@app/context";
 import { useDeletePkiSubscriber, useGetPkiSubscriber } from "@app/hooks/api";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { usePopUp } from "@app/hooks/usePopUp";
 
 import { PkiSubscriberModal } from "../PkiSubscribersPage/components/PkiSubscriberModal";
@@ -29,8 +33,9 @@ import { PkiSubscriberCertificatesSection, PkiSubscriberDetailsSection } from ".
 
 const Page = () => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace.id;
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
+  const projectId = currentProject.id;
   const subscriberName = useParams({
     from: ROUTE_PATHS.CertManager.PkiSubscriberDetailsByIDPage.id,
     select: (el) => el.subscriberName
@@ -48,37 +53,45 @@ const Page = () => {
   ] as const);
 
   const onRemoveSubscriberSubmit = async (subscriberNameToDelete: string) => {
-    try {
-      if (!projectId) return;
+    if (!projectId) return;
 
-      await deletePkiSubscriber({ subscriberName: subscriberNameToDelete, projectId });
+    await deletePkiSubscriber({ subscriberName: subscriberNameToDelete, projectId });
 
-      createNotification({
-        text: "Successfully deleted subscriber",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully deleted subscriber",
+      type: "success"
+    });
 
-      handlePopUpClose("deletePkiSubscriber");
-      navigate({
-        to: "/projects/cert-management/$projectId/subscribers",
-        params: {
-          projectId
-        }
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to delete subscriber",
-        type: "error"
-      });
-    }
+    handlePopUpClose("deletePkiSubscriber");
+    navigate({
+      to: "/organizations/$orgId/projects/cert-management/$projectId/subscribers",
+      params: {
+        orgId: currentOrg.id,
+        projectId
+      }
+    });
   };
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       {data && (
-        <div className="mx-auto mb-6 w-full max-w-7xl">
-          <PageHeader title={data.name}>
+        <div className="mx-auto mb-6 w-full max-w-8xl">
+          <Link
+            to="/organizations/$orgId/projects/cert-management/$projectId/subscribers"
+            params={{
+              orgId: currentOrg.id,
+              projectId
+            }}
+            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+          >
+            <FontAwesomeIcon icon={faChevronLeft} />
+            Subscribers
+          </Link>
+          <PageHeader
+            scope={ProjectType.CertificateManager}
+            title={data.name}
+            description="Manage PKI subscriber"
+          >
             <DropdownMenu>
               <DropdownMenuTrigger asChild className="rounded-lg">
                 <div className="hover:text-primary-400 data-[state=open]:text-primary-400">
@@ -96,7 +109,7 @@ const Page = () => {
                     <DropdownMenuItem
                       className={twMerge(
                         isAllowed
-                          ? "hover:!bg-red-500 hover:!text-white"
+                          ? "hover:bg-red-500! hover:text-white!"
                           : "pointer-events-none cursor-not-allowed opacity-50"
                       )}
                       onClick={() =>

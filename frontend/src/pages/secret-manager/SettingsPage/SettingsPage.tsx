@@ -1,9 +1,11 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
+import { Link } from "@tanstack/react-router";
+import { InfoIcon } from "lucide-react";
 
 import { PageHeader, Tab, TabList, TabPanel, Tabs } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
-import { ProjectVersion } from "@app/hooks/api/workspace/types";
+import { useProject } from "@app/context";
+import { ProjectType, ProjectVersion } from "@app/hooks/api/projects/types";
 import { ProjectGeneralTab } from "@app/pages/project/SettingsPage/components/ProjectGeneralTab";
 
 import { EncryptionTab } from "./components/EncryptionTab";
@@ -13,14 +15,14 @@ import { WorkflowIntegrationTab } from "./components/WorkflowIntegrationSection"
 
 export const SettingsPage = () => {
   const { t } = useTranslation();
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const tabs = [
     { name: "General", key: "tab-project-general", Component: ProjectGeneralTab },
     { name: "Secrets Management", key: "tab-secret-general", Component: SecretSettingsTab },
     {
       name: "Encryption",
       key: "tab-project-encryption",
-      isHidden: currentWorkspace?.version !== ProjectVersion.V3,
+      isHidden: currentProject?.version !== ProjectVersion.V3,
       Component: EncryptionTab
     },
     {
@@ -40,17 +42,28 @@ export const SettingsPage = () => {
       <Helmet>
         <title>{t("common.head-title", { title: t("settings.project.title") })}</title>
       </Helmet>
-      <div className="w-full max-w-7xl">
+      <div className="w-full max-w-8xl">
         <PageHeader
-          title="Settings"
+          scope={ProjectType.SecretManager}
+          title="Project Settings"
           description="Configure your secret manager's encryption, environments, webhooks and other configurations."
-        />
-        <Tabs defaultValue={tabs[0].key}>
+        >
+          <Link
+            to="/organizations/$orgId/settings"
+            params={{
+              orgId: currentProject.orgId
+            }}
+            className="flex items-center gap-x-1.5 text-xs whitespace-nowrap text-neutral hover:underline"
+          >
+            <InfoIcon size={12} /> Looking for organization settings?
+          </Link>
+        </PageHeader>
+        <Tabs orientation="vertical" defaultValue={tabs[0].key}>
           <TabList>
             {tabs
               .filter((el) => !el.isHidden)
               .map((tab) => (
-                <Tab value={tab.key} key={tab.key}>
+                <Tab variant="project" value={tab.key} key={tab.key}>
                   {tab.name}
                 </Tab>
               ))}

@@ -7,6 +7,7 @@
 // All the any rules are disabled because passport typesense with fastify is really poor
 
 import { Authenticator } from "@fastify/passport";
+import { requestContext } from "@fastify/request-context";
 import fastifySession from "@fastify/session";
 import { MultiSamlStrategy } from "@node-saml/passport-saml";
 import { FastifyRequest } from "fastify";
@@ -17,6 +18,7 @@ import { ApiDocsTags, SamlSso } from "@app/lib/api-docs";
 import { getConfig } from "@app/lib/config/env";
 import { BadRequestError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
+import { AuthAttemptAuthMethod, AuthAttemptAuthResult, authAttemptCounter } from "@app/lib/telemetry/metrics";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { SanitizedSamlConfigSchema } from "@app/server/routes/sanitizedSchema/directory-config";
@@ -102,15 +104,15 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
       },
       // eslint-disable-next-line
       async (req, profile, cb) => {
+        if (!profile) throw new BadRequestError({ message: "Missing profile" });
+
+        const email =
+          profile?.email ??
+          // entra sends data in this format
+          (profile["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/email"] as string) ??
+          (profile?.emailAddress as string); // emailRippling is added because in Rippling the field `email` reserved\
+
         try {
-          if (!profile) throw new BadRequestError({ message: "Missing profile" });
-
-          const email =
-            profile?.email ??
-            // entra sends data in this format
-            (profile["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/email"] as string) ??
-            (profile?.emailAddress as string); // emailRippling is added because in Rippling the field `email` reserved\
-
           const firstName = (profile.firstName ??
             // entra sends data in this format
             profile["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/firstName"]) as string;
@@ -144,7 +146,7 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
             })
             .filter((el) => el.key && !["email", "firstName", "lastName"].includes(el.key));
 
-          const { isUserCompleted, providerAuthToken } = await server.services.saml.samlLogin({
+          const { isUserCompleted, providerAuthToken, user, organization } = await server.services.saml.samlLogin({
             externalId: profile.nameID,
             email: email.toLowerCase(),
             firstName,
@@ -154,8 +156,32 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
             orgId: (req as unknown as FastifyRequest).ssoConfig?.orgId,
             metadata: userMetadata
           });
+
+          if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
+            authAttemptCounter.add(1, {
+              "infisical.user.email": email.toLowerCase(),
+              "infisical.user.id": user.id,
+              "infisical.organization.id": organization.id,
+              "infisical.organization.name": organization.name,
+              "infisical.auth.method": AuthAttemptAuthMethod.SAML,
+              "infisical.auth.result": AuthAttemptAuthResult.SUCCESS,
+              "client.address": requestContext.get("ip"),
+              "user_agent.original": requestContext.get("userAgent")
+            });
+          }
+
           cb(null, { isUserCompleted, providerAuthToken });
         } catch (error) {
+          if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
+            authAttemptCounter.add(1, {
+              "infisical.user.email": email.toLowerCase(),
+              "infisical.auth.method": AuthAttemptAuthMethod.SAML,
+              "infisical.auth.result": AuthAttemptAuthResult.FAILURE,
+              "client.address": requestContext.get("ip"),
+              "user_agent.original": requestContext.get("userAgent")
+            });
+          }
+
           logger.error(error);
           cb(error as Error);
         }
@@ -286,7 +312,8 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
           entryPoint: z.string(),
           issuer: z.string(),
           cert: z.string(),
-          lastUsed: z.date().nullable().optional()
+          lastUsed: z.date().nullable().optional(),
+          enableGroupSync: z.boolean().optional()
         })
       }
     },
@@ -325,14 +352,15 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
         isActive: z.boolean().describe(SamlSso.CREATE_CONFIG.isActive),
         entryPoint: z.string().trim().describe(SamlSso.CREATE_CONFIG.entryPoint),
         issuer: z.string().trim().describe(SamlSso.CREATE_CONFIG.issuer),
-        cert: z.string().trim().describe(SamlSso.CREATE_CONFIG.cert)
+        cert: z.string().trim().describe(SamlSso.CREATE_CONFIG.cert),
+        enableGroupSync: z.boolean().optional().describe(SamlSso.CREATE_CONFIG.enableGroupSync)
       }),
       response: {
         200: SanitizedSamlConfigSchema
       }
     },
     handler: async (req) => {
-      const { isActive, authProvider, issuer, entryPoint, cert } = req.body;
+      const { isActive, authProvider, issuer, entryPoint, cert, enableGroupSync } = req.body;
       const { permission } = req;
 
       return server.services.saml.createSamlCfg({
@@ -341,6 +369,7 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
         issuer,
         entryPoint,
         idpCert: cert,
+        enableGroupSync,
         actor: permission.type,
         actorId: permission.id,
         actorAuthMethod: permission.authMethod,
@@ -372,7 +401,8 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
           isActive: z.boolean().describe(SamlSso.UPDATE_CONFIG.isActive),
           entryPoint: z.string().trim().describe(SamlSso.UPDATE_CONFIG.entryPoint),
           issuer: z.string().trim().describe(SamlSso.UPDATE_CONFIG.issuer),
-          cert: z.string().trim().describe(SamlSso.UPDATE_CONFIG.cert)
+          cert: z.string().trim().describe(SamlSso.UPDATE_CONFIG.cert),
+          enableGroupSync: z.boolean().optional().describe(SamlSso.UPDATE_CONFIG.enableGroupSync)
         })
         .partial()
         .merge(z.object({ organizationId: z.string().trim().describe(SamlSso.UPDATE_CONFIG.organizationId) })),
@@ -381,7 +411,7 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const { isActive, authProvider, issuer, entryPoint, cert } = req.body;
+      const { isActive, authProvider, issuer, entryPoint, cert, enableGroupSync } = req.body;
       const { permission } = req;
 
       return server.services.saml.updateSamlCfg({
@@ -390,6 +420,7 @@ export const registerSamlRouter = async (server: FastifyZodProvider) => {
         issuer,
         entryPoint,
         idpCert: cert,
+        enableGroupSync,
         actor: permission.type,
         actorId: permission.id,
         actorAuthMethod: permission.authMethod,

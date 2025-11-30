@@ -7,7 +7,6 @@ import { twMerge } from "tailwind-merge";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -24,11 +23,12 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import {
   ProjectPermissionPkiSubscriberActions,
   ProjectPermissionSub,
-  useProjectPermission,
-  useWorkspace
+  useProject,
+  useProjectPermission
 } from "@app/context";
 import { useGetPkiSubscriberCertificates } from "@app/hooks/api";
 import { caSupportsCapability } from "@app/hooks/api/ca/constants";
@@ -45,8 +45,8 @@ type Props = {
 const PER_PAGE_INIT = 25;
 
 export const PkiSubscriberCertificatesTable = ({ subscriberName, handlePopUpOpen }: Props) => {
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace.id;
+  const { currentProject } = useProject();
+  const projectId = currentProject.id;
   const { permission } = useProjectPermission();
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(PER_PAGE_INIT);
@@ -64,7 +64,7 @@ export const PkiSubscriberCertificatesTable = ({ subscriberName, handlePopUpOpen
   );
 
   // Fetch CA data to determine capabilities
-  const { data: caData } = useListCasByProjectId(currentWorkspace.id);
+  const { data: caData } = useListCasByProjectId(currentProject.id);
 
   // Create mapping from caId to CA type for capability checking
   const caCapabilityMap = useMemo(() => {
@@ -93,7 +93,7 @@ export const PkiSubscriberCertificatesTable = ({ subscriberName, handlePopUpOpen
     }
 
     if (daysUntilExpiry < 30) {
-      return <Badge variant="primary">Expiring Soon</Badge>;
+      return <Badge variant="warning">Expiring Soon</Badge>;
     }
 
     return <Badge variant="success">Valid</Badge>;
@@ -171,7 +171,7 @@ export const PkiSubscriberCertificatesTable = ({ subscriberName, handlePopUpOpen
                                     onClick={() =>
                                       handlePopUpOpen &&
                                       handlePopUpOpen("revokeCertificate", {
-                                        serialNumber: certificate.serialNumber
+                                        certificateId: certificate.id
                                       })
                                     }
                                     disabled={!isAllowed}

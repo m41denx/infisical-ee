@@ -41,7 +41,6 @@
   "common": {
     "head-title": "{{title}} | Infisical",
     "error_project-already-exists": "A project with this name already exists.",
-    "no-mobile": " To use Infisical, please log in through a device with larger dimensions. ",
     "email": "Email",
     "password": "Password",
     "first-name": "First Name",
@@ -270,7 +269,7 @@
       "description": "This page shows the members of the selected project, and allows you to modify their permissions."
     },
     "org": {
-      "title": "Organization Settings",
+      "title": "Settings",
       "description": "Manage members of your organization. These users could afterwards be formed into projects."
     },
     "personal": {

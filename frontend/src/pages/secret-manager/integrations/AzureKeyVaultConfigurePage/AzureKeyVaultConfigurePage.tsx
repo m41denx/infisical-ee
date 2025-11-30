@@ -11,11 +11,11 @@ import {
   SelectItem
 } from "@app/components/v2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useCreateIntegration } from "@app/hooks/api";
 import { useGetIntegrationAuthById } from "@app/hooks/api/integrationAuth";
 import { IntegrationSyncBehavior } from "@app/hooks/api/integrations/types";
-import { useGetWorkspaceById } from "@app/hooks/api/workspace";
+import { useGetWorkspaceById } from "@app/hooks/api/projects";
 import { IntegrationsListPageTabs } from "@app/types/integrations";
 
 const initialSyncBehaviors = [
@@ -33,14 +33,14 @@ const initialSyncBehaviors = [
 export const AzureKeyVaultConfigurePage = () => {
   const navigate = useNavigate();
   const { mutateAsync } = useCreateIntegration();
-
+  const { currentOrg } = useOrganization();
   const integrationAuthId = useSearch({
     from: ROUTE_PATHS.SecretManager.Integratons.AzureKeyVaultConfigurePage.id,
     select: (el) => el.integrationAuthId
   });
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
-  const { data: workspace } = useGetWorkspaceById(currentWorkspace.id);
+  const { data: workspace } = useGetWorkspaceById(currentProject.id);
   const { data: integrationAuth } = useGetIntegrationAuthById((integrationAuthId as string) ?? "");
 
   const [selectedSourceEnvironment, setSelectedSourceEnvironment] = useState("");
@@ -88,9 +88,10 @@ export const AzureKeyVaultConfigurePage = () => {
       setIsLoading(false);
 
       navigate({
-        to: "/projects/secret-management/$projectId/integrations",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
         params: {
-          projectId: currentWorkspace.id
+          orgId: currentOrg.id,
+          projectId: currentProject.id
         },
         search: {
           selectedTab: IntegrationsListPageTabs.NativeIntegrations

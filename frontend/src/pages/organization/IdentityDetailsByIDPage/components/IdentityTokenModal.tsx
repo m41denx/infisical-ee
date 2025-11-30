@@ -72,46 +72,33 @@ export const IdentityTokenModal = ({ popUp, handlePopUpToggle }: Props) => {
   }, [popUp?.token?.data]);
 
   const onFormSubmit = async ({ name }: FormData) => {
-    try {
-      if (tokenData?.tokenId) {
-        // update
+    if (tokenData?.tokenId) {
+      // update
 
-        await updateToken({
-          identityId: tokenData.identityId,
-          tokenId: tokenData.tokenId,
-          name
-        });
-
-        handlePopUpToggle("token", false);
-      } else {
-        // create
-
-        const newTokenData = await createToken({
-          identityId: tokenData.identityId,
-          name
-        });
-
-        setToken(newTokenData.accessToken);
-      }
-
-      createNotification({
-        text: `Successfully ${popUp?.token?.data ? "updated" : "created"} token`,
-        type: "success"
+      await updateToken({
+        identityId: tokenData.identityId,
+        tokenId: tokenData.tokenId,
+        name
       });
 
-      reset();
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text =
-        error?.response?.data?.message ??
-        `Failed to ${popUp?.token?.data ? "update" : "create"} token`;
+      handlePopUpToggle("token", false);
+    } else {
+      // create
 
-      createNotification({
-        text,
-        type: "error"
+      const newTokenData = await createToken({
+        identityId: tokenData.identityId,
+        name
       });
+
+      setToken(newTokenData.accessToken);
     }
+
+    createNotification({
+      text: `Successfully ${popUp?.token?.data ? "updated" : "created"} token`,
+      type: "success"
+    });
+
+    reset();
   };
 
   return (
@@ -159,7 +146,7 @@ export const IdentityTokenModal = ({ popUp, handlePopUpToggle }: Props) => {
             </div>
           </form>
         ) : (
-          <div className="mb-3 mr-2 mt-2 flex items-center justify-end rounded-md bg-white/[0.07] p-2 text-base text-gray-400">
+          <div className="mt-2 mr-2 mb-3 flex items-center justify-end rounded-md bg-white/[0.07] p-2 text-base text-gray-400">
             <p className="mr-4 break-all">{token}</p>
             <Tooltip content={copyTextToken}>
               <IconButton

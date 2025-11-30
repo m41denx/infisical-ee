@@ -29,14 +29,14 @@ import {
   ProjectPermissionActions,
   ProjectPermissionMemberActions,
   ProjectPermissionSub,
+  useProject,
   useProjectPermission,
-  useSubscription,
-  useWorkspace
+  useSubscription
 } from "@app/context";
 import { useGetProjectRoles, useUpdateUserWorkspaceRole } from "@app/hooks/api";
+import { ProjectUserMembershipTemporaryMode } from "@app/hooks/api/projects/types";
 import { ProjectMembershipRole } from "@app/hooks/api/roles/types";
 import { TWorkspaceUser } from "@app/hooks/api/types";
-import { ProjectUserMembershipTemporaryMode } from "@app/hooks/api/workspace/types";
 
 const roleFormSchema = z.object({
   roles: z
@@ -64,9 +64,8 @@ type Props = {
 };
 export const MemberRbacSection = ({ projectMember, onOpenUpgradeModal }: Props) => {
   const { subscription } = useSubscription();
-  const { currentWorkspace } = useWorkspace();
-  const workspaceId = currentWorkspace?.id || "";
-  const { data: projectRoles, isPending: isRolesLoading } = useGetProjectRoles(workspaceId);
+  const { projectId } = useProject();
+  const { data: projectRoles, isPending: isRolesLoading } = useGetProjectRoles(projectId);
   const { permission } = useProjectPermission();
   const isMemberEditDisabled = permission.cannot(
     ProjectPermissionMemberActions.Edit,
@@ -128,17 +127,13 @@ export const MemberRbacSection = ({ projectMember, onOpenUpgradeModal }: Props) 
       return;
     }
 
-    try {
-      await updateMembershipRole.mutateAsync({
-        workspaceId,
-        membershipId: projectMember.id,
-        roles: sanitizedRoles
-      });
-      createNotification({ text: "Successfully updated roles", type: "success" });
-      roleForm.reset(undefined, { keepValues: true });
-    } catch {
-      createNotification({ text: "Failed to update role", type: "error" });
-    }
+    await updateMembershipRole.mutateAsync({
+      projectId,
+      membershipId: projectMember.id,
+      roles: sanitizedRoles
+    });
+    createNotification({ text: "Successfully updated roles", type: "success" });
+    roleForm.reset(undefined, { keepValues: true });
   };
 
   if (isRolesLoading)

@@ -9,14 +9,13 @@ import {
   faFolder,
   faKey,
   faRotate,
-  faSearch,
-  faWarning
+  faSearch
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { AlertTriangleIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import {
-  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -38,7 +37,8 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { Badge } from "@app/components/v3";
+import { useProject } from "@app/context";
 import {
   getUserTablePreference,
   PreferenceKey,
@@ -49,7 +49,7 @@ import { useGetImportedSecretsAllEnvs } from "@app/hooks/api";
 import { useGetProjectSecretsOverview } from "@app/hooks/api/dashboard";
 import { DashboardSecretsOrderBy } from "@app/hooks/api/dashboard/types";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
-import { WorkspaceEnv } from "@app/hooks/api/workspace/types";
+import { ProjectEnv } from "@app/hooks/api/projects/types";
 import { useResizableColWidth } from "@app/hooks/useResizableColWidth";
 import {
   useDynamicSecretOverview,
@@ -89,10 +89,10 @@ const DEFAULT_FILTER_STATE = {
 const COL_WIDTH_OFFSET = 220;
 
 export const CompareEnvironments = ({ secretPath }: Props) => {
-  const { currentWorkspace } = useWorkspace();
-  const compareEnvironmentsKey = `compare-environments-${currentWorkspace.id}`;
+  const { currentProject } = useProject();
+  const compareEnvironmentsKey = `compare-environments-${currentProject.id}`;
 
-  const [selectedEnvironments, setSelectedEnvironments] = useState<WorkspaceEnv[]>(() => {
+  const [selectedEnvironments, setSelectedEnvironments] = useState<ProjectEnv[]>(() => {
     try {
       const storedEnvironments = JSON.parse(localStorage.getItem(compareEnvironmentsKey) ?? "[]");
 
@@ -104,12 +104,12 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
           }
         });
 
-        return currentWorkspace.environments.filter((env) => potentialEnvs.includes(env.id));
+        return currentProject.environments.filter((env) => potentialEnvs.includes(env.id));
       }
     } catch {
       // do nothing and proceed
     }
-    return currentWorkspace.environments.slice(0, 2);
+    return currentProject.environments.slice(0, 2);
   });
 
   const [filter, setFilter] = useState<Filter>(DEFAULT_FILTER_STATE);
@@ -133,7 +133,7 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
     setUserTablePreference("secretCompareTable", PreferenceKey.PerPage, newPerPage);
   };
 
-  const workspaceId = currentWorkspace.id;
+  const projectId = currentProject.id;
   const [searchFilter, setSearchFilter] = useState("");
   const [debouncedSearchFilter] = useDebounce(searchFilter);
   const [debouncedSelectedEnvironments] = useDebounce(selectedEnvironments);
@@ -151,19 +151,19 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
     getImportedSecretByKey,
     getEnvImportedSecretKeyCount
   } = useGetImportedSecretsAllEnvs({
-    projectId: workspaceId,
+    projectId,
     path: secretPath,
-    environments: (currentWorkspace.environments || []).map(({ slug }) => slug)
+    environments: (currentProject.environments || []).map(({ slug }) => slug)
   });
 
   const compareEnvironments = selectedEnvironments.length
     ? selectedEnvironments
-    : currentWorkspace.environments;
+    : currentProject.environments;
 
   const isFilteredByResources = Object.values(filter).some(Boolean);
   const { isPending: isOverviewLoading, data: overview } = useGetProjectSecretsOverview(
     {
-      projectId: workspaceId,
+      projectId,
       environments: compareEnvironments.map((env) => env.slug),
       secretPath,
       orderDirection,
@@ -303,7 +303,7 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
           onChangePerPage={handlePerPageChange}
         />
       )}
-      <div className="thin-scrollbar flex flex-1 flex-col overflow-y-auto">
+      <div className="flex thin-scrollbar flex-1 flex-col overflow-y-auto">
         <TableContainer
           ref={tableRef}
           className={twMerge(
@@ -344,14 +344,14 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
                         }`}
                         onMouseDown={handleMouseDown}
                       />
-                      <div className="pointer-events-none absolute -right-[0.02rem] top-[0.67rem] z-30">
+                      <div className="pointer-events-none absolute top-[0.67rem] -right-[0.02rem] z-30">
                         <div className="h-5 w-0.5 rounded-[1.5px] bg-gray-400 opacity-50" />
                       </div>
-                      <div className="flex h-full items-center border-b-2 border-r border-mineshaft-500 bg-mineshaft-700 bg-clip-padding p-0 px-4 py-2.5 text-sm normal-case">
+                      <div className="flex h-full items-center border-r border-b-2 border-mineshaft-500 bg-mineshaft-700 bg-clip-padding p-0 px-4 py-2.5 text-sm normal-case">
                         Name
                         <IconButton
                           variant="plain"
-                          className="ml-1 mt-[0.1rem]"
+                          className="mt-[0.1rem] ml-1"
                           ariaLabel="sort"
                           onClick={() =>
                             setOrderDirection((prev) =>
@@ -376,7 +376,7 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
 
                     return (
                       <Th
-                        className="whitespace-nowrap border-none p-0 text-center"
+                        className="border-none p-0 text-center whitespace-nowrap"
                         key={`environment-${slug}`}
                       >
                         <div
@@ -396,11 +396,8 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
                                 </>
                               }
                             >
-                              <Badge
-                                variant="primary"
-                                className="-mt-[0.05rem] flex h-4 items-center gap-x-1 pt-[0.1rem] font-normal leading-3"
-                              >
-                                <FontAwesomeIcon icon={faWarning} className="-mt-[0.1rem] w-2.5" />
+                              <Badge variant="warning">
+                                <AlertTriangleIcon />
                                 {missingKeyCount}
                               </Badge>
                             </Tooltip>
@@ -499,7 +496,7 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
                 size="sm"
                 variant="outline_bg"
                 className={twMerge(
-                  "flex h-[2.5rem]",
+                  "flex h-10",
                   isTableFiltered && "border-primary/40 bg-primary/10"
                 )}
                 leftIcon={
@@ -513,7 +510,7 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
-              className="thin-scrollbar max-h-[70vh] overflow-y-auto"
+              className="max-h-[70vh] thin-scrollbar overflow-y-auto"
               align="end"
               sideOffset={2}
             >
@@ -574,17 +571,17 @@ export const CompareEnvironments = ({ secretPath }: Props) => {
           </DropdownMenu>
         )}
       </div>
-      <div className="!z-[99999999]">
+      <div className="z-99999999!">
         <FormLabel label="Select Environments to Compare" />
         <FilterableSelect
           value={selectedEnvironments}
           onChange={(value) => {
-            const selected = value as MultiValue<WorkspaceEnv>;
+            const selected = value as MultiValue<ProjectEnv>;
 
-            setSelectedEnvironments((selected as WorkspaceEnv[]) ?? []);
+            setSelectedEnvironments((selected as ProjectEnv[]) ?? []);
           }}
           placeholder="Leave blank to compare all environments"
-          options={currentWorkspace.environments}
+          options={currentProject.environments}
           getOptionValue={(option) => option.slug}
           getOptionLabel={(option) => option.name}
           isMulti

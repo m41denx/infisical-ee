@@ -5,17 +5,20 @@ import "./lib/telemetry/instrumentation";
 import dotenv from "dotenv";
 
 import { initializeHsmModule } from "@app/ee/services/hsm/hsm-fns";
+import { keyValueStoreDALFactory } from "@app/keystore/key-value-store-dal";
 
 import { runMigrations } from "./auto-start-migrations";
 import { initAuditLogDbConnection, initDbConnection } from "./db";
+import { hsmServiceFactory } from "./ee/services/hsm/hsm-service";
 import { keyStoreFactory } from "./keystore/keystore";
-import { formatSmtpConfig, getDatabaseCredentials, initEnvConfig } from "./lib/config/env";
+import { formatSmtpConfig, getDatabaseCredentials, getHsmConfig, initEnvConfig } from "./lib/config/env";
 import { buildRedisFromConfig } from "./lib/config/redis";
 import { removeTemporaryBaseDirectory } from "./lib/files";
 import { initLogger } from "./lib/logger";
 import { queueServiceFactory } from "./queue";
 import { main } from "./server/app";
 import { bootstrapCheck } from "./server/boot-strap-check";
+import { kmsRootConfigDALFactory } from "./services/kms/kms-root-config-dal";
 import { smtpServiceFactory } from "./services/smtp/smtp-service";
 import { superAdminDALFactory } from "./services/super-admin/super-admin-dal";
 
@@ -24,6 +27,18 @@ dotenv.config();
 const run = async () => {
   const logger = initLogger();
   await removeTemporaryBaseDirectory();
+
+  const hsmConfig = getHsmConfig(logger);
+
+  const hsmModule = initializeHsmModule(hsmConfig);
+  hsmModule.initialize();
+
+  const hsmService = hsmServiceFactory({
+    hsmModule: hsmModule.getModule(),
+    envConfig: hsmConfig
+  });
+
+  await hsmService.startService();
 
   const databaseCredentials = getDatabaseCredentials(logger);
 
@@ -34,7 +49,8 @@ const run = async () => {
   });
 
   const superAdminDAL = superAdminDALFactory(db);
-  const envConfig = await initEnvConfig(superAdminDAL, logger);
+  const kmsRootConfigDAL = kmsRootConfigDALFactory(db);
+  const envConfig = await initEnvConfig(hsmService, kmsRootConfigDAL, superAdminDAL, logger);
 
   const auditLogDb = envConfig.AUDIT_LOGS_DB_CONNECTION_URI
     ? initAuditLogDbConnection({
@@ -54,17 +70,16 @@ const run = async () => {
 
   await queue.initialize();
 
-  const keyStore = keyStoreFactory(envConfig);
+  const keyValueStoreDAL = keyValueStoreDALFactory(db);
+  const keyStore = keyStoreFactory(envConfig, keyValueStoreDAL);
   const redis = buildRedisFromConfig(envConfig);
-
-  const hsmModule = initializeHsmModule(envConfig);
-  hsmModule.initialize();
 
   const server = await main({
     db,
     auditLogDb,
     superAdminDAL,
-    hsmModule: hsmModule.getModule(),
+    kmsRootConfigDAL,
+    hsmService,
     smtp,
     logger,
     queue,

@@ -34,7 +34,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
     schema: {
       hide: false,
       tags: [ApiDocsTags.Identities],
-      description: "Create identity",
+      description: "Create machine identity",
       security: [
         {
           bearerAuth: []
@@ -60,7 +60,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const identity = await server.services.identity.createIdentity({
+      const identity = await server.services.identityV1.createIdentity({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
@@ -109,7 +109,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
     schema: {
       hide: false,
       tags: [ApiDocsTags.Identities],
-      description: "Update identity",
+      description: "Update machine identity",
       security: [
         {
           bearerAuth: []
@@ -136,7 +136,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const identity = await server.services.identity.updateIdentity({
+      const identity = await server.services.identityV1.updateIdentity({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
@@ -173,7 +173,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
     schema: {
       hide: false,
       tags: [ApiDocsTags.Identities],
-      description: "Delete identity",
+      description: "Delete machine identity",
       security: [
         {
           bearerAuth: []
@@ -189,7 +189,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const identity = await server.services.identity.deleteIdentity({
+      const identity = await server.services.identityV1.deleteIdentity({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
@@ -222,7 +222,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
     schema: {
       hide: false,
       tags: [ApiDocsTags.Identities],
-      description: "Get an identity by id",
+      description: "Get a machine identity by id",
       security: [
         {
           bearerAuth: []
@@ -249,7 +249,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
               permissions: true,
               description: true
             }).optional(),
-            identity: IdentitiesSchema.pick({ name: true, id: true, hasDeleteProtection: true }).extend({
+            identity: IdentitiesSchema.pick({ name: true, id: true, hasDeleteProtection: true, orgId: true }).extend({
               authMethods: z.array(z.string()),
               activeLockoutAuthMethods: z.array(z.string())
             })
@@ -258,7 +258,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const identity = await server.services.identity.getIdentityById({
+      const identity = await server.services.identityV1.getIdentityById({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
@@ -280,7 +280,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
     schema: {
       hide: false,
       tags: [ApiDocsTags.Identities],
-      description: "List identities",
+      description: "List machine identities",
       security: [
         {
           bearerAuth: []
@@ -308,7 +308,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const { identityMemberships, totalCount } = await server.services.identity.listOrgIdentities({
+      const { identityMemberships, totalCount } = await server.services.identityV1.listOrgIdentities({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
@@ -330,7 +330,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
     schema: {
       hide: false,
       tags: [ApiDocsTags.Identities],
-      description: "Search identities",
+      description: "Search machine identities",
       security: [
         {
           bearerAuth: []
@@ -393,7 +393,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
               permissions: true,
               description: true
             }).optional(),
-            identity: IdentitiesSchema.pick({ name: true, id: true, hasDeleteProtection: true }).extend({
+            identity: IdentitiesSchema.pick({ name: true, id: true, hasDeleteProtection: true, orgId: true }).extend({
               authMethods: z.array(z.string())
             })
           }).array(),
@@ -402,7 +402,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const { identityMemberships, totalCount } = await server.services.identity.searchOrgIdentities({
+      const { identityMemberships, totalCount } = await server.services.identityV1.searchOrgIdentities({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
@@ -427,7 +427,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
-      description: "List project memberships that identity with id is part of",
+      description: "List project memberships that machine identity with id is part of",
       security: [
         {
           bearerAuth: []
@@ -468,7 +468,7 @@ export const registerIdentityRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const identityMemberships = await server.services.identity.listProjectIdentitiesByIdentityId({
+      const identityMemberships = await server.services.identityV1.listProjectIdentitiesByIdentityId({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,

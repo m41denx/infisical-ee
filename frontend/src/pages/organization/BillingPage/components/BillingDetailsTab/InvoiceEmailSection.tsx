@@ -35,26 +35,18 @@ export const InvoiceEmailSection = () => {
   }, [data]);
 
   const onFormSubmit = async ({ email }: { email: string }) => {
-    try {
-      if (!currentOrg?.id) return;
-      if (email === "") return;
+    if (!currentOrg?.id) return;
+    if (email === "") return;
 
-      await mutateAsync({
-        email,
-        organizationId: currentOrg.id
-      });
+    await mutateAsync({
+      email,
+      organizationId: currentOrg.id
+    });
 
-      createNotification({
-        text: "Successfully updated invoice email recipient",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to update invoice email recipient",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully updated invoice email recipient",
+      type: "success"
+    });
   };
 
   return (
@@ -62,7 +54,7 @@ export const InvoiceEmailSection = () => {
       onSubmit={handleSubmit(onFormSubmit)}
       className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4"
     >
-      <h2 className="mb-8 flex-1 text-xl font-semibold text-white">Invoice email recipient</h2>
+      <h2 className="mb-8 flex-1 text-xl font-medium text-white">Invoice email recipient</h2>
       <div className="max-w-md">
         <Controller
           defaultValue=""

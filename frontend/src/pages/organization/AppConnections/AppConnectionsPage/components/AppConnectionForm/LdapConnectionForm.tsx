@@ -4,8 +4,10 @@ import { faQuestionCircle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Tab } from "@headlessui/react";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
+import { OrgPermissionCan } from "@app/components/permissions";
 import {
   Button,
   FormControl,
@@ -18,8 +20,11 @@ import {
   TextArea,
   Tooltip
 } from "@app/components/v2";
+import { OrgPermissionSubjects, useSubscription } from "@app/context";
+import { OrgGatewayPermissionActions } from "@app/context/OrgPermissionContext/types";
 import { APP_CONNECTION_MAP, getAppConnectionMethodDetails } from "@app/helpers/appConnections";
 import { DistinguishedNameRegex, UserPrincipalNameRegex } from "@app/helpers/string";
+import { gatewaysQueryKeys } from "@app/hooks/api";
 import {
   LdapConnectionMethod,
   LdapConnectionProvider,
@@ -84,6 +89,7 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
     defaultValues: appConnection ?? {
       app: AppConnection.LDAP,
       method: LdapConnectionMethod.SimpleBind,
+      gatewayId: null,
       credentials: {
         provider: LdapConnectionProvider.ActiveDirectory,
         url: "",
@@ -104,6 +110,8 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
 
   const selectedProvider = watch("credentials.provider");
   const sslEnabled = watch("credentials.url")?.startsWith("ldaps://") ?? false;
+  const { subscription } = useSubscription();
+  const { data: gateways, isPending: isGatewaysLoading } = useQuery(gatewaysQueryKeys.list());
 
   return (
     <FormProvider {...form}>
@@ -114,6 +122,57 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
         }}
       >
         {!isUpdate && <GenericAppConnectionsFields />}
+        {subscription.gateway && (
+          <OrgPermissionCan
+            I={OrgGatewayPermissionActions.AttachGateways}
+            a={OrgPermissionSubjects.Gateway}
+          >
+            {(isAllowed) => (
+              <Controller
+                control={control}
+                name="gatewayId"
+                defaultValue=""
+                render={({ field: { value, onChange }, fieldState: { error } }) => (
+                  <FormControl
+                    isError={Boolean(error?.message)}
+                    errorText={error?.message}
+                    label="Gateway"
+                  >
+                    <Tooltip
+                      isDisabled={isAllowed}
+                      content="Restricted access. You don't have permission to attach gateways to resources."
+                    >
+                      <div>
+                        <Select
+                          isDisabled={!isAllowed}
+                          value={value as string}
+                          onValueChange={onChange}
+                          className="w-full border border-mineshaft-500"
+                          dropdownContainerClassName="max-w-none"
+                          isLoading={isGatewaysLoading}
+                          placeholder="Default: Internet Gateway"
+                          position="popper"
+                        >
+                          <SelectItem
+                            value={null as unknown as string}
+                            onClick={() => onChange(undefined)}
+                          >
+                            Internet Gateway
+                          </SelectItem>
+                          {gateways?.map((el) => (
+                            <SelectItem value={el.id} key={el.id}>
+                              {el.name}
+                            </SelectItem>
+                          ))}
+                        </Select>
+                      </div>
+                    </Tooltip>
+                  </FormControl>
+                )}
+              />
+            )}
+          </OrgPermissionCan>
+        )}
         <div className="grid grid-cols-2 items-center gap-2">
           <Controller
             name="method"
@@ -181,7 +240,7 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
           >
             <Tab
               className={({ selected }) =>
-                `w-30 -mb-[0.14rem] px-4 py-2 text-sm font-medium outline-none disabled:opacity-60 ${
+                `-mb-[0.14rem] px-4 py-2 text-sm font-medium whitespace-nowrap outline-hidden disabled:opacity-60 ${
                   selected
                     ? "border-b-2 border-mineshaft-300 text-mineshaft-200"
                     : "text-bunker-300"
@@ -192,7 +251,7 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
             </Tab>
             <Tab
               className={({ selected }) =>
-                `w-30 -mb-[0.14rem] px-4 py-2 text-sm font-medium outline-none disabled:opacity-60 ${
+                `-mb-[0.14rem] px-4 py-2 text-sm font-medium whitespace-nowrap outline-hidden disabled:opacity-60 ${
                   selected
                     ? "border-b-2 border-mineshaft-300 text-mineshaft-200"
                     : "text-bunker-300"
@@ -205,7 +264,7 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
           {selectedTabIndex === 1 && (
             <div className="mb-2 text-xs text-mineshaft-300">Requires ldaps:// URL</div>
           )}
-          <Tab.Panels className="mb-4 rounded border border-mineshaft-600 bg-mineshaft-700/70 p-3 pb-0">
+          <Tab.Panels className="mb-4 rounded-sm border border-mineshaft-600 bg-mineshaft-700/70 p-3 pb-0">
             <Tab.Panel>
               <Controller
                 name="credentials.url"
@@ -244,7 +303,7 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
                       label="Binding Password"
                     >
                       <SecretInput
-                        containerClassName="text-gray-400 group-focus-within:!border-primary-400/50 border border-mineshaft-500 bg-mineshaft-900 px-2.5 py-1.5"
+                        containerClassName="text-gray-400 group-focus-within:border-primary-400/50! border border-mineshaft-500 bg-mineshaft-900 px-2.5 py-1.5"
                         value={value}
                         onChange={(e) => onChange(e.target.value)}
                       />
@@ -266,7 +325,7 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
                     isOptional
                   >
                     <TextArea
-                      className="h-[3.6rem] !resize-none"
+                      className="h-[3.6rem] resize-none!"
                       {...field}
                       isDisabled={!sslEnabled}
                     />
@@ -290,7 +349,7 @@ export const LdapConnectionForm = ({ appConnection, onSubmit }: Props) => {
                       onCheckedChange={onChange}
                       isDisabled={!sslEnabled}
                     >
-                      <p className="w-[9.5rem]">
+                      <p className="w-38">
                         Reject Unauthorized
                         <Tooltip
                           className="max-w-md"

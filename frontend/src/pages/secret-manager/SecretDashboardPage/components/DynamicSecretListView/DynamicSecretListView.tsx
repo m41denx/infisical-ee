@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { subject } from "@casl/ability";
 import { faEdit, faFingerprint, faTrash, faWarning } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -13,6 +14,7 @@ import {
   Tag,
   Tooltip
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { ProjectPermissionDynamicSecretActions, ProjectPermissionSub } from "@app/context";
 import { usePopUp } from "@app/hooks";
 import { useDeleteDynamicSecret } from "@app/hooks/api";
@@ -36,9 +38,11 @@ type Props = {
   environment: string;
   projectSlug: string;
   secretPath?: string;
+  selectedDynamicSecretId: string | null;
 };
 
 export const DynamicSecretListView = ({
+  selectedDynamicSecretId,
   dynamicSecrets = [],
   environment,
   projectSlug,
@@ -54,30 +58,31 @@ export const DynamicSecretListView = ({
   const deleteDynamicSecret = useDeleteDynamicSecret();
 
   const handleDynamicSecretDelete = async () => {
-    try {
-      const { name, isForced } = popUp.deleteDynamicSecret.data as TDynamicSecret & {
-        isForced?: boolean;
-      };
-      await deleteDynamicSecret.mutateAsync({
-        environmentSlug: environment,
-        projectSlug,
-        path: secretPath,
-        name,
-        isForced
-      });
-      handlePopUpClose("deleteDynamicSecret");
-      createNotification({
-        type: "success",
-        text: "Successfully deleted dynamic secret"
-      });
-    } catch (error) {
-      console.log(error);
-      createNotification({
-        type: "error",
-        text: "Failed to delete dynamic secret"
-      });
-    }
+    const { name, isForced } = popUp.deleteDynamicSecret.data as TDynamicSecret & {
+      isForced?: boolean;
+    };
+    await deleteDynamicSecret.mutateAsync({
+      environmentSlug: environment,
+      projectSlug,
+      path: secretPath,
+      name,
+      isForced
+    });
+    handlePopUpClose("deleteDynamicSecret");
+    createNotification({
+      type: "success",
+      text: "Successfully deleted dynamic secret"
+    });
   };
+
+  useEffect(() => {
+    if (
+      selectedDynamicSecretId &&
+      dynamicSecrets.find((secret) => secret.id === selectedDynamicSecretId)
+    ) {
+      handlePopUpOpen("dynamicSecretLeases", selectedDynamicSecretId);
+    }
+  }, [selectedDynamicSecretId]);
 
   return (
     <>
@@ -118,7 +123,7 @@ export const DynamicSecretListView = ({
               <div className="flex w-11 items-center px-5 py-3 text-yellow-700">
                 <FontAwesomeIcon icon={faFingerprint} />
               </div>
-              <div className="flex flex-grow items-center px-4 py-3" role="button" tabIndex={0}>
+              <div className="flex grow items-center px-4 py-3" role="button" tabIndex={0}>
                 {secret.name}
                 <Tag className="ml-4 px-2 py-0 text-xs normal-case">
                   {formatProviderName(secret.type)}
@@ -239,7 +244,12 @@ export const DynamicSecretListView = ({
               </div>
             </div>
             <ModalContent
-              title="Dynamic secret leases"
+              title={
+                <div className="flex items-center space-x-2">
+                  <p>Dynamic secret leases</p>
+                  <Badge variant="neutral">{secret.name}</Badge>
+                </div>
+              }
               subTitle="Revoke or renew your secret leases"
               className="max-w-3xl"
             >

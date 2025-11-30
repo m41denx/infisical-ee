@@ -12,7 +12,6 @@ import { twMerge } from "tailwind-merge";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -28,7 +27,13 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { Badge } from "@app/components/v3";
+import {
+  ProjectPermissionActions,
+  ProjectPermissionSub,
+  useOrganization,
+  useProject
+} from "@app/context";
 import { useListWorkspaceSshHostGroups } from "@app/hooks/api";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
@@ -41,8 +46,9 @@ type Props = {
 
 export const SshHostGroupsTable = ({ handlePopUpOpen }: Props) => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
-  const { data, isPending } = useListWorkspaceSshHostGroups(currentWorkspace?.id || "");
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
+  const { data, isPending } = useListWorkspaceSshHostGroups(currentProject?.id || "");
   return (
     <div>
       <TableContainer>
@@ -67,9 +73,10 @@ export const SshHostGroupsTable = ({ handlePopUpOpen }: Props) => {
                     key={`ssh-host-group-${group.id}`}
                     onClick={() =>
                       navigate({
-                        to: "/projects/ssh/$projectId/ssh-host-groups/$sshHostGroupId",
+                        to: "/organizations/$orgId/projects/ssh/$projectId/ssh-host-groups/$sshHostGroupId",
                         params: {
-                          projectId: currentWorkspace.id,
+                          orgId: currentOrg.id,
+                          projectId: currentProject.id,
                           sshHostGroupId: group.id
                         }
                       })
@@ -79,7 +86,7 @@ export const SshHostGroupsTable = ({ handlePopUpOpen }: Props) => {
                     <Td>{group.hostCount}</Td>
                     <Td>
                       {group.loginMappings.length === 0 ? (
-                        <span className="italic text-mineshaft-400">None</span>
+                        <span className="text-mineshaft-400 italic">None</span>
                       ) : (
                         group.loginMappings.map(({ loginUser, allowedPrincipals }) => (
                           <div key={`${group.id}-${loginUser}`} className="mb-2">
@@ -98,7 +105,7 @@ export const SshHostGroupsTable = ({ handlePopUpOpen }: Props) => {
                                     className="text-xs text-yellow/80"
                                   />
                                   <span>{username}</span>
-                                  <Badge variant="primary">user</Badge>
+                                  <Badge variant="warning">user</Badge>
                                 </div>
                               </div>
                             ))}
@@ -168,9 +175,10 @@ export const SshHostGroupsTable = ({ handlePopUpOpen }: Props) => {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   navigate({
-                                    to: "/projects/ssh/$projectId/ssh-host-groups/$sshHostGroupId",
+                                    to: "/organizations/$orgId/projects/ssh/$projectId/ssh-host-groups/$sshHostGroupId",
                                     params: {
-                                      projectId: currentWorkspace.id,
+                                      orgId: currentOrg.id,
+                                      projectId: currentProject.id,
                                       sshHostGroupId: group.id
                                     }
                                   });

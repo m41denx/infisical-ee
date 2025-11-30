@@ -4,6 +4,7 @@ import { AxiosError } from "axios";
 import { Knex } from "knex";
 
 import {
+  AccessScope,
   ProjectMembershipRole,
   ProjectType,
   ProjectUpgradeStatus,
@@ -43,6 +44,8 @@ import { TIntegrationAuthServiceFactory } from "../integration-auth/integration-
 import { syncIntegrationSecrets } from "../integration-auth/integration-sync-secret";
 import { TKmsServiceFactory } from "../kms/kms-service";
 import { KmsDataKey } from "../kms/kms-types";
+import { TMembershipDALFactory } from "../membership/membership-dal";
+import { TMembershipRoleDALFactory } from "../membership/membership-role-dal";
 import { TOrgServiceFactory } from "../org/org-service";
 import { TProjectDALFactory } from "../project/project-dal";
 import { createProjectKey } from "../project/project-fns";
@@ -50,7 +53,6 @@ import { TProjectBotServiceFactory } from "../project-bot/project-bot-service";
 import { TProjectEnvDALFactory } from "../project-env/project-env-dal";
 import { TProjectKeyDALFactory } from "../project-key/project-key-dal";
 import { TProjectMembershipDALFactory } from "../project-membership/project-membership-dal";
-import { TProjectUserMembershipRoleDALFactory } from "../project-membership/project-user-membership-role-dal";
 import { TReminderServiceFactory } from "../reminder/reminder-types";
 import { TResourceMetadataDALFactory } from "../resource-metadata/resource-metadata-dal";
 import { ResourceMetadataDTO } from "../resource-metadata/resource-metadata-schema";
@@ -62,6 +64,8 @@ import { expandSecretReferencesFactory, getAllSecretReferences } from "../secret
 import { TSecretVersionV2DALFactory } from "../secret-v2-bridge/secret-version-dal";
 import { TSecretVersionV2TagDALFactory } from "../secret-v2-bridge/secret-version-tag-dal";
 import { SmtpTemplates, TSmtpService } from "../smtp/smtp-service";
+import { TTelemetryServiceFactory } from "../telemetry/telemetry-service";
+import { PostHogEventTypes } from "../telemetry/telemetry-types";
 import { TUserDALFactory } from "../user/user-dal";
 import { TWebhookDALFactory } from "../webhook/webhook-dal";
 import { fnTriggerWebhook } from "../webhook/webhook-fns";
@@ -92,7 +96,9 @@ type TSecretQueueFactoryDep = {
   projectDAL: TProjectDALFactory;
   projectBotDAL: TProjectBotDALFactory;
   projectKeyDAL: Pick<TProjectKeyDALFactory, "create">;
-  projectMembershipDAL: Pick<TProjectMembershipDALFactory, "findAllProjectMembers" | "create">;
+  projectMembershipDAL: Pick<TProjectMembershipDALFactory, "findAllProjectMembers">;
+  membershipUserDAL: Pick<TMembershipDALFactory, "create">;
+  membershipRoleDAL: Pick<TMembershipRoleDALFactory, "create">;
   smtpService: TSmtpService;
   secretVersionDAL: TSecretVersionDALFactory;
   secretBlindIndexDAL: TSecretBlindIndexDALFactory;
@@ -110,13 +116,13 @@ type TSecretQueueFactoryDep = {
   keyStore: Pick<TKeyStoreFactory, "acquireLock" | "setItemWithExpiry" | "getItem">;
   auditLogService: Pick<TAuditLogServiceFactory, "createAuditLog">;
   orgService: Pick<TOrgServiceFactory, "addGhostUser">;
-  projectUserMembershipRoleDAL: Pick<TProjectUserMembershipRoleDALFactory, "create">;
   resourceMetadataDAL: Pick<TResourceMetadataDALFactory, "insertMany" | "delete">;
   folderCommitService: Pick<TFolderCommitServiceFactory, "createCommit">;
   secretSyncQueue: Pick<TSecretSyncQueueFactory, "queueSecretSyncsSyncSecretsByPath">;
   reminderService: Pick<TReminderServiceFactory, "createReminderInternal" | "deleteReminderBySecretId">;
   eventBusService: TEventBusService;
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
+  telemetryService: Pick<TTelemetryServiceFactory, "sendPostHogEvents">;
 };
 
 export type TGetSecrets = {
@@ -173,14 +179,16 @@ export const secretQueueFactory = ({
   keyStore,
   auditLogService,
   orgService,
-  projectUserMembershipRoleDAL,
   projectKeyDAL,
   resourceMetadataDAL,
   secretSyncQueue,
   folderCommitService,
   reminderService,
   eventBusService,
-  licenseService
+  licenseService,
+  membershipUserDAL,
+  membershipRoleDAL,
+  telemetryService
 }: TSecretQueueFactoryDep) => {
   const integrationMeter = opentelemetry.metrics.getMeter("Integrations");
   const errorHistogram = integrationMeter.createHistogram("integration_secret_sync_errors", {
@@ -738,7 +746,7 @@ export const secretQueueFactory = ({
           environment: jobPayload.environmentName,
           count: jobPayload.count,
           projectName: project.name,
-          integrationUrl: `${appCfg.SITE_URL}/projects/secret-management/${project.id}/integrations?selectedTab=native-integrations`
+          integrationUrl: `${appCfg.SITE_URL}/organizations/${project.orgId}/projects/secret-management/${project.id}/integrations?selectedTab=native-integrations`
         }
       });
     }
@@ -1025,6 +1033,29 @@ export const secretQueueFactory = ({
               isSynced: response?.isSynced ?? true
             });
 
+            await telemetryService.sendPostHogEvents({
+              event: PostHogEventTypes.IntegrationSynced,
+              distinctId: `project/${projectId}`,
+              organizationId: project.orgId,
+              properties: {
+                integrationId: integration.id,
+                integration: integration.integration,
+                environment,
+                secretPath,
+                projectId,
+                url: integration.url ?? undefined,
+                app: integration.app ?? undefined,
+                appId: integration.appId ?? undefined,
+                targetEnvironment: integration.targetEnvironment ?? undefined,
+                targetEnvironmentId: integration.targetEnvironmentId ?? undefined,
+                targetService: integration.targetService ?? undefined,
+                targetServiceId: integration.targetServiceId ?? undefined,
+                path: integration.path ?? undefined,
+                region: integration.region ?? undefined,
+                isManualSync: isManual ?? false
+              }
+            });
+
             // May be undefined, if it's undefined we assume the sync was successful, hence the strict equality type check.
             if (response?.isSynced === false) {
               integrationsFailedToSync.push({
@@ -1165,17 +1196,16 @@ export const secretQueueFactory = ({
       // if project v1 create the project ghost user
       if (project.version === ProjectVersion.V1) {
         const ghostUser = await orgService.addGhostUser(project.orgId, tx);
-        const projectMembership = await projectMembershipDAL.create(
+        const projectMembership = await membershipUserDAL.create(
           {
-            userId: ghostUser.user.id,
-            projectId: project.id
+            actorUserId: ghostUser.user.id,
+            scopeOrgId: project.orgId,
+            scope: AccessScope.Project,
+            scopeProjectId: project.id
           },
           tx
         );
-        await projectUserMembershipRoleDAL.create(
-          { projectMembershipId: projectMembership.id, role: ProjectMembershipRole.Admin },
-          tx
-        );
+        await membershipRoleDAL.create({ membershipId: projectMembership.id, role: ProjectMembershipRole.Admin }, tx);
 
         const { key: encryptedProjectKey, iv: encryptedProjectKeyIv } = createProjectKey({
           publicKey: ghostUser.keys.publicKey,

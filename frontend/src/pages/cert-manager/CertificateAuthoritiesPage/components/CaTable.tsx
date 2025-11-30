@@ -6,7 +6,6 @@ import { twMerge } from "tailwind-merge";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -22,7 +21,13 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { Badge } from "@app/components/v3";
+import {
+  ProjectPermissionActions,
+  ProjectPermissionSub,
+  useOrganization,
+  useProject
+} from "@app/context";
 import { CaStatus, CaType, useListCasByTypeAndProjectId } from "@app/hooks/api";
 import {
   caStatusToNameMap,
@@ -34,23 +39,21 @@ import { UsePopUpState } from "@app/hooks/usePopUp";
 
 type Props = {
   handlePopUpOpen: (
-    popUpName: keyof UsePopUpState<
-      ["installCaCert", "caCert", "ca", "deleteCa", "caStatus", "upgradePlan"]
-    >,
+    popUpName: keyof UsePopUpState<["installCaCert", "caCert", "ca", "deleteCa", "caStatus"]>,
     data?: {
       caId?: string;
       caName?: string;
       dn?: string;
       status?: CaStatus;
-      description?: string;
     }
   ) => void;
 };
 
 export const CaTable = ({ handlePopUpOpen }: Props) => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
-  const { data, isPending } = useListCasByTypeAndProjectId(CaType.INTERNAL, currentWorkspace.id);
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
+  const { data, isPending } = useListCasByTypeAndProjectId(CaType.INTERNAL, currentProject.id);
   const cas = data as TInternalCertificateAuthority[];
 
   return (
@@ -78,10 +81,11 @@ export const CaTable = ({ handlePopUpOpen }: Props) => {
                     key={`ca-${ca.id}`}
                     onClick={() =>
                       navigate({
-                        to: "/projects/cert-management/$projectId/ca/$caName",
+                        to: "/organizations/$orgId/projects/cert-management/$projectId/ca/$caId",
                         params: {
-                          projectId: currentWorkspace.id,
-                          caName: ca.name
+                          orgId: currentOrg.id,
+                          projectId: currentProject.id,
+                          caId: ca.id
                         }
                       })
                     }
@@ -176,7 +180,7 @@ export const CaTable = ({ handlePopUpOpen }: Props) => {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handlePopUpOpen("caStatus", {
-                                      caName: ca.name,
+                                      caId: ca.id,
                                       status:
                                         ca.status === CaStatus.ACTIVE
                                           ? CaStatus.DISABLED
@@ -203,7 +207,7 @@ export const CaTable = ({ handlePopUpOpen }: Props) => {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handlePopUpOpen("deleteCa", {
-                                    caName: ca.name
+                                    caId: ca.id
                                   });
                                 }}
                                 disabled={!isAllowed}

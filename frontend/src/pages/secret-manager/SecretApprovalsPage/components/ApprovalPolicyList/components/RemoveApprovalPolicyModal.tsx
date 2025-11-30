@@ -4,7 +4,7 @@ import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
 import { DeleteActionModal, Spinner } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   useDeleteAccessApprovalPolicy,
   useDeleteSecretApprovalPolicy,
@@ -29,44 +29,37 @@ export const RemoveApprovalPolicyModal = ({
   const { mutateAsync: deleteSecretApprovalPolicy } = useDeleteSecretApprovalPolicy();
   const { mutateAsync: deleteAccessApprovalPolicy } = useDeleteAccessApprovalPolicy();
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   const handleDeletePolicy = async () => {
-    try {
-      if (policyType === PolicyType.ChangePolicy) {
-        await deleteSecretApprovalPolicy({
-          workspaceId: currentWorkspace.id,
-          id: policyId
-        });
-      } else {
-        await deleteAccessApprovalPolicy({
-          projectSlug: currentWorkspace.slug,
-          id: policyId
-        });
-      }
-      createNotification({
-        type: "success",
-        text: "Successfully deleted policy"
+    if (policyType === PolicyType.ChangePolicy) {
+      await deleteSecretApprovalPolicy({
+        projectId: currentProject.id,
+        id: policyId
       });
-      onOpenChange(false);
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to delete policy"
+    } else {
+      await deleteAccessApprovalPolicy({
+        projectSlug: currentProject.slug,
+        id: policyId
       });
     }
+    createNotification({
+      type: "success",
+      text: "Successfully deleted policy"
+    });
+    onOpenChange(false);
   };
 
   const deleteSecretApprovalData = useGetSecretApprovalRequestCount({
     policyId,
-    workspaceId: currentWorkspace.id,
+    projectId: currentProject.id,
     options: {
       enabled: Boolean(policyId) && policyType === PolicyType.ChangePolicy
     }
   });
 
   const deleteAccessApprovalData = useGetAccessRequestsCount({
-    projectSlug: currentWorkspace.slug,
+    projectSlug: currentProject.slug,
     policyId,
     options: {
       enabled: Boolean(policyId) && policyType === PolicyType.AccessPolicy
@@ -100,7 +93,7 @@ export const RemoveApprovalPolicyModal = ({
       ) : (
         <div
           className={twMerge(
-            "mt-4 flex w-full items-start gap-2 rounded border p-2 text-sm",
+            "mt-4 flex w-full items-start gap-2 rounded-sm border p-2 text-sm",
             (openCount ?? 0) > 0
               ? "border-yellow/20 bg-yellow/10 text-yellow"
               : "border-green/20 bg-green/10 text-green"

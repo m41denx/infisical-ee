@@ -1,13 +1,15 @@
-import { useEffect } from "react";
-import { faArrowUpRightFromSquare, faBookOpen, faPlus } from "@fortawesome/free-solid-svg-icons";
+import { useEffect, useState } from "react";
+import { faPlus } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { CreateSecretSyncModal } from "@app/components/secret-syncs";
+import { TSecretSyncForm } from "@app/components/secret-syncs/forms/schemas";
 import { Button, Spinner } from "@app/components/v2";
+import { DocumentationLinkBadge } from "@app/components/v3";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { ProjectPermissionSub, useWorkspace } from "@app/context";
+import { ProjectPermissionSub, useOrganization, useProject } from "@app/context";
 import { ProjectPermissionSecretSyncActions } from "@app/context/ProjectPermissionContext/types";
 import { usePopUp } from "@app/hooks";
 import { useListSecretSyncs } from "@app/hooks/api/secretSyncs";
@@ -16,14 +18,16 @@ import { SecretSyncsTable } from "./SecretSyncTable";
 
 export const SecretSyncsTab = () => {
   const { popUp, handlePopUpOpen, handlePopUpToggle } = usePopUp(["addSync"] as const);
+  const [initialSyncFormData, setInitialSyncFormData] = useState<Partial<TSecretSyncForm>>();
 
-  const { addSync, ...search } = useSearch({
+  const { addSync, connectionId, connectionName, ...search } = useSearch({
     from: ROUTE_PATHS.SecretManager.IntegrationsListPage.id
   });
 
   const navigate = useNavigate();
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
 
   useEffect(() => {
     if (!addSync) return;
@@ -32,14 +36,48 @@ export const SecretSyncsTab = () => {
     navigate({
       to: ROUTE_PATHS.SecretManager.IntegrationsListPage.path,
       params: {
-        projectId: currentWorkspace.id
+        projectId: currentProject.id,
+        orgId: currentOrg.id
       },
       search
     });
   }, [addSync]);
 
+  useEffect(() => {
+    if (connectionId && connectionName) {
+      const storedFormData = localStorage.getItem("secretSyncFormData");
+
+      if (!storedFormData) return;
+
+      let form: Partial<TSecretSyncForm> = {};
+      try {
+        form = JSON.parse(storedFormData) as TSecretSyncForm;
+      } catch {
+        return;
+      } finally {
+        localStorage.removeItem("secretSyncFormData");
+      }
+
+      handlePopUpOpen("addSync", form.destination);
+
+      setInitialSyncFormData({
+        ...form,
+        connection: { id: connectionId, name: connectionName }
+      });
+
+      navigate({
+        to: ROUTE_PATHS.SecretManager.IntegrationsListPage.path,
+        params: {
+          orgId: currentOrg.id,
+          projectId: currentProject.id
+        },
+        search
+      });
+    }
+  }, [connectionId, connectionName]);
+
   const { data: secretSyncs = [], isPending: isSecretSyncsPending } = useListSecretSyncs(
-    currentWorkspace.id,
+    currentProject.id,
     {
       refetchInterval: 30000
     }
@@ -55,24 +93,11 @@ export const SecretSyncsTab = () => {
   return (
     <>
       <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="flex items-start gap-1">
-              <p className="text-xl font-semibold text-mineshaft-100">Secret Syncs</p>
-              <a
-                href="https://infisical.com/docs/integrations/secret-syncs/overview"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <div className="ml-1 mt-[0.32rem] inline-block rounded-md bg-yellow/20 px-1.5 text-sm text-yellow opacity-80 hover:opacity-100">
-                  <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
-                  <span>Docs</span>
-                  <FontAwesomeIcon
-                    icon={faArrowUpRightFromSquare}
-                    className="mb-[0.07rem] ml-1.5 text-[10px]"
-                  />
-                </div>
-              </a>
+            <div className="flex items-center gap-1.5">
+              <p className="text-lg font-medium text-mineshaft-100">Secret Syncs</p>
+              <DocumentationLinkBadge href="https://infisical.com/docs/integrations/secret-syncs/overview" />
             </div>
             <p className="text-sm text-bunker-300">
               Use App Connections to sync secrets to third-party services.
@@ -100,7 +125,11 @@ export const SecretSyncsTab = () => {
       <CreateSecretSyncModal
         selectSync={popUp.addSync.data}
         isOpen={popUp.addSync.isOpen}
-        onOpenChange={(isOpen) => handlePopUpToggle("addSync", isOpen)}
+        initialFormData={initialSyncFormData}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setInitialSyncFormData(undefined);
+          handlePopUpToggle("addSync", isOpen);
+        }}
       />
     </>
   );

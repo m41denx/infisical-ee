@@ -11,7 +11,7 @@ import {
   SelectItem
 } from "@app/components/v2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useCreateIntegration } from "@app/hooks/api";
 import {
   useGetIntegrationAuthApps,
@@ -22,13 +22,13 @@ import { IntegrationsListPageTabs } from "@app/types/integrations";
 export const Cloud66ConfigurePage = () => {
   const navigate = useNavigate();
   const { mutateAsync } = useCreateIntegration();
-
+  const { currentOrg } = useOrganization();
   const integrationAuthId = useSearch({
     from: ROUTE_PATHS.SecretManager.Integratons.Cloud66ConfigurePage.id,
     select: (el) => el.integrationAuthId
   });
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { data: integrationAuth } = useGetIntegrationAuthById((integrationAuthId as string) ?? "");
   const { data: integrationAuthApps } = useGetIntegrationAuthApps({
     integrationAuthId: (integrationAuthId as string) ?? ""
@@ -40,10 +40,10 @@ export const Cloud66ConfigurePage = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (currentWorkspace) {
-      setSelectedSourceEnvironment(currentWorkspace.environments[0].slug);
+    if (currentProject) {
+      setSelectedSourceEnvironment(currentProject.environments[0].slug);
     }
-  }, [currentWorkspace]);
+  }, [currentProject]);
 
   useEffect(() => {
     if (integrationAuthApps) {
@@ -75,9 +75,10 @@ export const Cloud66ConfigurePage = () => {
       setIsLoading(false);
 
       navigate({
-        to: "/projects/secret-management/$projectId/integrations",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
         params: {
-          projectId: currentWorkspace.id
+          orgId: currentOrg.id,
+          projectId: currentProject.id
         },
         search: {
           selectedTab: IntegrationsListPageTabs.NativeIntegrations
@@ -98,7 +99,7 @@ export const Cloud66ConfigurePage = () => {
             onValueChange={(val) => setSelectedSourceEnvironment(val)}
             className="w-full border border-mineshaft-500"
           >
-            {currentWorkspace?.environments.map((sourceEnvironment) => (
+            {currentProject?.environments.map((sourceEnvironment) => (
               <SelectItem
                 value={sourceEnvironment.slug}
                 key={`source-environment-${sourceEnvironment.slug}`}

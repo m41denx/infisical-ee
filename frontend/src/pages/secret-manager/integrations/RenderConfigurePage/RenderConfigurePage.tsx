@@ -23,7 +23,7 @@ import {
 } from "@app/components/v2";
 import { SecretPathInput } from "@app/components/v2/SecretPathInput";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useCreateIntegration } from "@app/hooks/api";
 import {
   useGetIntegrationAuthApps,
@@ -43,14 +43,14 @@ type FormData = z.infer<typeof schema>;
 export const RenderConfigurePage = () => {
   const navigate = useNavigate();
   const { mutateAsync } = useCreateIntegration();
-
-  const { currentWorkspace } = useWorkspace();
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
   const { control, handleSubmit, setValue, watch } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       secretPath: "/",
       shouldAutoRedeploy: false,
-      selectedSourceEnvironment: currentWorkspace.environments[0].slug
+      selectedSourceEnvironment: currentProject.environments[0].slug
     }
   });
 
@@ -104,9 +104,10 @@ export const RenderConfigurePage = () => {
       setIsLoading(false);
 
       navigate({
-        to: "/projects/secret-management/$projectId/integrations",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
         params: {
-          projectId: currentWorkspace.id
+          orgId: currentOrg.id,
+          projectId: currentProject.id
         },
         search: {
           selectedTab: IntegrationsListPageTabs.NativeIntegrations
@@ -140,12 +141,12 @@ export const RenderConfigurePage = () => {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pb-[0.03rem] pt-[0.04rem] text-sm text-yellow opacity-80 hover:opacity-100">
+              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pt-[0.04rem] pb-[0.03rem] text-sm text-yellow opacity-80 hover:opacity-100">
                 <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
                 Docs
                 <FontAwesomeIcon
                   icon={faArrowUpRightFromSquare}
-                  className="mb-[0.07rem] ml-1.5 text-xxs"
+                  className="text-xxs mb-[0.07rem] ml-1.5"
                 />
               </div>
             </a>
@@ -167,7 +168,7 @@ export const RenderConfigurePage = () => {
                   onValueChange={(e) => onChange(e)}
                   className="w-full"
                 >
-                  {currentWorkspace?.environments.map((sourceEnvironment) => (
+                  {currentProject?.environments.map((sourceEnvironment) => (
                     <SelectItem
                       value={sourceEnvironment.slug}
                       key={`source-environment-${sourceEnvironment.slug}`}
@@ -230,7 +231,7 @@ export const RenderConfigurePage = () => {
               );
             }}
           />
-          <div className="mb-[2.36rem] ml-1 mt-8">
+          <div className="mt-8 mb-[2.36rem] ml-1">
             <Controller
               control={control}
               name="shouldAutoRedeploy"
@@ -249,7 +250,7 @@ export const RenderConfigurePage = () => {
         <Button
           colorSchema="primary"
           variant="outline_bg"
-          className="mb-8 ml-auto mr-6 mt-4 w-min"
+          className="mt-4 mr-6 mb-8 ml-auto w-min"
           size="sm"
           type="submit"
           isLoading={isLoading}

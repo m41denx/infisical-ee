@@ -7,7 +7,7 @@ import { Button, DeleteActionModal } from "@app/components/v2";
 import {
   ProjectPermissionPkiSubscriberActions,
   ProjectPermissionSub,
-  useWorkspace
+  useProject
 } from "@app/context";
 import { useDeletePkiSubscriber, useUpdatePkiSubscriber } from "@app/hooks/api";
 import { PkiSubscriberStatus } from "@app/hooks/api/pkiSubscriber/types";
@@ -17,8 +17,11 @@ import { PkiSubscriberModal } from "./PkiSubscriberModal";
 import { PkiSubscribersTable } from "./PkiSubscribersTable";
 
 export const PkiSubscriberSection = () => {
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace.id;
+  const { currentProject } = useProject();
+  const projectId = currentProject.id;
+
+  // TODO: Use subscription.pkiLegacyTemplates to block legacy templates creation
+  const canCreateLegacySubscribers = true;
   const { mutateAsync: deletePkiSubscriber } = useDeletePkiSubscriber();
   const { mutateAsync: updatePkiSubscriber } = useUpdatePkiSubscriber();
 
@@ -29,22 +32,14 @@ export const PkiSubscriberSection = () => {
   ] as const);
 
   const onRemovePkiSubscriberSubmit = async (subscriberName: string) => {
-    try {
-      const subscriber = await deletePkiSubscriber({ subscriberName, projectId });
+    const subscriber = await deletePkiSubscriber({ subscriberName, projectId });
 
-      createNotification({
-        text: `Successfully deleted PKI subscriber: ${subscriber.name}`,
-        type: "success"
-      });
+    createNotification({
+      text: `Successfully deleted PKI subscriber: ${subscriber.name}`,
+      type: "success"
+    });
 
-      handlePopUpClose("deletePkiSubscriber");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to delete PKI subscriber",
-        type: "error"
-      });
-    }
+    handlePopUpClose("deletePkiSubscriber");
   };
 
   const onUpdatePkiSubscriberStatus = async ({
@@ -54,24 +49,16 @@ export const PkiSubscriberSection = () => {
     subscriberName: string;
     status: PkiSubscriberStatus;
   }) => {
-    try {
-      if (!currentWorkspace?.slug) return;
+    if (!currentProject?.slug) return;
 
-      await updatePkiSubscriber({ subscriberName, projectId, status });
+    await updatePkiSubscriber({ subscriberName, projectId, status });
 
-      createNotification({
-        text: `Successfully ${status === PkiSubscriberStatus.ACTIVE ? "enabled" : "disabled"} subscriber`,
-        type: "success"
-      });
+    createNotification({
+      text: `Successfully ${status === PkiSubscriberStatus.ACTIVE ? "enabled" : "disabled"} subscriber`,
+      type: "success"
+    });
 
-      handlePopUpClose("pkiSubscriberStatus");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: `Failed to ${status === PkiSubscriberStatus.ACTIVE ? "enable" : "disable"} subscriber`,
-        type: "error"
-      });
-    }
+    handlePopUpClose("pkiSubscriberStatus");
   };
 
   const subscriberStatusData = popUp?.pkiSubscriberStatus?.data as {
@@ -85,7 +72,7 @@ export const PkiSubscriberSection = () => {
   return (
     <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="mb-4 flex justify-between">
-        <p className="text-xl font-semibold text-mineshaft-100">Subscribers</p>
+        <p className="text-xl font-medium text-mineshaft-100">Subscribers</p>
         <div className="flex w-full justify-end">
           <a
             target="_blank"
@@ -100,23 +87,25 @@ export const PkiSubscriberSection = () => {
               />
             </span>
           </a>
-          <ProjectPermissionCan
-            I={ProjectPermissionPkiSubscriberActions.Create}
-            a={ProjectPermissionSub.PkiSubscribers}
-          >
-            {(isAllowed) => (
-              <Button
-                colorSchema="primary"
-                type="submit"
-                leftIcon={<FontAwesomeIcon icon={faPlus} />}
-                onClick={() => handlePopUpOpen("pkiSubscriber")}
-                isDisabled={!isAllowed}
-                className="ml-4"
-              >
-                Add Subscriber
-              </Button>
-            )}
-          </ProjectPermissionCan>
+          {canCreateLegacySubscribers && (
+            <ProjectPermissionCan
+              I={ProjectPermissionPkiSubscriberActions.Create}
+              a={ProjectPermissionSub.PkiSubscribers}
+            >
+              {(isAllowed) => (
+                <Button
+                  colorSchema="primary"
+                  type="submit"
+                  leftIcon={<FontAwesomeIcon icon={faPlus} />}
+                  onClick={() => handlePopUpOpen("pkiSubscriber")}
+                  isDisabled={!isAllowed}
+                  className="ml-4"
+                >
+                  Add Subscriber
+                </Button>
+              )}
+            </ProjectPermissionCan>
+          )}
         </div>
       </div>
       <PkiSubscribersTable handlePopUpOpen={handlePopUpOpen} />

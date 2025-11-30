@@ -29,31 +29,24 @@ export const GroupMembersSection = ({ groupId, groupSlug }: Props) => {
 
   const { mutateAsync: removeUserFromGroupMutateAsync } = useRemoveUserFromGroup();
   const handleRemoveUserFromGroup = async (username: string) => {
-    try {
-      await removeUserFromGroupMutateAsync({
-        groupId,
-        username,
-        slug: groupSlug
-      });
+    await removeUserFromGroupMutateAsync({
+      groupId,
+      username,
+      slug: groupSlug
+    });
 
-      createNotification({
-        text: `Successfully removed user ${username} from the group`,
-        type: "success"
-      });
+    createNotification({
+      text: `Successfully removed user ${username} from the group`,
+      type: "success"
+    });
 
-      handlePopUpToggle("removeMemberFromGroup", false);
-    } catch {
-      createNotification({
-        text: `Failed to remove user ${username} from the group`,
-        type: "error"
-      });
-    }
+    handlePopUpToggle("removeMemberFromGroup", false);
   };
 
   return (
     <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-semibold text-mineshaft-100">Group Members</h3>
+        <h3 className="text-lg font-medium text-mineshaft-100">Members</h3>
         <OrgPermissionCan I={OrgPermissionGroupActions.Edit} a={OrgPermissionSubjects.Groups}>
           {(isAllowed) => (
             <Tooltip

@@ -18,7 +18,7 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { ProjectPermissionActions, ProjectPermissionSub, useProject } from "@app/context";
 import { withProjectPermission } from "@app/hoc";
 import { usePopUp } from "@app/hooks";
 import {
@@ -35,14 +35,14 @@ export const WebhooksTab = withProjectPermission(
   () => {
     const { t } = useTranslation();
 
-    const { currentWorkspace } = useWorkspace();
-    const workspaceId = currentWorkspace?.id || "";
+    const { currentProject } = useProject();
+    const projectId = currentProject?.id || "";
     const { popUp, handlePopUpOpen, handlePopUpToggle, handlePopUpClose } = usePopUp([
       "addWebhook",
       "deleteWebhook"
     ] as const);
 
-    const { data: webhooks, isPending: isWebhooksLoading } = useGetWebhooks(workspaceId);
+    const { data: webhooks, isPending: isWebhooksLoading } = useGetWebhooks(projectId);
 
     // mutation
     const { mutateAsync: createWebhook } = useCreateWebhook();
@@ -59,89 +59,57 @@ export const WebhooksTab = withProjectPermission(
     const { mutateAsync: deleteWebhook } = useDeleteWebhook();
 
     const handleWebhookCreate = async (data: TFormSchema) => {
-      try {
-        await createWebhook({
-          ...data,
-          workspaceId
-        });
-        handlePopUpClose("addWebhook");
-        createNotification({
-          type: "success",
-          text: "Successfully created webhook"
-        });
-      } catch (err) {
-        console.log(err);
-        createNotification({
-          type: "error",
-          text: "Failed to create webhook"
-        });
-      }
+      await createWebhook({
+        ...data,
+        projectId
+      });
+      handlePopUpClose("addWebhook");
+      createNotification({
+        type: "success",
+        text: "Successfully created webhook"
+      });
     };
 
     const handleWebhookDisable = async (webhookId: string, isDisabled: boolean) => {
-      try {
-        await updateWebhook({
-          webhookId,
-          workspaceId,
-          isDisabled
-        });
-        createNotification({
-          type: "success",
-          text: "Successfully updated webhook"
-        });
-      } catch (err) {
-        console.log(err);
-        createNotification({
-          type: "error",
-          text: "Failed to update webhook"
-        });
-      }
+      await updateWebhook({
+        webhookId,
+        projectId,
+        isDisabled
+      });
+      createNotification({
+        type: "success",
+        text: "Successfully updated webhook"
+      });
     };
 
     const handleWebhookDelete = async () => {
-      try {
-        const webhookId = popUp?.deleteWebhook?.data as string;
-        await deleteWebhook({
-          webhookId,
-          workspaceId
-        });
-        handlePopUpClose("deleteWebhook");
-        createNotification({
-          type: "success",
-          text: "Successfully deleted webhook"
-        });
-      } catch (err) {
-        console.log(err);
-        createNotification({
-          type: "error",
-          text: "Failed to delete webhook"
-        });
-      }
+      const webhookId = popUp?.deleteWebhook?.data as string;
+      await deleteWebhook({
+        webhookId,
+        projectId
+      });
+      handlePopUpClose("deleteWebhook");
+      createNotification({
+        type: "success",
+        text: "Successfully deleted webhook"
+      });
     };
 
     const handleWebhookTest = async (webhookId: string) => {
-      try {
-        await testWebhook({
-          webhookId,
-          workspaceId
-        });
-        createNotification({
-          type: "success",
-          text: "Successfully triggered webhook"
-        });
-      } catch (err) {
-        console.log(err);
-        createNotification({
-          type: "error",
-          text: "Failed to trigger webhook"
-        });
-      }
+      await testWebhook({
+        webhookId,
+        projectId
+      });
+      createNotification({
+        type: "success",
+        text: "Successfully triggered webhook"
+      });
     };
 
     return (
       <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
         <div className="flex justify-between">
-          <p className="text-xl font-semibold text-mineshaft-100">{t("settings.webhooks.title")}</p>
+          <p className="text-xl font-medium text-mineshaft-100">{t("settings.webhooks.title")}</p>
           <ProjectPermissionCan
             I={ProjectPermissionActions.Create}
             a={ProjectPermissionSub.Webhooks}
@@ -202,7 +170,7 @@ export const WebhooksTab = withProjectPermission(
                           {!lastStatus ? (
                             "-"
                           ) : (
-                            <div className="inline-flex w-min items-center rounded bg-mineshaft-600 px-2 py-0.5 text-sm">
+                            <div className="inline-flex w-min items-center rounded-sm bg-mineshaft-600 px-2 py-0.5 text-sm">
                               {lastStatus}{" "}
                               <Tooltip
                                 content={
@@ -302,7 +270,7 @@ export const WebhooksTab = withProjectPermission(
           </TableContainer>
         </div>
         <AddWebhookForm
-          environments={currentWorkspace?.environments}
+          environments={currentProject?.environments}
           isOpen={popUp?.addWebhook?.isOpen}
           onOpenChange={(isOpen) => handlePopUpToggle("addWebhook", isOpen)}
           onCreateWebhook={handleWebhookCreate}

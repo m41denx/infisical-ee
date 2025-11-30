@@ -2,24 +2,18 @@
 /* eslint-disable react/jsx-no-useless-fragment */
 import { useCallback, useMemo, useState } from "react";
 import {
-  faArrowUpRightFromSquare,
-  faBan,
-  faBookOpen,
   faCheck,
   faCheckCircle,
   faChevronDown,
-  faClipboardCheck,
   faLock,
   faMagnifyingGlass,
   faPlus,
   faSearch,
-  faStopwatch,
-  faUser,
-  IconDefinition
+  faUser
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { format, formatDistance } from "date-fns";
-import { AnimatePresence, motion } from "framer-motion";
+import { BanIcon, CheckIcon, ClipboardCheckIcon, LucideIcon, TimerIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
@@ -35,14 +29,14 @@ import {
   Pagination,
   Tooltip
 } from "@app/components/v2";
-import { Badge } from "@app/components/v2/Badge";
+import { Badge, DocumentationLinkBadge } from "@app/components/v3";
 import {
   ProjectPermissionMemberActions,
   ProjectPermissionSub,
+  useProject,
   useProjectPermission,
   useSubscription,
-  useUser,
-  useWorkspace
+  useUser
 } from "@app/context";
 import {
   getUserTablePreference,
@@ -72,11 +66,11 @@ const generateRequestText = (request: TAccessApprovalRequest) => {
     <div className="flex items-center justify-between text-sm">
       <div>
         Requested {isTemporary ? "temporary" : "permanent"} access to{" "}
-        <code className="mx-1 rounded bg-mineshaft-600 px-1.5 py-0.5 font-mono text-[13px] text-mineshaft-200">
+        <code className="mx-1 rounded-sm bg-mineshaft-600 px-1.5 py-0.5 font-mono text-[13px] text-mineshaft-200">
           {request.policy.secretPath}
         </code>{" "}
         in{" "}
-        <code className="mx-1 rounded bg-mineshaft-600 px-1.5 py-0.5 font-mono text-[13px] text-mineshaft-200">
+        <code className="mx-1 rounded-sm bg-mineshaft-600 px-1.5 py-0.5 font-mono text-[13px] text-mineshaft-200">
           {request.environmentName}
         </code>
       </div>
@@ -110,7 +104,7 @@ export const AccessApprovalRequest = ({
   const { permission } = useProjectPermission();
   const { user } = useUser();
   const { subscription } = useSubscription();
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   const { data: members } = useGetWorkspaceUsers(projectId, true);
   const membersGroupById = members?.reduce<Record<string, TWorkspaceUser>>(
@@ -208,12 +202,12 @@ export const AccessApprovalRequest = ({
 
       let displayData: {
         label: string;
-        type: "primary" | "danger" | "success";
+        type: "warning" | "danger" | "success";
         tooltipContent?: string;
-        icon: IconDefinition | null;
+        icon: LucideIcon | null;
       } = {
         label: "",
-        type: "primary",
+        type: "warning",
         icon: null
       };
 
@@ -226,7 +220,7 @@ export const AccessApprovalRequest = ({
         displayData = {
           label: "Access Expired",
           type: "danger",
-          icon: faStopwatch,
+          icon: TimerIcon,
           tooltipContent: request.privilege?.temporaryAccessEndTime
             ? `Expired ${format(request.privilege.temporaryAccessEndTime, "M/d/yyyy h:mm aa")}`
             : undefined
@@ -235,27 +229,27 @@ export const AccessApprovalRequest = ({
         displayData = {
           label: "Access Granted",
           type: "success",
-          icon: faCheck,
+          icon: CheckIcon,
           tooltipContent: `Granted ${format(request.updatedAt, "M/d/yyyy h:mm aa")}`
         };
       else if (isRejectedByAnyone)
         displayData = {
           label: "Rejected",
           type: "danger",
-          icon: faBan,
+          icon: BanIcon,
           tooltipContent: `Rejected ${format(request.updatedAt, "M/d/yyyy h:mm aa")}`
         };
       else if (userReviewStatus === ApprovalStatus.APPROVED) {
         displayData = {
           label: "Pending Additional Reviews",
-          type: "primary",
-          icon: faClipboardCheck
+          type: "warning",
+          icon: ClipboardCheckIcon
         };
       } else if (!isReviewedByUser)
         displayData = {
           label: "Review Required",
-          type: "primary",
-          icon: faClipboardCheck
+          type: "warning",
+          icon: ClipboardCheckIcon
         };
 
       return {
@@ -298,320 +292,290 @@ export const AccessApprovalRequest = ({
   const isFiltered = Boolean(search || envFilter || requestedByFilter);
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key="approval-changes-list"
-        transition={{ duration: 0.1 }}
-        initial={{ opacity: 0, translateX: 30 }}
-        animate={{ opacity: 1, translateX: 0 }}
-        exit={{ opacity: 0, translateX: 30 }}
-        className="rounded-md text-gray-300"
-      >
-        <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <div className="flex items-start gap-1">
-                <p className="text-xl font-semibold text-mineshaft-100">Access Requests</p>
-                <a
-                  href="https://infisical.com/docs/documentation/platform/access-controls/access-requests"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <div className="ml-1 mt-[0.32rem] inline-block rounded-md bg-yellow/20 px-1.5 text-sm text-yellow opacity-80 hover:opacity-100">
-                    <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
-                    <span>Docs</span>
-                    <FontAwesomeIcon
-                      icon={faArrowUpRightFromSquare}
-                      className="mb-[0.07rem] ml-1.5 text-[10px]"
-                    />
-                  </div>
-                </a>
-              </div>
-              <p className="text-sm text-bunker-300">
-                Request and review access to secrets in sensitive environments and folders
-              </p>
+    <>
+      <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-x-2">
+              <p className="text-xl font-medium text-mineshaft-100">Access Requests</p>
+              <DocumentationLinkBadge href="https://infisical.com/docs/documentation/platform/access-controls/access-requests" />
             </div>
-            <Tooltip
-              content="To submit Access Requests, your project needs to create Access Request policies first."
-              isDisabled={policiesLoading || !!policies?.length}
-            >
-              <Button
-                onClick={() => {
-                  if (subscription && !subscription?.secretApproval) {
-                    handlePopUpOpen("upgradePlan");
-                    return;
-                  }
-                  handlePopUpOpen("requestAccess");
-                }}
-                colorSchema="secondary"
-                leftIcon={<FontAwesomeIcon icon={faPlus} />}
-                isDisabled={policiesLoading || !policies?.length}
-              >
-                Request Access
-              </Button>
-            </Tooltip>
+            <p className="text-sm text-bunker-300">
+              Request and review access to secrets in sensitive environments and folders
+            </p>
           </div>
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
-            placeholder="Search approval requests by requesting user or environment..."
-            className="flex-1"
-            containerClassName="mb-4"
-          />
-          <div className="flex items-center space-x-8 rounded-t-md border-x border-t border-mineshaft-600 bg-mineshaft-800 px-8 py-3 text-sm">
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => setStatusFilter("open")}
-              onKeyDown={(evt) => {
-                if (evt.key === "Enter") setStatusFilter("open");
+          <Tooltip
+            content="To submit Access Requests, your project needs to create Access Request policies first."
+            isDisabled={policiesLoading || !!policies?.length}
+          >
+            <Button
+              onClick={() => {
+                if (subscription && !subscription?.secretApproval) {
+                  handlePopUpOpen("upgradePlan", {
+                    text: "Access requests feature can be unlocked if you upgrade to Infisical Pro plan."
+                  });
+                  return;
+                }
+                handlePopUpOpen("requestAccess");
               }}
-              className={twMerge(
-                "font-medium",
-                statusFilter === "close" && "text-gray-500 duration-100 hover:text-gray-400"
-              )}
+              colorSchema="secondary"
+              leftIcon={<FontAwesomeIcon icon={faPlus} />}
+              isDisabled={policiesLoading || !policies?.length}
             >
-              <FontAwesomeIcon icon={faLock} className="mr-2" />
-              {!!requestCount && requestCount?.pendingCount} Pending
-            </div>
-            <div
-              className={twMerge(
-                "font-medium",
-                statusFilter === "open" && "text-gray-500 duration-100 hover:text-gray-400"
-              )}
-              role="button"
-              tabIndex={0}
-              onClick={() => setStatusFilter("close")}
-              onKeyDown={(evt) => {
-                if (evt.key === "Enter") setStatusFilter("close");
-              }}
-            >
-              <FontAwesomeIcon icon={faCheck} className="mr-2" />
-              {!!requestCount && requestCount.finalizedCount} Closed
-            </div>
-            <div className="flex flex-grow justify-end space-x-8">
+              Request Access
+            </Button>
+          </Tooltip>
+        </div>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
+          placeholder="Search approval requests by requesting user or environment..."
+          className="flex-1"
+          containerClassName="mb-4"
+        />
+        <div className="flex items-center space-x-8 rounded-t-md border-x border-t border-mineshaft-600 bg-mineshaft-800 px-8 py-3 text-sm">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setStatusFilter("open")}
+            onKeyDown={(evt) => {
+              if (evt.key === "Enter") setStatusFilter("open");
+            }}
+            className={twMerge(
+              "font-medium",
+              statusFilter === "close" && "text-gray-500 duration-100 hover:text-gray-400"
+            )}
+          >
+            <FontAwesomeIcon icon={faLock} className="mr-2" />
+            {!!requestCount && requestCount?.pendingCount} Pending
+          </div>
+          <div
+            className={twMerge(
+              "font-medium",
+              statusFilter === "open" && "text-gray-500 duration-100 hover:text-gray-400"
+            )}
+            role="button"
+            tabIndex={0}
+            onClick={() => setStatusFilter("close")}
+            onKeyDown={(evt) => {
+              if (evt.key === "Enter") setStatusFilter("close");
+            }}
+          >
+            <FontAwesomeIcon icon={faCheck} className="mr-2" />
+            {!!requestCount && requestCount.finalizedCount} Closed
+          </div>
+          <div className="flex grow justify-end space-x-8">
+            <DropdownMenu>
+              <DropdownMenuTrigger>
+                <Button
+                  variant="plain"
+                  colorSchema="secondary"
+                  className={envFilter ? "text-white" : "text-bunker-300"}
+                  rightIcon={<FontAwesomeIcon icon={faChevronDown} size="sm" className="ml-2" />}
+                >
+                  Environments
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                sideOffset={1}
+                className="max-h-80 thin-scrollbar overflow-y-auto"
+              >
+                <DropdownMenuLabel className="sticky top-0 bg-mineshaft-900">
+                  Select an Environment
+                </DropdownMenuLabel>
+                {currentProject?.environments.map(({ slug, name }) => (
+                  <DropdownMenuItem
+                    onClick={() => setEnvFilter((state) => (state === slug ? undefined : slug))}
+                    key={`request-filter-${slug}`}
+                    icon={envFilter === slug && <FontAwesomeIcon icon={faCheckCircle} />}
+                    iconPos="right"
+                  >
+                    {name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {!!permission.can(ProjectPermissionMemberActions.Read, ProjectPermissionSub.Member) && (
               <DropdownMenu>
                 <DropdownMenuTrigger>
                   <Button
                     variant="plain"
                     colorSchema="secondary"
-                    className={envFilter ? "text-white" : "text-bunker-300"}
+                    className={requestedByFilter ? "text-white" : "text-bunker-300"}
                     rightIcon={<FontAwesomeIcon icon={faChevronDown} size="sm" className="ml-2" />}
                   >
-                    Environments
+                    Requested By
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="end"
                   sideOffset={1}
-                  className="thin-scrollbar max-h-[20rem] overflow-y-auto"
+                  className="max-h-80 thin-scrollbar overflow-y-auto"
                 >
                   <DropdownMenuLabel className="sticky top-0 bg-mineshaft-900">
-                    Select an Environment
+                    Select Requesting User
                   </DropdownMenuLabel>
-                  {currentWorkspace?.environments.map(({ slug, name }) => (
+                  {members?.map(({ user: membershipUser, id }) => (
                     <DropdownMenuItem
-                      onClick={() => setEnvFilter((state) => (state === slug ? undefined : slug))}
-                      key={`request-filter-${slug}`}
-                      icon={envFilter === slug && <FontAwesomeIcon icon={faCheckCircle} />}
+                      onClick={() =>
+                        setRequestedByFilter((state) =>
+                          state === membershipUser.id ? undefined : membershipUser.id
+                        )
+                      }
+                      key={`request-filter-member-${id}`}
+                      icon={
+                        requestedByFilter === membershipUser.id && (
+                          <FontAwesomeIcon icon={faCheckCircle} />
+                        )
+                      }
                       iconPos="right"
                     >
-                      {name}
+                      {membershipUser.username}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-              {!!permission.can(
-                ProjectPermissionMemberActions.Read,
-                ProjectPermissionSub.Member
-              ) && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger>
-                    <Button
-                      variant="plain"
-                      colorSchema="secondary"
-                      className={requestedByFilter ? "text-white" : "text-bunker-300"}
-                      rightIcon={
-                        <FontAwesomeIcon icon={faChevronDown} size="sm" className="ml-2" />
-                      }
-                    >
-                      Requested By
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    sideOffset={1}
-                    className="thin-scrollbar max-h-[20rem] overflow-y-auto"
-                  >
-                    <DropdownMenuLabel className="sticky top-0 bg-mineshaft-900">
-                      Select Requesting User
-                    </DropdownMenuLabel>
-                    {members?.map(({ user: membershipUser, id }) => (
-                      <DropdownMenuItem
-                        onClick={() =>
-                          setRequestedByFilter((state) =>
-                            state === membershipUser.id ? undefined : membershipUser.id
-                          )
-                        }
-                        key={`request-filter-member-${id}`}
-                        icon={
-                          requestedByFilter === membershipUser.id && (
-                            <FontAwesomeIcon icon={faCheckCircle} />
-                          )
-                        }
-                        iconPos="right"
-                      >
-                        {membershipUser.username}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-          </div>
-          <div className="flex flex-col rounded-b-md border-x border-b border-t border-mineshaft-600 bg-mineshaft-800">
-            {filteredRequests?.length === 0 && !isFiltered && (
-              <div className="py-12">
-                <EmptyState
-                  title={`No ${statusFilter === "open" ? "Pending" : "Closed"} Access Requests`}
-                />
-              </div>
-            )}
-            {Boolean(!filteredRequests?.length && isFiltered && !areRequestsPending) && (
-              <div className="py-12">
-                <EmptyState title="No Requests Match Filters" icon={faSearch} />
-              </div>
-            )}
-            {!!filteredRequests?.length &&
-              filteredRequests?.slice(offset, perPage * page).map((request) => {
-                const details = generateRequestDetails(request);
-
-                return (
-                  <div
-                    key={request.id}
-                    className="flex w-full cursor-pointer border-b border-mineshaft-600 px-8 py-3 last:border-b-0 hover:bg-mineshaft-700 aria-disabled:opacity-80"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleSelectRequest(request)}
-                    onKeyDown={(evt) => {
-                      if (evt.key === "Enter") {
-                        handleSelectRequest(request);
-                      }
-                    }}
-                  >
-                    <div className="flex w-full items-center justify-between">
-                      <div className="flex w-full flex-col justify-between">
-                        <div className="mb-1 flex w-full items-center">
-                          <FontAwesomeIcon
-                            icon={faLock}
-                            size="xs"
-                            className="mr-1.5 text-mineshaft-300"
-                          />
-                          {generateRequestText(request)}
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs leading-3 text-gray-500">
-                            {membersGroupById?.[request.requestedByUserId]?.user && (
-                              <>
-                                Requested {formatDistance(new Date(request.createdAt), new Date())}{" "}
-                                ago by{" "}
-                                {membersGroupById?.[request.requestedByUserId]?.user?.firstName}{" "}
-                                {membersGroupById?.[request.requestedByUserId]?.user?.lastName} (
-                                {membersGroupById?.[request.requestedByUserId]?.user?.email}){" "}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        {request.requestedByUserId === user.id && (
-                          <div className="flex items-center gap-1.5 whitespace-nowrap text-xs text-bunker-300">
-                            <FontAwesomeIcon icon={faUser} size="sm" />
-                            <span>Requested By You</span>
-                          </div>
-                        )}
-                        <Tooltip content={details.displayData.tooltipContent}>
-                          <div>
-                            <Badge
-                              className="flex items-center gap-1.5 whitespace-nowrap"
-                              variant={details.displayData.type}
-                            >
-                              {details.displayData.icon && (
-                                <FontAwesomeIcon icon={details.displayData.icon} />
-                              )}
-                              <span>{details.displayData.label}</span>
-                            </Badge>
-                          </div>
-                        </Tooltip>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            {Boolean(filteredRequests.length) && (
-              <Pagination
-                className="border-none"
-                count={filteredRequests.length}
-                page={page}
-                perPage={perPage}
-                onChangePage={setPage}
-                onChangePerPage={handlePerPageChange}
-              />
             )}
           </div>
         </div>
-        {!!policies && (
-          <RequestAccessModal
-            policies={policies}
-            isOpen={popUp.requestAccess.isOpen}
-            onOpenChange={() => {
-              queryClient.invalidateQueries({
-                queryKey: accessApprovalKeys.getAccessApprovalRequests(
-                  projectSlug,
-                  envFilter,
-                  requestedByFilter
-                )
-              });
-              handlePopUpClose("requestAccess");
-            }}
-          />
-        )}
+        <div className="flex flex-col rounded-b-md border-x border-t border-b border-mineshaft-600 bg-mineshaft-800">
+          {filteredRequests?.length === 0 && !isFiltered && (
+            <div className="py-12">
+              <EmptyState
+                title={`No ${statusFilter === "open" ? "Pending" : "Closed"} Access Requests`}
+              />
+            </div>
+          )}
+          {Boolean(!filteredRequests?.length && isFiltered && !areRequestsPending) && (
+            <div className="py-12">
+              <EmptyState title="No Requests Match Filters" icon={faSearch} />
+            </div>
+          )}
+          {!!filteredRequests?.length &&
+            filteredRequests?.slice(offset, perPage * page).map((request) => {
+              const details = generateRequestDetails(request);
 
-        {!!selectedRequest && (
-          <ReviewAccessRequestModal
-            selectedEnvSlug={envFilter}
-            policies={policies || []}
-            selectedRequester={requestedByFilter}
-            projectSlug={projectSlug}
-            request={selectedRequest}
-            members={members || []}
-            isOpen={popUp.reviewRequest.isOpen}
-            onOpenChange={() => {
-              handlePopUpClose("reviewRequest");
-              setSelectedRequest(null);
-              refetchRequests();
-            }}
-            onUpdate={(request) => {
-              // scott: this isn't ideal but our current use of state makes this complicated...
-              // we shouldn't be using state like this...
-              handleSelectRequest({
-                ...selectedRequest,
-                isTemporary: request.isTemporary,
-                temporaryRange: request.temporaryRange,
-                reviewers: []
-              });
-            }}
-            canBypass={generateRequestDetails(selectedRequest).canBypass}
-          />
-        )}
+              const StatusIcon = details.displayData.icon;
 
-        <UpgradePlanModal
-          text="You need to upgrade your plan to access this feature"
-          isOpen={popUp.upgradePlan.isOpen}
-          onOpenChange={() => handlePopUpClose("upgradePlan")}
+              return (
+                <div
+                  key={request.id}
+                  className="flex w-full cursor-pointer border-b border-mineshaft-600 px-8 py-3 last:border-b-0 hover:bg-mineshaft-700 aria-disabled:opacity-80"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleSelectRequest(request)}
+                  onKeyDown={(evt) => {
+                    if (evt.key === "Enter") {
+                      handleSelectRequest(request);
+                    }
+                  }}
+                >
+                  <div className="flex flex-1 items-center justify-between">
+                    <div className="flex w-full flex-col justify-between">
+                      <div className="mb-1 flex w-full items-center">
+                        <FontAwesomeIcon
+                          icon={faLock}
+                          size="xs"
+                          className="mr-1.5 text-mineshaft-300"
+                        />
+                        {generateRequestText(request)}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs leading-3 text-gray-500">
+                          {membersGroupById?.[request.requestedByUserId]?.user && (
+                            <>
+                              Requested {formatDistance(new Date(request.createdAt), new Date())}{" "}
+                              ago by{" "}
+                              {membersGroupById?.[request.requestedByUserId]?.user?.firstName}{" "}
+                              {membersGroupById?.[request.requestedByUserId]?.user?.lastName} (
+                              {membersGroupById?.[request.requestedByUserId]?.user?.email}){" "}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      {request.requestedByUserId === user.id && (
+                        <div className="flex items-center gap-1.5 text-xs whitespace-nowrap text-bunker-300">
+                          <FontAwesomeIcon icon={faUser} size="sm" />
+                          <span>Requested By You</span>
+                        </div>
+                      )}
+                      <Tooltip content={details.displayData.tooltipContent}>
+                        <Badge variant={details.displayData.type}>
+                          {StatusIcon && <StatusIcon />}
+                          {details.displayData.label}
+                        </Badge>
+                      </Tooltip>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          {Boolean(filteredRequests.length) && (
+            <Pagination
+              className="border-none"
+              count={filteredRequests.length}
+              page={page}
+              perPage={perPage}
+              onChangePage={setPage}
+              onChangePerPage={handlePerPageChange}
+            />
+          )}
+        </div>
+      </div>
+      {!!policies && (
+        <RequestAccessModal
+          policies={policies}
+          isOpen={popUp.requestAccess.isOpen}
+          onOpenChange={() => {
+            queryClient.invalidateQueries({
+              queryKey: accessApprovalKeys.getAccessApprovalRequests(
+                projectSlug,
+                envFilter,
+                requestedByFilter
+              )
+            });
+            handlePopUpClose("requestAccess");
+          }}
         />
-      </motion.div>
-    </AnimatePresence>
+      )}
+
+      {!!selectedRequest && (
+        <ReviewAccessRequestModal
+          selectedEnvSlug={envFilter}
+          policies={policies || []}
+          selectedRequester={requestedByFilter}
+          projectSlug={projectSlug}
+          request={selectedRequest}
+          members={members || []}
+          isOpen={popUp.reviewRequest.isOpen}
+          onOpenChange={() => {
+            handlePopUpClose("reviewRequest");
+            setSelectedRequest(null);
+            refetchRequests();
+          }}
+          onUpdate={(request) => {
+            // scott: this isn't ideal but our current use of state makes this complicated...
+            // we shouldn't be using state like this...
+            handleSelectRequest({
+              ...selectedRequest,
+              isTemporary: request.isTemporary,
+              temporaryRange: request.temporaryRange,
+              reviewers: []
+            });
+          }}
+          canBypass={generateRequestDetails(selectedRequest).canBypass}
+        />
+      )}
+
+      <UpgradePlanModal
+        text={popUp.upgradePlan.data?.text}
+        isOpen={popUp.upgradePlan.isOpen}
+        onOpenChange={() => handlePopUpClose("upgradePlan")}
+      />
+    </>
   );
 };

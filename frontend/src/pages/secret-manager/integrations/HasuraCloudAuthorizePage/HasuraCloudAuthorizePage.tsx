@@ -8,7 +8,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { Button, Card, CardTitle, FormControl, Input } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useSaveIntegrationAccessToken } from "@app/hooks/api";
 
 const schema = z.object({
@@ -22,8 +22,8 @@ export const HasuraCloudAuthorizePage = () => {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   const { mutateAsync } = useSaveIntegrationAccessToken();
-
-  const { currentWorkspace } = useWorkspace();
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
   const { control, handleSubmit } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -36,16 +36,17 @@ export const HasuraCloudAuthorizePage = () => {
       setIsLoading(true);
 
       const integrationAuth = await mutateAsync({
-        workspaceId: currentWorkspace.id,
+        workspaceId: currentProject.id,
         integration: "hasura-cloud",
         accessToken
       });
 
       setIsLoading(false);
       navigate({
-        to: "/projects/secret-management/$projectId/integrations/hasura-cloud/create",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/integrations/hasura-cloud/create",
         params: {
-          projectId: currentWorkspace.id
+          orgId: currentOrg.id,
+          projectId: currentProject.id
         },
         search: {
           integrationAuthId: integrationAuth.id
@@ -81,12 +82,12 @@ export const HasuraCloudAuthorizePage = () => {
               rel="noopener noreferrer"
               href="https://infisical.com/docs/integrations/cloud/hasura-cloud"
             >
-              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pb-[0.03rem] pt-[0.04rem] text-sm text-yellow opacity-80 hover:opacity-100">
+              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pt-[0.04rem] pb-[0.03rem] text-sm text-yellow opacity-80 hover:opacity-100">
                 <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
                 Docs
                 <FontAwesomeIcon
                   icon={faArrowUpRightFromSquare}
-                  className="mb-[0.07rem] ml-1.5 text-xxs"
+                  className="text-xxs mb-[0.07rem] ml-1.5"
                 />
               </div>
             </a>

@@ -24,8 +24,8 @@ import {
 import {
   ProjectPermissionIdentityActions,
   ProjectPermissionSub,
-  useProjectPermission,
-  useWorkspace
+  useProject,
+  useProjectPermission
 } from "@app/context";
 import {
   useCreateIdentityProjectAdditionalPrivilege,
@@ -78,8 +78,8 @@ export const IdentityProjectAdditionalPrivilegeModifySection = ({
   isDisabled
 }: Props) => {
   const isCreate = !privilegeId;
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentProject } = useProject();
+  const projectId = currentProject?.id || "";
   const { data: privilegeDetails, isPending } = useGetIdentityProjectPrivilegeDetails({
     identityId,
     projectId,
@@ -131,33 +131,28 @@ export const IdentityProjectAdditionalPrivilegeModifySection = ({
           temporaryAccessStartTime: el.temporaryAccess.temporaryAccessStartTime
         };
 
-    try {
-      if (isCreate) {
-        await createIdentityProjectAdditionalPrivilege({
-          permissions: formRolePermission2API(el.permissions),
-          identityId,
-          projectId,
-          slug: el.slug || undefined,
-          type: accessType
-        });
-        createNotification({ type: "success", text: "Successfully created privilege" });
-      } else {
-        if (!projectId || !privilegeDetails?.id) return;
-        await updateIdentityProjectAdditionalPrivilege({
-          privilegeId: privilegeDetails.id,
-          permissions: formRolePermission2API(el.permissions),
-          projectId,
-          identityId,
-          slug: el.slug || undefined,
-          type: accessType
-        });
-        createNotification({ type: "success", text: "Successfully updated privilege" });
-      }
-      onGoBack();
-    } catch (err) {
-      console.log(err);
-      createNotification({ type: "error", text: "Failed to update privilege" });
+    if (isCreate) {
+      await createIdentityProjectAdditionalPrivilege({
+        permissions: formRolePermission2API(el.permissions),
+        identityId,
+        projectId,
+        slug: el.slug || undefined,
+        type: accessType
+      });
+      createNotification({ type: "success", text: "Successfully created privilege" });
+    } else {
+      if (!projectId || !privilegeDetails?.id) return;
+      await updateIdentityProjectAdditionalPrivilege({
+        privilegeId: privilegeDetails.id,
+        permissions: formRolePermission2API(el.permissions),
+        projectId,
+        identityId,
+        slug: el.slug || undefined,
+        type: accessType
+      });
+      createNotification({ type: "success", text: "Successfully updated privilege" });
     }
+    onGoBack();
   };
 
   const privilegeTemporaryAccess = form.watch("temporaryAccess");
@@ -193,7 +188,7 @@ export const IdentityProjectAdditionalPrivilegeModifySection = ({
         <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
           <Button
             leftIcon={<FontAwesomeIcon icon={faChevronLeft} />}
-            className="text-lg font-semibold text-mineshaft-100"
+            className="text-lg font-medium text-mineshaft-100"
             variant="link"
             onClick={onGoBack}
           >
@@ -225,7 +220,7 @@ export const IdentityProjectAdditionalPrivilegeModifySection = ({
               >
                 Save
               </Button>
-              <AddPoliciesButton isDisabled={isDisabled} projectType={currentWorkspace.type} />
+              <AddPoliciesButton isDisabled={isDisabled} projectType={currentProject.type} />
             </div>
           </div>
         </div>
@@ -249,7 +244,7 @@ export const IdentityProjectAdditionalPrivilegeModifySection = ({
             <div>
               <Popover>
                 <PopoverTrigger disabled={isIdentityEditDisabled} asChild>
-                  <div className="w-full max-w-md flex-grow">
+                  <div className="w-full max-w-md grow">
                     <FormLabel label="Duration" />
                     <Tooltip content={toolTipText}>
                       <Button

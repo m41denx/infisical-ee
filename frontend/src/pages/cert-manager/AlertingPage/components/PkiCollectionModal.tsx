@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, FormControl, Input, Modal, ModalContent } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import {
   useCreatePkiCollection,
   useGetPkiCollectionById,
@@ -28,8 +28,9 @@ type Props = {
 
 export const PkiCollectionModal = ({ popUp, handlePopUpToggle }: Props) => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
+  const projectId = currentProject?.id || "";
 
   const { data: pkiCollection } = useGetPkiCollectionById(
     (popUp?.pkiCollection?.data as { collectionId: string })?.collectionId || ""
@@ -62,49 +63,42 @@ export const PkiCollectionModal = ({ popUp, handlePopUpToggle }: Props) => {
   }, [pkiCollection]);
 
   const onFormSubmit = async ({ name, description }: FormData) => {
-    try {
-      if (!projectId) return;
+    if (!projectId) return;
 
-      if (pkiCollection) {
-        // update
-        await updatePkiCollection({
-          collectionId: pkiCollection.id,
-          name,
-          description,
-          projectId
-        });
-      } else {
-        // create
-        const { id: collectionId } = await createPkiCollection({
-          name,
-          description,
-          projectId
-        });
-
-        navigate({
-          to: "/projects/cert-management/$projectId/pki-collections/$collectionId",
-          params: {
-            projectId,
-            collectionId
-          }
-        });
-      }
-
-      handlePopUpToggle("pkiCollection", false);
-
-      reset();
-
-      createNotification({
-        text: `Successfully ${pkiCollection ? "updated" : "created"} PKI collection`,
-        type: "success"
+    if (pkiCollection) {
+      // update
+      await updatePkiCollection({
+        collectionId: pkiCollection.id,
+        name,
+        description,
+        projectId
       });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: `Failed to ${pkiCollection ? "updated" : "created"} PKI collection`,
-        type: "error"
+    } else {
+      // create
+      const { id: collectionId } = await createPkiCollection({
+        name,
+        description,
+        projectId
+      });
+
+      navigate({
+        to: "/organizations/$orgId/projects/cert-management/$projectId/pki-collections/$collectionId",
+        params: {
+          orgId: currentOrg.id,
+          projectId,
+          collectionId
+        }
       });
     }
+
+    handlePopUpToggle("pkiCollection", false);
+
+    reset();
+
+    createNotification({
+      text: `Successfully ${pkiCollection ? "updated" : "created"} PKI collection`,
+      type: "success"
+    });
   };
 
   return (

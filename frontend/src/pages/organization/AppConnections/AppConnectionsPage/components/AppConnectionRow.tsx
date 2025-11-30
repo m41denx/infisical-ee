@@ -1,21 +1,24 @@
 import { useCallback } from "react";
+import { subject } from "@casl/ability";
 import {
   faAsterisk,
+  faBuilding,
   faCheck,
   faCopy,
   faEdit,
   faEllipsisV,
   faInfoCircle,
-  faServer,
+  faTable,
   faTrash
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link } from "@tanstack/react-router";
+import { ServerIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
-import { OrgPermissionCan } from "@app/components/permissions";
+import { VariablePermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -25,9 +28,12 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { OrgPermissionSubjects } from "@app/context";
+import { Badge } from "@app/components/v3";
+import { OrgPermissionSubjects, ProjectPermissionSub, useOrganization } from "@app/context";
 import { OrgPermissionAppConnectionActions } from "@app/context/OrgPermissionContext/types";
+import { ProjectPermissionAppConnectionActions } from "@app/context/ProjectPermissionContext/types";
 import { APP_CONNECTION_MAP, getAppConnectionMethodDetails } from "@app/helpers/appConnections";
+import { getProjectBaseURL } from "@app/helpers/project";
 import { useToggle } from "@app/hooks";
 import { TAppConnection } from "@app/hooks/api/appConnections";
 
@@ -36,15 +42,19 @@ type Props = {
   onDelete: (appConnection: TAppConnection) => void;
   onEditCredentials: (appConnection: TAppConnection) => void;
   onEditDetails: (appConnection: TAppConnection) => void;
+  isProjectView: boolean;
 };
 
 export const AppConnectionRow = ({
   appConnection,
   onDelete,
   onEditCredentials,
-  onEditDetails
+  onEditDetails,
+  isProjectView
 }: Props) => {
-  const { id, name, method, app, description, isPlatformManagedCredentials } = appConnection;
+  const { currentOrg } = useOrganization();
+  const { id, name, method, app, description, isPlatformManagedCredentials, project } =
+    appConnection;
 
   const [isIdCopied, setIsIdCopied] = useToggle(false);
 
@@ -84,14 +94,14 @@ export const AppConnectionRow = ({
               <FontAwesomeIcon
                 icon={connectionDetails.icon}
                 size="xs"
-                className="absolute -bottom-0.5 -right-0.5 text-primary-700"
+                className="absolute -right-0.5 -bottom-0.5 text-primary-700"
               />
             )}
           </div>
           <span className="hidden lg:inline">{connectionDetails.name}</span>
         </div>
       </Td>
-      <Td className="!min-w-[8rem] max-w-0">
+      <Td className="max-w-0 min-w-32!">
         <div className="flex w-full items-center">
           <p className="truncate">{name}</p>
           {description && (
@@ -101,7 +111,7 @@ export const AppConnectionRow = ({
           )}
         </div>
       </Td>
-      <Td className="!min-w-[8rem] max-w-0">
+      <Td className="max-w-0 min-w-32!">
         <p className="truncate">
           <FontAwesomeIcon
             size="sm"
@@ -111,15 +121,47 @@ export const AppConnectionRow = ({
           {methodDetails.name}
         </p>
       </Td>
-
+      {!isProjectView && (
+        <Td className="max-w-0 min-w-32!">
+          {project ? (
+            <Link
+              // @ts-expect-error app-connections aren't in kms/ssh
+              to={`${getProjectBaseURL(project.type)}/app-connections`}
+              params={{
+                orgId: currentOrg?.id || "",
+                projectId: project.id
+              }}
+              className="underline"
+            >
+              <p className="truncate">
+                <FontAwesomeIcon
+                  size="sm"
+                  className="mr-1.5 text-mineshaft-300/75"
+                  icon={faTable}
+                />
+                {project.name}
+              </p>
+            </Link>
+          ) : (
+            <p className="truncate">
+              <FontAwesomeIcon
+                size="sm"
+                className="mr-1.5 text-mineshaft-300/75"
+                icon={faBuilding}
+              />
+              Organization
+            </p>
+          )}
+        </Td>
+      )}
       <Td>
         <div className="flex items-center justify-end gap-2">
           {isPlatformManagedCredentials && (
             <Tooltip side="left" content="This connection's credentials are managed by Infisical.">
               <div>
-                <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap">
-                  <FontAwesomeIcon icon={faServer} />
-                  <span>Platform Managed Credentials</span>
+                <Badge variant="info">
+                  <ServerIcon />
+                  Platform Managed Credentials
                 </Badge>
               </div>
             </Tooltip>
@@ -143,48 +185,91 @@ export const AppConnectionRow = ({
                 >
                   Copy Connection ID
                 </DropdownMenuItem>
-                <OrgPermissionCan
-                  I={OrgPermissionAppConnectionActions.Edit}
-                  a={OrgPermissionSubjects.AppConnections}
-                >
-                  {(isAllowed: boolean) => (
-                    <DropdownMenuItem
-                      isDisabled={!isAllowed}
-                      icon={<FontAwesomeIcon icon={faEdit} />}
-                      onClick={() => onEditDetails(appConnection)}
+                {(isProjectView || !project) && (
+                  <>
+                    <VariablePermissionCan
+                      type={isProjectView ? "project" : "org"}
+                      I={
+                        isProjectView
+                          ? ProjectPermissionAppConnectionActions.Edit
+                          : OrgPermissionAppConnectionActions.Edit
+                      }
+                      a={
+                        isProjectView
+                          ? subject(ProjectPermissionSub.AppConnections, {
+                              connectionId: id
+                            })
+                          : subject(OrgPermissionSubjects.AppConnections, {
+                              connectionId: id
+                            })
+                      }
                     >
-                      Edit Details
-                    </DropdownMenuItem>
-                  )}
-                </OrgPermissionCan>
-                <OrgPermissionCan
-                  I={OrgPermissionAppConnectionActions.Edit}
-                  a={OrgPermissionSubjects.AppConnections}
-                >
-                  {(isAllowed: boolean) => (
-                    <DropdownMenuItem
-                      isDisabled={!isAllowed}
-                      icon={<FontAwesomeIcon icon={faAsterisk} />}
-                      onClick={() => onEditCredentials(appConnection)}
+                      {(isAllowed: boolean) => (
+                        <DropdownMenuItem
+                          isDisabled={!isAllowed}
+                          icon={<FontAwesomeIcon icon={faEdit} />}
+                          onClick={() => onEditDetails(appConnection)}
+                        >
+                          Edit Details
+                        </DropdownMenuItem>
+                      )}
+                    </VariablePermissionCan>
+                    <VariablePermissionCan
+                      type={isProjectView ? "project" : "org"}
+                      I={
+                        isProjectView
+                          ? ProjectPermissionAppConnectionActions.Edit
+                          : OrgPermissionAppConnectionActions.Edit
+                      }
+                      a={
+                        isProjectView
+                          ? subject(ProjectPermissionSub.AppConnections, {
+                              connectionId: id
+                            })
+                          : subject(OrgPermissionSubjects.AppConnections, {
+                              connectionId: id
+                            })
+                      }
                     >
-                      {isPlatformManagedCredentials ? "View" : "Edit"} Credentials
-                    </DropdownMenuItem>
-                  )}
-                </OrgPermissionCan>
-                <OrgPermissionCan
-                  I={OrgPermissionAppConnectionActions.Delete}
-                  a={OrgPermissionSubjects.AppConnections}
-                >
-                  {(isAllowed: boolean) => (
-                    <DropdownMenuItem
-                      isDisabled={!isAllowed}
-                      icon={<FontAwesomeIcon icon={faTrash} />}
-                      onClick={() => onDelete(appConnection)}
+                      {(isAllowed: boolean) => (
+                        <DropdownMenuItem
+                          isDisabled={!isAllowed}
+                          icon={<FontAwesomeIcon icon={faAsterisk} />}
+                          onClick={() => onEditCredentials(appConnection)}
+                        >
+                          {isPlatformManagedCredentials ? "View" : "Edit"} Credentials
+                        </DropdownMenuItem>
+                      )}
+                    </VariablePermissionCan>
+                    <VariablePermissionCan
+                      type={isProjectView ? "project" : "org"}
+                      I={
+                        isProjectView
+                          ? ProjectPermissionAppConnectionActions.Delete
+                          : OrgPermissionAppConnectionActions.Delete
+                      }
+                      a={
+                        isProjectView
+                          ? subject(ProjectPermissionSub.AppConnections, {
+                              connectionId: id
+                            })
+                          : subject(OrgPermissionSubjects.AppConnections, {
+                              connectionId: id
+                            })
+                      }
                     >
-                      Delete Connection
-                    </DropdownMenuItem>
-                  )}
-                </OrgPermissionCan>
+                      {(isAllowed: boolean) => (
+                        <DropdownMenuItem
+                          isDisabled={!isAllowed}
+                          icon={<FontAwesomeIcon icon={faTrash} />}
+                          onClick={() => onDelete(appConnection)}
+                        >
+                          Delete Connection
+                        </DropdownMenuItem>
+                      )}
+                    </VariablePermissionCan>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </Tooltip>

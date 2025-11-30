@@ -13,6 +13,7 @@ export type SubscriptionPlan = {
   customRateLimits: boolean;
   pitRecovery: boolean;
   githubOrgSync: boolean;
+  subOrganization?: boolean;
   ipAllowlisting: boolean;
   rbac: boolean;
   secretVersioning: boolean;
@@ -47,12 +48,19 @@ export type SubscriptionPlan = {
   gateway: boolean;
   externalKms: boolean;
   pkiEst: boolean;
+  pkiAcme: boolean;
+  pkiLegacyTemplates: boolean;
   enforceMfa: boolean;
   enforceGoogleSSO: boolean;
   projectTemplates: boolean;
   kmip: boolean;
   secretScanning: boolean;
   enterpriseSecretSyncs: boolean;
+  enterpriseCertificateSyncs: boolean;
   enterpriseAppConnections: boolean;
+  cardDeclined?: boolean;
+  cardDeclinedReason?: string;
+  cardDeclinedDays?: number;
   machineIdentityAuthTemplates: boolean;
+  pam: boolean;
 };

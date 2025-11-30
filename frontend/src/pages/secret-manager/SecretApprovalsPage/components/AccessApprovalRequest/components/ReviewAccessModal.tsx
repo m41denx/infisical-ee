@@ -9,6 +9,7 @@ import {
   faUserSlash
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { BanIcon, CheckIcon, HourglassIcon } from "lucide-react";
 import ms from "ms";
 import { twMerge } from "tailwind-merge";
 
@@ -24,8 +25,8 @@ import {
   ModalContent,
   Tooltip
 } from "@app/components/v2";
-import { Badge } from "@app/components/v2/Badge";
-import { ProjectPermissionActions, useUser, useWorkspace } from "@app/context";
+import { Badge } from "@app/components/v3";
+import { ProjectPermissionActions, useProject, useUser } from "@app/context";
 import { usePopUp } from "@app/hooks";
 import { useListWorkspaceGroups, useReviewAccessRequest } from "@app/hooks/api";
 import {
@@ -42,13 +43,13 @@ import { EditAccessRequestModal } from "@app/pages/secret-manager/SecretApproval
 const getReviewedStatusSymbol = (status?: ApprovalStatus, isOrgMembershipActive?: boolean) => {
   if (status === ApprovalStatus.APPROVED)
     return (
-      <Badge variant="success" className="flex h-4 items-center justify-center">
+      <Badge variant="success">
         <FontAwesomeIcon icon={faCheck} size="xs" />
       </Badge>
     );
   if (status === ApprovalStatus.REJECTED)
     return (
-      <Badge variant="danger" className="flex h-4 items-center justify-center">
+      <Badge variant="danger">
         <FontAwesomeIcon icon={faBan} size="xs" />
       </Badge>
     );
@@ -58,13 +59,13 @@ const getReviewedStatusSymbol = (status?: ApprovalStatus, isOrgMembershipActive?
       // Can't do a tooltip here because nested tooltips doesn't work properly as of yet.
       // TODO(daniel): Fix nested tooltips in the future.
 
-      <Badge className="flex h-4 items-center justify-center bg-mineshaft-400/50 text-bunker-300">
+      <Badge variant="neutral">
         <FontAwesomeIcon size="xs" icon={faUserSlash} />
       </Badge>
     );
   }
   return (
-    <Badge variant="primary" className="flex h-4 items-center justify-center">
+    <Badge variant="warning">
       <FontAwesomeIcon icon={faHourglass} size="xs" />
     </Badge>
   );
@@ -102,8 +103,8 @@ export const ReviewAccessRequestModal = ({
   const [bypassApproval, setBypassApproval] = useState(false);
 
   const [bypassReason, setBypassReason] = useState("");
-  const { currentWorkspace } = useWorkspace();
-  const { data: groupMemberships = [] } = useListWorkspaceGroups(currentWorkspace?.id || "");
+  const { currentProject } = useProject();
+  const { data: groupMemberships = [] } = useListWorkspaceGroups(currentProject?.id || "");
   const { user } = useUser();
 
   const { popUp, handlePopUpToggle, handlePopUpOpen } = usePopUp(["editRequest"] as const);
@@ -177,8 +178,7 @@ export const ReviewAccessRequestModal = ({
           text: `The request has been ${status}`,
           type: status === "approved" ? "success" : "info"
         });
-      } catch (error) {
-        console.error(error);
+      } catch {
         setIsLoading(null);
         return;
       }
@@ -300,7 +300,7 @@ export const ReviewAccessRequestModal = ({
           is requesting access to the following resource:
         </div>
         <div className="">
-          <div className="mb-2 mt-4 text-mineshaft-200">
+          <div className="mt-4 mb-2 text-mineshaft-200">
             <div className="flex flex-wrap gap-8">
               <GenericFieldLabel label="Environment">{accessDetails.env}</GenericFieldLabel>
               <GenericFieldLabel truncate label="Secret Path">
@@ -346,12 +346,10 @@ export const ReviewAccessRequestModal = ({
             <span>Approvers</span>
             {approverSequence.isMyReviewInThisSequence &&
               request.status === ApprovalStatus.PENDING && (
-                <Badge variant="primary" className="h-min">
-                  Awaiting Your Review
-                </Badge>
+                <Badge variant="warning">Awaiting Your Review</Badge>
               )}
           </div>
-          <div className="thin-scrollbar max-h-[40vh] overflow-y-auto rounded py-2">
+          <div className="max-h-[40vh] thin-scrollbar overflow-y-auto rounded-sm py-2">
             {approverSequence?.approvers &&
               approverSequence.approvers.map((approver, index) => {
                 const isInactive =
@@ -364,43 +362,28 @@ export const ReviewAccessRequestModal = ({
                 let BadgeComponent: ReactNode = null;
                 if (approver.hasRejected) {
                   StepComponent = (
-                    <Badge
-                      variant="danger"
-                      className="flex h-6 min-w-6 items-center justify-center"
-                    >
-                      <FontAwesomeIcon icon={faBan} />
+                    <Badge isSquare variant="danger">
+                      <BanIcon />
                     </Badge>
                   );
                   BadgeComponent = <Badge variant="danger">Rejected</Badge>;
                 } else if (approver.hasApproved) {
                   StepComponent = (
-                    <Badge
-                      variant="success"
-                      className="flex h-6 min-w-6 items-center justify-center"
-                    >
-                      <FontAwesomeIcon icon={faCheck} />
+                    <Badge isSquare variant="success">
+                      <CheckIcon />
                     </Badge>
                   );
                   BadgeComponent = <Badge variant="success">Approved</Badge>;
                 } else if (isPending) {
                   StepComponent = (
-                    <Badge
-                      variant="primary"
-                      className="flex h-6 min-w-6 items-center justify-center"
-                    >
-                      <FontAwesomeIcon icon={faHourglass} />
+                    <Badge isSquare variant="warning">
+                      <HourglassIcon />
                     </Badge>
                   );
-                  BadgeComponent = <Badge variant="primary">Pending</Badge>;
+                  BadgeComponent = <Badge variant="warning">Pending</Badge>;
                 } else {
                   StepComponent = (
-                    <Badge
-                      className={
-                        isInactive
-                          ? "py-auto my-auto flex h-6 min-w-6 items-center justify-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-center text-bunker-200"
-                          : ""
-                      }
-                    >
+                    <Badge isSquare variant="neutral">
                       <span>{index + 1}</span>
                     </Badge>
                   );
@@ -415,14 +398,14 @@ export const ReviewAccessRequestModal = ({
                       <div className="flex w-12 flex-col items-center gap-2 pr-4">
                         <div
                           className={twMerge(
-                            "flex-grow border-mineshaft-600",
+                            "grow border-mineshaft-600",
                             index !== 0 && "border-r"
                           )}
                         />
                         {StepComponent}
                         <div
                           className={twMerge(
-                            "flex-grow border-mineshaft-600",
+                            "grow border-mineshaft-600",
                             index < approverSequence.approvers!.length - 1 && "border-r"
                           )}
                         />
@@ -447,12 +430,10 @@ export const ReviewAccessRequestModal = ({
                                     {member.user.username}
                                     <span className="text-xs">
                                       <Tooltip content="This user has been deactivated and no longer has an active organization membership.">
-                                        <div>
-                                          <Badge className="pointer-events-none ml-1 mr-auto flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                                            <FontAwesomeIcon icon={faBan} />
-                                            Inactive
-                                          </Badge>
-                                        </div>
+                                        <Badge variant="neutral">
+                                          <BanIcon />
+                                          Inactive
+                                        </Badge>
                                       </Tooltip>
                                     </span>
                                   </span>
@@ -480,7 +461,7 @@ export const ReviewAccessRequestModal = ({
                               content={
                                 <div>
                                   <div className="mb-1 text-sm text-bunker-300">Reviewers</div>
-                                  <div className="thin-scrollbar flex max-h-64 flex-col divide-y divide-mineshaft-500 overflow-y-auto rounded">
+                                  <div className="flex max-h-64 thin-scrollbar flex-col divide-y divide-mineshaft-500 overflow-y-auto rounded-sm">
                                     {approver.reviewers.map((el, idx) => (
                                       <div
                                         key={`reviewer-${idx + 1}`}
@@ -533,7 +514,7 @@ export const ReviewAccessRequestModal = ({
                     onCheckedChange={(checked) => setBypassApproval(checked === true)}
                     isChecked={bypassApproval}
                     id="byPassApproval"
-                    className={twMerge("mr-2", bypassApproval ? "!border-red/50 !bg-red/30" : "")}
+                    className={twMerge("mr-2", bypassApproval ? "border-red/50! bg-red/30!" : "")}
                   >
                     <span className="text-xs text-red">
                       Approve without waiting for requirements to be met (bypass policy protection)

@@ -6,8 +6,20 @@ import { Controller, FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
-import { Button, FormControl, Input, ModalClose, Select, SelectItem } from "@app/components/v2";
-import { APP_CONNECTION_MAP, getAppConnectionMethodDetails } from "@app/helpers/appConnections";
+import {
+  Button,
+  FormControl,
+  Input,
+  ModalClose,
+  SecretInput,
+  Select,
+  SelectItem
+} from "@app/components/v2";
+import {
+  APP_CONNECTION_MAP,
+  getAppConnectionMethodDetails,
+  useGetAppConnectionOauthReturnUrl
+} from "@app/helpers/appConnections";
 import { isInfisicalCloud } from "@app/helpers/platform";
 import {
   AzureClientSecretsConnectionMethod,
@@ -16,16 +28,21 @@ import {
 } from "@app/hooks/api/appConnections";
 import { AppConnection } from "@app/hooks/api/appConnections/enums";
 
+import { AzureClientSecretsFormData } from "../../../OauthCallbackPage/OauthCallbackPage.types";
 import {
   genericAppConnectionFieldsSchema,
   GenericAppConnectionsFields
 } from "./GenericAppConnectionFields";
 
 type ClientSecretForm = z.infer<typeof clientSecretSchema>;
+type CertificateForm = z.infer<typeof certificateSchema>;
+
+type TInputFormData = ClientSecretForm | CertificateForm;
 
 type Props = {
   appConnection?: TAzureClientSecretsConnection;
-  onSubmit: (formData: ClientSecretForm) => Promise<void>;
+  onSubmit: (formData: TInputFormData) => Promise<void>;
+  projectId: string | undefined | null;
 };
 
 const baseSchema = genericAppConnectionFieldsSchema.extend({
@@ -47,7 +64,21 @@ const clientSecretSchema = baseSchema.extend({
   })
 });
 
-const formSchema = z.discriminatedUnion("method", [oauthSchema, clientSecretSchema]);
+const certificateSchema = baseSchema.extend({
+  method: z.literal(AzureClientSecretsConnectionMethod.Certificate),
+  credentials: z.object({
+    clientId: z.string().trim().min(1, "Client ID is required"),
+    certificateBody: z.string().trim().min(1, "Certificate is required"),
+    privateKey: z.string().trim().min(1, "Private Key is required"),
+    tenantId: z.string().trim().min(1, "Tenant ID is required")
+  })
+});
+
+const formSchema = z.discriminatedUnion("method", [
+  oauthSchema,
+  clientSecretSchema,
+  certificateSchema
+]);
 
 type FormData = z.infer<typeof formSchema>;
 
@@ -90,6 +121,20 @@ const getDefaultValues = (appConnection?: TAzureClientSecretsConnection): Partia
         };
       }
       break;
+    case AzureClientSecretsConnectionMethod.Certificate:
+      if ("clientId" in credentials && "tenantId" in credentials) {
+        return {
+          ...base,
+          method: AzureClientSecretsConnectionMethod.Certificate,
+          credentials: {
+            clientId: credentials.clientId,
+            tenantId: credentials.tenantId,
+            certificateBody: "",
+            privateKey: ""
+          }
+        };
+      }
+      break;
     default:
       return base;
   }
@@ -97,7 +142,7 @@ const getDefaultValues = (appConnection?: TAzureClientSecretsConnection): Partia
   return base;
 };
 
-export const AzureClientSecretsConnectionForm = ({ appConnection, onSubmit }: Props) => {
+export const AzureClientSecretsConnectionForm = ({ appConnection, onSubmit, projectId }: Props) => {
   const isUpdate = Boolean(appConnection);
   const [isRedirecting, setIsRedirecting] = useState(false);
 
@@ -110,6 +155,8 @@ export const AzureClientSecretsConnectionForm = ({ appConnection, onSubmit }: Pr
     resolver: zodResolver(formSchema),
     defaultValues: getDefaultValues(appConnection)
   });
+
+  const returnUrl = useGetAppConnectionOauthReturnUrl();
 
   const {
     handleSubmit,
@@ -129,7 +176,12 @@ export const AzureClientSecretsConnectionForm = ({ appConnection, onSubmit }: Pr
         localStorage.setItem("latestCSRFToken", state);
         localStorage.setItem(
           "azureClientSecretsConnectionFormData",
-          JSON.stringify({ ...formData, connectionId: appConnection?.id })
+          JSON.stringify({
+            ...formData,
+            connectionId: appConnection?.id,
+            projectId,
+            returnUrl
+          } as AzureClientSecretsFormData)
         );
         window.location.assign(
           `https://login.microsoftonline.com/${formData.tenantId || "common"}/oauth2/v2.0/authorize?client_id=${oauthClientId}&response_type=code&redirect_uri=${window.location.origin}/organization/app-connections/azure/oauth/callback&response_mode=query&scope=https://graph.microsoft.com/.default%20openid%20offline_access&state=${state}<:>azure-client-secrets`
@@ -137,6 +189,9 @@ export const AzureClientSecretsConnectionForm = ({ appConnection, onSubmit }: Pr
         break;
 
       case AzureClientSecretsConnectionMethod.ClientSecret:
+        await onSubmit(formData);
+        break;
+      case AzureClientSecretsConnectionMethod.Certificate:
         await onSubmit(formData);
         break;
       default:
@@ -194,7 +249,11 @@ export const AzureClientSecretsConnectionForm = ({ appConnection, onSubmit }: Pr
         />
 
         <Controller
-          name="tenantId"
+          name={
+            selectedMethod === AzureClientSecretsConnectionMethod.OAuth
+              ? "tenantId"
+              : "credentials.tenantId"
+          }
           control={control}
           render={({ field, fieldState: { error } }) => (
             <FormControl
@@ -251,6 +310,59 @@ export const AzureClientSecretsConnectionForm = ({ appConnection, onSubmit }: Pr
           </>
         )}
 
+        {selectedMethod === AzureClientSecretsConnectionMethod.Certificate && (
+          <>
+            <Controller
+              name="credentials.clientId"
+              control={control}
+              render={({ field, fieldState: { error } }) => (
+                <FormControl
+                  isError={Boolean(error?.message)}
+                  label="Client ID"
+                  errorText={error?.message}
+                >
+                  <Input {...field} placeholder="00000000-0000-0000-0000-000000000000" />
+                </FormControl>
+              )}
+            />
+            <Controller
+              name="credentials.certificateBody"
+              control={control}
+              render={({ field: { value, onChange }, fieldState: { error } }) => (
+                <FormControl
+                  isError={Boolean(error?.message)}
+                  label="Certificate"
+                  errorText={error?.message}
+                >
+                  <SecretInput
+                    containerClassName="text-gray-400 group-focus-within:border-primary-400/50! border border-mineshaft-500 bg-mineshaft-900 px-2.5 py-1.5"
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    placeholder="-----BEGIN CERTIFICATE-----..."
+                  />
+                </FormControl>
+              )}
+            />
+            <Controller
+              name="credentials.privateKey"
+              control={control}
+              render={({ field: { value, onChange }, fieldState: { error } }) => (
+                <FormControl
+                  isError={Boolean(error?.message)}
+                  label="Private Key"
+                  errorText={error?.message}
+                >
+                  <SecretInput
+                    placeholder="-----BEGIN PRIVATE KEY-----..."
+                    containerClassName="text-gray-400 group-focus-within:border-primary-400/50! border border-mineshaft-500 bg-mineshaft-900 px-2.5 py-1.5"
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                  />
+                </FormControl>
+              )}
+            />
+          </>
+        )}
         <div className="mt-8 flex items-center">
           <Button
             className="mr-4"

@@ -19,6 +19,9 @@ import {
   TAltNameMapping
 } from "@app/services/certificate/certificate-types";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
+import { TPkiSyncDALFactory } from "@app/services/pki-sync/pki-sync-dal";
+import { TPkiSyncQueueFactory } from "@app/services/pki-sync/pki-sync-queue";
+import { triggerAutoSyncForSubscriber } from "@app/services/pki-sync/pki-sync-utils";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 import { getProjectKmsCertificateKeyId } from "@app/services/project/project-fns";
 
@@ -51,6 +54,8 @@ type TInternalCertificateAuthorityFnsDeps = {
   certificateDAL: Pick<TCertificateDALFactory, "create" | "transaction">;
   certificateBodyDAL: Pick<TCertificateBodyDALFactory, "create">;
   certificateSecretDAL: Pick<TCertificateSecretDALFactory, "create">;
+  pkiSyncDAL: Pick<TPkiSyncDALFactory, "find">;
+  pkiSyncQueue: Pick<TPkiSyncQueueFactory, "queuePkiSyncSyncCertificatesById">;
 };
 
 export const InternalCertificateAuthorityFns = ({
@@ -62,7 +67,9 @@ export const InternalCertificateAuthorityFns = ({
   certificateAuthorityCrlDAL,
   certificateDAL,
   certificateBodyDAL,
-  certificateSecretDAL
+  certificateSecretDAL,
+  pkiSyncDAL,
+  pkiSyncQueue
 }: TInternalCertificateAuthorityFnsDeps) => {
   const issueCertificate = async (
     subscriber: TPkiSubscribers,
@@ -129,8 +136,8 @@ export const InternalCertificateAuthorityFns = ({
     const caCrl = await certificateAuthorityCrlDAL.findOne({ caSecretId: caSecret.id });
     const appCfg = getConfig();
 
-    const distributionPointUrl = `${appCfg.SITE_URL}/api/v1/pki/crl/${caCrl.id}/der`;
-    const caIssuerUrl = `${appCfg.SITE_URL}/api/v1/pki/ca/${ca.id}/certificates/${caCert.id}/der`;
+    const distributionPointUrl = `${appCfg.SITE_URL}/api/v1/cert-manager/crl/${caCrl.id}/der`;
+    const caIssuerUrl = `${appCfg.SITE_URL}/api/v1/cert-manager/ca/internal/${ca.id}/certificates/${caCert.id}/der`;
 
     const extensions: x509.Extension[] = [
       new x509.BasicConstraintsExtension(false),
@@ -251,6 +258,8 @@ export const InternalCertificateAuthorityFns = ({
       );
     });
 
+    await triggerAutoSyncForSubscriber(subscriber.id, { pkiSyncDAL, pkiSyncQueue });
+
     return {
       certificate: leafCert.toString("pem"),
       certificateChain: certificateChainPem,
@@ -357,8 +366,8 @@ export const InternalCertificateAuthorityFns = ({
     const caCrl = await certificateAuthorityCrlDAL.findOne({ caSecretId: caSecret.id });
     const appCfg = getConfig();
 
-    const distributionPointUrl = `${appCfg.SITE_URL}/api/v1/pki/crl/${caCrl.id}/der`;
-    const caIssuerUrl = `${appCfg.SITE_URL}/api/v1/pki/ca/${ca.id}/certificates/${caCert.id}/der`;
+    const distributionPointUrl = `${appCfg.SITE_URL}/api/v1/cert-manager/crl/${caCrl.id}/der`;
+    const caIssuerUrl = `${appCfg.SITE_URL}/api/v1/cert-manager/ca/internal/${ca.id}/certificates/${caCert.id}/der`;
 
     const extensions: x509.Extension[] = [
       new x509.BasicConstraintsExtension(false),

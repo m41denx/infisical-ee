@@ -1,18 +1,15 @@
 /* eslint-disable jsx-a11y/label-has-associated-control */
 import React, { useCallback, useState } from "react";
-import {
-  faClipboardCheck,
-  faCodeCommit,
-  faFolder,
-  faKey,
-  faSave
-} from "@fortawesome/free-solid-svg-icons";
+import { faCodeCommit, faFolder, faKey, faSave } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AnimatePresence, motion } from "framer-motion";
+import { ClipboardCheckIcon } from "lucide-react";
 
-import { Badge, Button, Input, Modal, ModalContent } from "@app/components/v2";
+import { Button, Input, Modal, ModalContent } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { PendingAction } from "@app/hooks/api/secretFolders/types";
 import { SecretVersionDiffView } from "@app/pages/secret-manager/CommitDetailsPage/components/SecretVersionDiffView";
+import { HIDDEN_SECRET_VALUE_API_MASK } from "@app/pages/secret-manager/SecretDashboardPage/components/SecretListView/SecretItem";
 
 import {
   PendingChange,
@@ -25,14 +22,14 @@ interface CommitFormProps {
   onCommit: (changes: PendingChanges, commitMessage: string) => Promise<void>;
   isCommitting?: boolean;
   environment: string;
-  workspaceId: string;
+  projectId: string;
   secretPath: string;
 }
 
 interface ResourceChangeProps {
   change: PendingChange;
   environment: string;
-  workspaceId: string;
+  projectId: string;
   secretPath: string;
 }
 
@@ -105,7 +102,12 @@ const RenderSecretChanges = ({ onDiscard, change }: RenderResourceProps) => {
               version: 1, // placeholder, not used
               secretKey: change.newSecretName ? existingSecret.key : undefined,
               secretValue:
-                change.secretValue !== undefined ? (existingSecret.value ?? "") : undefined,
+                // eslint-disable-next-line no-nested-ternary
+                change.secretValue !== undefined
+                  ? change.existingSecret.secretValueHidden
+                    ? HIDDEN_SECRET_VALUE_API_MASK
+                    : (change.originalValue ?? "")
+                  : undefined,
               tags: change.tags ? (existingSecret.tags?.map((tag) => tag.slug) ?? []) : undefined,
               secretMetadata: change.secretMetadata ? existingSecret.secretMetadata : undefined,
               skipMultilineEncoding:
@@ -130,7 +132,7 @@ const RenderSecretChanges = ({ onDiscard, change }: RenderResourceProps) => {
   }
 
   if (change.type === PendingAction.Delete) {
-    const { secretKey, secretValue } = change;
+    const { secretKey, secretValue, secretValueHidden } = change;
     return (
       <SecretVersionDiffView
         onDiscard={onDiscard}
@@ -143,7 +145,12 @@ const RenderSecretChanges = ({ onDiscard, change }: RenderResourceProps) => {
             {
               version: 1, // placeholder, not used
               secretKey,
-              secretValue
+              // eslint-disable-next-line no-nested-ternary
+              secretValue: secretValue
+                ? secretValueHidden
+                  ? HIDDEN_SECRET_VALUE_API_MASK
+                  : secretValue
+                : undefined
             }
           ]
         }}
@@ -237,7 +244,7 @@ const RenderFolderChanges = ({ onDiscard, change }: RenderResourceProps) => {
 const ResourceChange: React.FC<ResourceChangeProps> = ({
   change,
   environment,
-  workspaceId,
+  projectId,
   secretPath
 }) => {
   const { removePendingChange } = useBatchModeActions();
@@ -245,7 +252,7 @@ const ResourceChange: React.FC<ResourceChangeProps> = ({
   const handleDeletePending = useCallback(
     (changeType: string, id: string) => {
       removePendingChange(id, changeType, {
-        workspaceId,
+        projectId,
         environment,
         secretPath
       });
@@ -272,7 +279,7 @@ export const CommitForm: React.FC<CommitFormProps> = ({
   onCommit,
   isCommitting = false,
   environment,
-  workspaceId,
+  projectId,
   secretPath
 }) => {
   const { isBatchMode, pendingChanges, totalChangesCount } = useBatchMode();
@@ -286,12 +293,9 @@ export const CommitForm: React.FC<CommitFormProps> = ({
   }
 
   const handleCommit = async () => {
-    if (!commitMessage.trim()) {
-      return;
-    }
     await onCommit(pendingChanges, commitMessage);
     clearAllPendingChanges({
-      workspaceId,
+      projectId,
       environment,
       secretPath
     });
@@ -318,9 +322,9 @@ export const CommitForm: React.FC<CommitFormProps> = ({
                   <div className="flex-1">
                     {/* Header */}
                     <div className="flex items-center gap-2">
-                      <div className="h-2 w-2 rounded-full bg-yellow-500" />
+                      <div className="h-2 w-2 rounded-full bg-warning" />
                       <span className="font-medium text-mineshaft-100">Pending Changes</span>
-                      <Badge variant="primary" className="text-xs">
+                      <Badge variant="warning">
                         {totalChangesCount} Change{totalChangesCount !== 1 ? "s" : ""}
                       </Badge>
                     </div>
@@ -332,15 +336,13 @@ export const CommitForm: React.FC<CommitFormProps> = ({
                   </div>
 
                   {/* Right Buttons */}
-                  <div className="ml-6 mt-0.5 flex items-center gap-3">
+                  <div className="mt-0.5 ml-6 flex items-center gap-3">
                     <Button
                       size="sm"
-                      onClick={() =>
-                        clearAllPendingChanges({ workspaceId, environment, secretPath })
-                      }
+                      onClick={() => clearAllPendingChanges({ projectId, environment, secretPath })}
                       isDisabled={totalChangesCount === 0}
                       variant="outline_bg"
-                      className="px-4 hover:border-red/40 hover:bg-red/[0.1]"
+                      className="px-4 hover:border-red/40 hover:bg-red/10"
                     >
                       Discard
                     </Button>
@@ -366,15 +368,15 @@ export const CommitForm: React.FC<CommitFormProps> = ({
         <ModalContent
           title={
             <div className="flex items-center gap-2">
-              <FontAwesomeIcon icon={faClipboardCheck} className="text-mineshaft-400" />
               Review Changes
-              <Badge variant="primary" className="mt-[0.05rem]">
+              <Badge variant="warning">
+                <ClipboardCheckIcon />
                 {totalChangesCount} Change{totalChangesCount !== 1 ? "s" : ""}
               </Badge>
             </div>
           }
           subTitle="Write a commit message and review the changes you're about to save."
-          className="max-h-[90vh] max-w-[95%] md:max-w-7xl"
+          className="max-h-[90vh] max-w-[95%] md:max-w-8xl"
         >
           <div className="space-y-6">
             {/* Changes List */}
@@ -383,7 +385,7 @@ export const CommitForm: React.FC<CommitFormProps> = ({
                 {/* Folder Changes */}
                 {pendingChanges.folders.length > 0 && (
                   <div>
-                    <h4 className="mb-4 flex items-center gap-2 border-b border-mineshaft-700 pb-2 text-sm font-semibold text-mineshaft-200">
+                    <h4 className="mb-4 flex items-center gap-2 border-b border-mineshaft-700 pb-2 text-sm font-medium text-mineshaft-200">
                       <FontAwesomeIcon icon={faFolder} className="text-mineshaft-300" />
                       Folders ({pendingChanges.folders.length})
                     </h4>
@@ -393,7 +395,7 @@ export const CommitForm: React.FC<CommitFormProps> = ({
                           key={change.id}
                           change={change}
                           environment={environment}
-                          workspaceId={workspaceId}
+                          projectId={projectId}
                           secretPath={secretPath}
                         />
                       ))}
@@ -404,7 +406,7 @@ export const CommitForm: React.FC<CommitFormProps> = ({
                 {/* Secret Changes */}
                 {pendingChanges.secrets.length > 0 && (
                   <div>
-                    <h4 className="mb-4 flex items-center gap-2 border-b border-mineshaft-700 pb-2 text-sm font-semibold text-mineshaft-200">
+                    <h4 className="mb-4 flex items-center gap-2 border-b border-mineshaft-700 pb-2 text-sm font-medium text-mineshaft-200">
                       <FontAwesomeIcon icon={faKey} className="mr-1 text-mineshaft-300" />
                       Secrets ({pendingChanges.secrets.length})
                     </h4>
@@ -414,7 +416,7 @@ export const CommitForm: React.FC<CommitFormProps> = ({
                           key={change.id}
                           change={change}
                           environment={environment}
-                          workspaceId={workspaceId}
+                          projectId={projectId}
                           secretPath={secretPath}
                         />
                       ))}
@@ -427,7 +429,7 @@ export const CommitForm: React.FC<CommitFormProps> = ({
             {/* Commit Message */}
             <div>
               <label className="mb-2 block text-sm font-medium text-mineshaft-200">
-                Commit Message <span className="text-red-400">*</span>
+                Commit Message
               </label>
               <Input
                 value={commitMessage}
@@ -435,7 +437,6 @@ export const CommitForm: React.FC<CommitFormProps> = ({
                 placeholder="Describe your changes..."
                 className="w-full"
                 autoFocus
-                required
               />
             </div>
 
@@ -452,7 +453,7 @@ export const CommitForm: React.FC<CommitFormProps> = ({
               <Button
                 onClick={handleCommit}
                 isLoading={isCommitting}
-                isDisabled={isCommitting || !commitMessage.trim()}
+                isDisabled={isCommitting}
                 leftIcon={<FontAwesomeIcon icon={faCodeCommit} />}
                 colorSchema="primary"
                 variant="outline_bg"

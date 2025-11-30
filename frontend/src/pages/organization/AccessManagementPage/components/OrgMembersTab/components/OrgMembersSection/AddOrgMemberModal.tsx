@@ -19,12 +19,13 @@ import { useOrganization } from "@app/context";
 import { findOrgMembershipRole } from "@app/helpers/roles";
 import {
   useAddUsersToOrg,
+  useAddUserToWsNonE2EE,
   useFetchServerStatus,
   useGetOrgRoles,
-  useGetUserWorkspaces
+  useGetUserProjects
 } from "@app/hooks/api";
+import { ProjectType, ProjectVersion } from "@app/hooks/api/projects/types";
 import { ProjectMembershipRole } from "@app/hooks/api/roles/types";
-import { ProjectType, ProjectVersion } from "@app/hooks/api/workspace/types";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 import { OrgInviteLink } from "./OrgInviteLink";
@@ -76,7 +77,8 @@ export const AddOrgMemberModal = ({
   const { data: organizationRoles } = useGetOrgRoles(currentOrg?.id ?? "");
   const { data: serverDetails } = useFetchServerStatus();
   const { mutateAsync: addUsersMutateAsync } = useAddUsersToOrg();
-  const { data: projects, isPending: isProjectsLoading } = useGetUserWorkspaces({
+  const { mutateAsync: addUserToProject } = useAddUserToWsNonE2EE();
+  const { data: projects, isPending: isProjectsLoading } = useGetUserProjects({
     includeRoles: true
   });
 
@@ -120,51 +122,55 @@ export const AddOrgMemberModal = ({
       }
     }
 
-    try {
-      const parsedEmails = emails
-        .replace(/\s/g, "")
-        .split(",")
-        .map((email) => {
-          if (EmailSchema.safeParse(email).success) {
-            return email.trim();
-          }
+    const parsedEmails = emails
+      .replace(/\s/g, "")
+      .split(",")
+      .map((email) => {
+        if (EmailSchema.safeParse(email).success) {
+          return email.trim();
+        }
 
-          return null;
-        });
-
-      if (parsedEmails.includes(null)) {
-        createNotification({
-          text: "Invalid email addresses provided.",
-          type: "error"
-        });
-        return;
-      }
-
-      const { data } = await addUsersMutateAsync({
-        organizationId: currentOrg?.id,
-        inviteeEmails: emails.split(",").map((email) => email.trim()),
-        organizationRoleSlug: organizationRole.slug,
-        projects: selectedProjects.map(({ id }) => ({ id, projectRoleSlug: [projectRoleSlug] }))
+        return null;
       });
 
-      setCompleteInviteLinks(data?.completeInviteLinks ?? null);
-
-      // only show this notification when email is configured.
-      // A [completeInviteLink] will not be sent if smtp is configured
-
-      if (!data.completeInviteLinks) {
-        createNotification({
-          text: "Successfully invited user to the organization.",
-          type: "success"
-        });
-      }
-    } catch (error) {
-      console.error(error);
+    if (parsedEmails.includes(null)) {
       createNotification({
-        text: "Failed to invite user to org",
+        text: "Invalid email addresses provided.",
         type: "error"
       });
       return;
+    }
+
+    const usernames = emails.split(",").map((email) => email.trim());
+    const { data } = await addUsersMutateAsync({
+      organizationId: currentOrg?.id,
+      inviteeEmails: usernames,
+      organizationRoleSlug: organizationRole.slug
+    });
+
+    await Promise.allSettled(
+      selectedProjects.map((el) =>
+        addUserToProject({
+          orgId: currentOrg.id,
+          projectId: el.id,
+          roleSlugs: [projectRoleSlug],
+          usernames
+        })
+      )
+    );
+
+    if (data?.completeInviteLinks && data?.completeInviteLinks.length > 0) {
+      setCompleteInviteLinks(data.completeInviteLinks);
+    }
+
+    // only show this notification when email is configured.
+    // A [completeInviteLink] will not be sent if smtp is configured
+
+    if (!data.completeInviteLinks?.length) {
+      createNotification({
+        text: `Successfully invited user${usernames.length > 1 ? "s" : ""} to the organization.`,
+        type: "success"
+      });
     }
 
     if (serverDetails?.emailConfigured) {
@@ -219,7 +225,7 @@ export const AddOrgMemberModal = ({
                 <FormControl label="Emails" isError={Boolean(error)} errorText={error?.message}>
                   <TextArea
                     {...field}
-                    className="mt-1 h-20 w-full min-w-[30rem] rounded-md border border-mineshaft-500 bg-mineshaft-900/70 px-2 py-1 text-sm text-bunker-300 outline-none ring-primary-800 ring-opacity-70 transition-all placeholder:text-bunker-400 focus:ring-2"
+                    className="ring-opacity-70 mt-1 h-20 w-full min-w-120 rounded-md border border-mineshaft-500 bg-mineshaft-900/70 px-2 py-1 text-sm text-bunker-300 ring-primary-800 outline-hidden transition-all placeholder:text-bunker-400 focus:ring-2"
                     placeholder="email@example.com, email2@example.com..."
                   />
                 </FormControl>

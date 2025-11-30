@@ -13,6 +13,8 @@ import { Button, IconButton } from "@app/components/v2";
 import { useTimedReset, useToggle } from "@app/hooks";
 import { TViewSharedSecretResponse } from "@app/hooks/api/secretSharing";
 
+import { SecretShareInfo } from "./SecretShareInfo";
+
 type Props = {
   secret: TViewSharedSecretResponse["secret"];
   secretKey: string | null;
@@ -45,8 +47,8 @@ export const SecretContainer = ({ secret, secretKey: key }: Props) => {
 
   return (
     <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-800 p-4">
-      <div className="flex items-center justify-between rounded-md bg-white/[0.05] p-2 text-base text-gray-400">
-        <p className="whitespace-pre-wrap break-all">
+      <div className="flex items-center justify-between rounded-md bg-white/5 p-2 text-base text-gray-400">
+        <p className="break-all whitespace-pre-wrap">
           {isVisible ? decryptedSecret : hiddenSecret}
         </p>
         <div className="flex">
@@ -71,6 +73,7 @@ export const SecretContainer = ({ secret, secretKey: key }: Props) => {
           </IconButton>
         </div>
       </div>
+      <SecretShareInfo secret={secret} />
       <Button
         className="mt-4 w-full bg-mineshaft-700 py-3 text-bunker-200"
         colorSchema="primary"

@@ -97,21 +97,13 @@ export const ChangePasswordSection = () => {
   };
 
   const onSetupPassword = async () => {
-    try {
-      await sendSetupPasswordEmail.mutateAsync();
+    await sendSetupPasswordEmail.mutateAsync();
 
-      createNotification({
-        title: "Password setup verification email sent",
-        text: "Check your email to confirm password setup",
-        type: "info"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to send password setup email",
-        type: "error"
-      });
-    }
+    createNotification({
+      title: "Password setup verification email sent",
+      text: "Check your email to confirm password setup",
+      type: "info"
+    });
   };
 
   return (
@@ -119,7 +111,7 @@ export const ChangePasswordSection = () => {
       onSubmit={handleSubmit(onFormSubmit)}
       className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4"
     >
-      <h2 className="mb-8 flex-1 text-xl font-semibold text-mineshaft-100">Change password</h2>
+      <h2 className="mb-8 flex-1 text-xl font-medium text-mineshaft-100">Change password</h2>
       <div className="max-w-md">
         <Controller
           defaultValue=""
@@ -162,7 +154,7 @@ export const ChangePasswordSection = () => {
               return (
                 <div className="items-top ml-1 flex flex-row justify-start" key={key}>
                   <div>
-                    <FontAwesomeIcon icon={faXmark} className="text-md ml-0.5 mr-2.5 text-red" />
+                    <FontAwesomeIcon icon={faXmark} className="text-md mr-2.5 ml-0.5 text-red" />
                   </div>
                   <p className="text-sm text-gray-400">{errors[key as keyof Errors]}</p>
                 </div>

@@ -1,10 +1,12 @@
-import { faBan, faCheck, faEdit, faPlugCircleXmark } from "@fortawesome/free-solid-svg-icons";
+import { faEdit } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { BanIcon, CheckIcon, UnplugIcon } from "lucide-react";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { EditSecretScanningDataSourceModal } from "@app/components/secret-scanning";
 import { GenericFieldLabel } from "@app/components/secret-syncs";
-import { Badge, IconButton, Tooltip } from "@app/components/v2";
+import { IconButton, Tooltip } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { ProjectPermissionSub } from "@app/context";
 import { ProjectPermissionSecretScanningDataSourceActions } from "@app/context/ProjectPermissionContext/types";
 import { usePopUp } from "@app/hooks";
@@ -26,19 +28,16 @@ export const SecretScanningDataSourceSection = ({ dataSource }: Props) => {
       <div className="flex w-full flex-col gap-3 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-4 py-3">
         <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
           <div className="mr-2 flex flex-1 items-center justify-between">
-            <h3 className="font-semibold text-mineshaft-100">Details</h3>
+            <h3 className="font-medium text-mineshaft-100">Details</h3>
             {isDisconnected && (
               <Tooltip
                 className="text-xs"
                 content="The external data source has been removed and can no longer be scanned. Delete this data source and re-initialize the connection."
               >
                 <div className="ml-auto">
-                  <Badge
-                    variant="danger"
-                    className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap"
-                  >
-                    <FontAwesomeIcon icon={faPlugCircleXmark} />
-                    <span>Disconnected</span>
+                  <Badge variant="danger">
+                    <UnplugIcon />
+                    Disconnected
                   </Badge>
                 </div>
               </Tooltip>
@@ -71,17 +70,14 @@ export const SecretScanningDataSourceSection = ({ dataSource }: Props) => {
             <DataSourceConfigDisplay dataSource={dataSource} />
             <GenericFieldLabel label="Auto-Scan">
               {isAutoScanEnabled ? (
-                <Badge
-                  variant="success"
-                  className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap"
-                >
-                  <FontAwesomeIcon icon={faCheck} />
-                  <span>Enabled</span>
+                <Badge variant="success">
+                  <CheckIcon />
+                  Enabled
                 </Badge>
               ) : (
-                <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                  <FontAwesomeIcon icon={faBan} />
-                  <span>Disabled</span>
+                <Badge variant="neutral">
+                  <BanIcon />
+                  Disabled
                 </Badge>
               )}
             </GenericFieldLabel>

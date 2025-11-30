@@ -7,14 +7,13 @@ import { createNotification } from "@app/components/notifications";
 import {
   Button,
   FormControl,
-  Input,
   Modal,
   ModalContent,
   Select,
   SelectItem,
   TextArea
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import { useGetCert, useImportCertificate, useListWorkspacePkiCollections } from "@app/hooks/api";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
@@ -24,8 +23,6 @@ const schema = z.object({
   certificatePem: z.string().trim().min(1, "Certificate PEM is required"),
   privateKeyPem: z.string().trim().min(1, "Private Key PEM is required"),
   chainPem: z.string().trim().min(1, "Certificate Chain PEM is required"),
-
-  friendlyName: z.string(),
   collectionId: z.string().optional()
 });
 
@@ -48,13 +45,13 @@ type TCertificateDetails = {
 
 export const CertificateImportModal = ({ popUp, handlePopUpToggle }: Props) => {
   const [certificateDetails, setCertificateDetails] = useState<TCertificateDetails | null>(null);
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { data: cert } = useGetCert(
     (popUp?.certificateImport?.data as { serialNumber: string })?.serialNumber || ""
   );
 
   const { data } = useListWorkspacePkiCollections({
-    workspaceId: currentWorkspace?.id || ""
+    projectId: currentProject?.id || ""
   });
 
   const { mutateAsync: importCertificate } = useImportCertificate();
@@ -72,43 +69,32 @@ export const CertificateImportModal = ({ popUp, handlePopUpToggle }: Props) => {
     certificatePem,
     privateKeyPem,
     chainPem,
-    friendlyName,
     collectionId
   }: FormData) => {
-    try {
-      if (!currentWorkspace?.slug) return;
+    if (!currentProject?.slug) return;
 
-      const { serialNumber, certificate, certificateChain, privateKey } = await importCertificate({
-        projectSlug: currentWorkspace.slug,
+    const { serialNumber, certificate, certificateChain, privateKey } = await importCertificate({
+      projectSlug: currentProject.slug,
 
-        certificatePem,
-        privateKeyPem,
-        chainPem,
+      certificatePem,
+      privateKeyPem,
+      chainPem,
+      pkiCollectionId: collectionId
+    });
 
-        friendlyName,
-        pkiCollectionId: collectionId
-      });
+    reset();
 
-      reset();
+    setCertificateDetails({
+      serialNumber,
+      certificate,
+      certificateChain,
+      privateKey
+    });
 
-      setCertificateDetails({
-        serialNumber,
-        certificate,
-        certificateChain,
-        privateKey
-      });
-
-      createNotification({
-        text: "Successfully imported certificate",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to import certificate",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully imported certificate",
+      type: "success"
+    });
   };
 
   return (
@@ -147,20 +133,6 @@ export const CertificateImportModal = ({ popUp, handlePopUpToggle }: Props) => {
                       </SelectItem>
                     ))}
                   </Select>
-                </FormControl>
-              )}
-            />
-            <Controller
-              control={control}
-              defaultValue=""
-              name="friendlyName"
-              render={({ field, fieldState: { error } }) => (
-                <FormControl
-                  label="Friendly Name"
-                  isError={Boolean(error)}
-                  errorText={error?.message}
-                >
-                  <Input {...field} placeholder="My Certificate" isDisabled={Boolean(cert)} />
                 </FormControl>
               )}
             />

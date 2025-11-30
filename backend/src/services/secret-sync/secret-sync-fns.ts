@@ -2,7 +2,9 @@ import { AxiosError } from "axios";
 import handlebars from "handlebars";
 
 import { TGatewayServiceFactory } from "@app/ee/services/gateway/gateway-service";
+import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
 import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
+import { CHEF_SYNC_LIST_OPTION, ChefSyncFns } from "@app/ee/services/secret-sync/chef";
 import { OCI_VAULT_SYNC_LIST_OPTION, OCIVaultSyncFns } from "@app/ee/services/secret-sync/oci-vault";
 import { BadRequestError } from "@app/lib/errors";
 import {
@@ -48,7 +50,9 @@ import { HC_VAULT_SYNC_LIST_OPTION, HCVaultSyncFns } from "./hc-vault";
 import { HEROKU_SYNC_LIST_OPTION, HerokuSyncFns } from "./heroku";
 import { HUMANITEC_SYNC_LIST_OPTION } from "./humanitec";
 import { HumanitecSyncFns } from "./humanitec/humanitec-sync-fns";
+import { LARAVEL_FORGE_SYNC_LIST_OPTION, LaravelForgeSyncFns } from "./laravel-forge";
 import { NETLIFY_SYNC_LIST_OPTION, NetlifySyncFns } from "./netlify";
+import { NORTHFLANK_SYNC_LIST_OPTION, NorthflankSyncFns } from "./northflank";
 import { RAILWAY_SYNC_LIST_OPTION } from "./railway/railway-sync-constants";
 import { RailwaySyncFns } from "./railway/railway-sync-fns";
 import { RENDER_SYNC_LIST_OPTION, RenderSyncFns } from "./render";
@@ -90,7 +94,10 @@ const SECRET_SYNC_LIST_OPTIONS: Record<SecretSync, TSecretSyncListItem> = {
   [SecretSync.Checkly]: CHECKLY_SYNC_LIST_OPTION,
   [SecretSync.DigitalOceanAppPlatform]: DIGITAL_OCEAN_APP_PLATFORM_SYNC_LIST_OPTION,
   [SecretSync.Netlify]: NETLIFY_SYNC_LIST_OPTION,
-  [SecretSync.Bitbucket]: BITBUCKET_SYNC_LIST_OPTION
+  [SecretSync.Northflank]: NORTHFLANK_SYNC_LIST_OPTION,
+  [SecretSync.Bitbucket]: BITBUCKET_SYNC_LIST_OPTION,
+  [SecretSync.LaravelForge]: LARAVEL_FORGE_SYNC_LIST_OPTION,
+  [SecretSync.Chef]: CHEF_SYNC_LIST_OPTION
 };
 
 export const listSecretSyncOptions = () => {
@@ -101,6 +108,7 @@ type TSyncSecretDeps = {
   appConnectionDAL: Pick<TAppConnectionDALFactory, "findById" | "update" | "updateById">;
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
   gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">;
+  gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
 };
 
 // Add schema to secret keys
@@ -195,7 +203,7 @@ export const SecretSyncFns = {
   syncSecrets: (
     secretSync: TSecretSyncWithCredentials,
     secretMap: TSecretMap,
-    { kmsService, appConnectionDAL, gatewayService }: TSyncSecretDeps
+    { kmsService, appConnectionDAL, gatewayService, gatewayV2Service }: TSyncSecretDeps
   ): Promise<void> => {
     const schemaSecretMap = addSchema(secretMap, secretSync.environment?.slug || "", secretSync.syncOptions.keySchema);
 
@@ -205,7 +213,7 @@ export const SecretSyncFns = {
       case SecretSync.AWSSecretsManager:
         return AwsSecretsManagerSyncFns.syncSecrets(secretSync, schemaSecretMap);
       case SecretSync.GitHub:
-        return GithubSyncFns.syncSecrets(secretSync, schemaSecretMap, gatewayService);
+        return GithubSyncFns.syncSecrets(secretSync, schemaSecretMap, gatewayService, gatewayV2Service);
       case SecretSync.GCPSecretManager:
         return GcpSyncFns.syncSecrets(secretSync, schemaSecretMap);
       case SecretSync.AzureKeyVault:
@@ -273,8 +281,14 @@ export const SecretSyncFns = {
         return DigitalOceanAppPlatformSyncFns.syncSecrets(secretSync, schemaSecretMap);
       case SecretSync.Netlify:
         return NetlifySyncFns.syncSecrets(secretSync, schemaSecretMap);
+      case SecretSync.Northflank:
+        return NorthflankSyncFns.syncSecrets(secretSync, schemaSecretMap);
       case SecretSync.Bitbucket:
         return BitbucketSyncFns.syncSecrets(secretSync, schemaSecretMap);
+      case SecretSync.LaravelForge:
+        return LaravelForgeSyncFns.syncSecrets(secretSync, schemaSecretMap);
+      case SecretSync.Chef:
+        return ChefSyncFns.syncSecrets(secretSync, schemaSecretMap);
       default:
         throw new Error(
           `Unhandled sync destination for sync secrets fns: ${(secretSync as TSecretSyncWithCredentials).destination}`
@@ -388,8 +402,17 @@ export const SecretSyncFns = {
       case SecretSync.Netlify:
         secretMap = await NetlifySyncFns.getSecrets(secretSync);
         break;
+      case SecretSync.Northflank:
+        secretMap = await NorthflankSyncFns.getSecrets(secretSync);
+        break;
       case SecretSync.Bitbucket:
         secretMap = await BitbucketSyncFns.getSecrets(secretSync);
+        break;
+      case SecretSync.LaravelForge:
+        secretMap = await LaravelForgeSyncFns.getSecrets(secretSync);
+        break;
+      case SecretSync.Chef:
+        secretMap = await ChefSyncFns.getSecrets(secretSync);
         break;
       default:
         throw new Error(
@@ -404,7 +427,7 @@ export const SecretSyncFns = {
   removeSecrets: (
     secretSync: TSecretSyncWithCredentials,
     secretMap: TSecretMap,
-    { kmsService, appConnectionDAL, gatewayService }: TSyncSecretDeps
+    { kmsService, appConnectionDAL, gatewayService, gatewayV2Service }: TSyncSecretDeps
   ): Promise<void> => {
     const schemaSecretMap = addSchema(secretMap, secretSync.environment?.slug || "", secretSync.syncOptions.keySchema);
 
@@ -414,7 +437,7 @@ export const SecretSyncFns = {
       case SecretSync.AWSSecretsManager:
         return AwsSecretsManagerSyncFns.removeSecrets(secretSync, schemaSecretMap);
       case SecretSync.GitHub:
-        return GithubSyncFns.removeSecrets(secretSync, schemaSecretMap, gatewayService);
+        return GithubSyncFns.removeSecrets(secretSync, schemaSecretMap, gatewayService, gatewayV2Service);
       case SecretSync.GCPSecretManager:
         return GcpSyncFns.removeSecrets(secretSync, schemaSecretMap);
       case SecretSync.AzureKeyVault:
@@ -482,8 +505,14 @@ export const SecretSyncFns = {
         return DigitalOceanAppPlatformSyncFns.removeSecrets(secretSync, schemaSecretMap);
       case SecretSync.Netlify:
         return NetlifySyncFns.removeSecrets(secretSync, schemaSecretMap);
+      case SecretSync.Northflank:
+        return NorthflankSyncFns.removeSecrets(secretSync, schemaSecretMap);
       case SecretSync.Bitbucket:
         return BitbucketSyncFns.removeSecrets(secretSync, schemaSecretMap);
+      case SecretSync.LaravelForge:
+        return LaravelForgeSyncFns.removeSecrets(secretSync, schemaSecretMap);
+      case SecretSync.Chef:
+        return ChefSyncFns.removeSecrets(secretSync, schemaSecretMap);
       default:
         throw new Error(
           `Unhandled sync destination for remove secrets fns: ${(secretSync as TSecretSyncWithCredentials).destination}`

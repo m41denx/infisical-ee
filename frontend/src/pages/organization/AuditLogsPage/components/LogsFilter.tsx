@@ -1,35 +1,34 @@
 /* eslint-disable no-nested-ternary */
 import { useMemo } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { faCaretDown, faCheckCircle, faFilterCircleXmark } from "@fortawesome/free-solid-svg-icons";
+import { MultiValue, SingleValue } from "react-select";
+import { faFilterCircleXmark } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AnimatePresence, motion } from "framer-motion";
 import { twMerge } from "tailwind-merge";
 
 import {
-  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
   FilterableSelect,
   FormControl,
-  Input,
-  Select,
-  SelectItem
+  Input
 } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { useOrganization } from "@app/context";
-import { useGetUserWorkspaces } from "@app/hooks/api";
+import { useGetUserProjects } from "@app/hooks/api";
 import {
   eventToNameMap,
+  projectToEventsMap,
   secretEvents,
   userAgentTypeToNameMap
 } from "@app/hooks/api/auditLogs/constants";
 import { EventType } from "@app/hooks/api/auditLogs/enums";
 import { UserAgentType } from "@app/hooks/api/auth/types";
-import { Workspace } from "@app/hooks/api/workspace/types";
+import { Project, ProjectType } from "@app/hooks/api/projects/types";
 
 import { LogFilterItem } from "./LogFilterItem";
 import { auditLogFilterFormSchema, Presets, TAuditLogFilterFormData } from "./types";
@@ -44,7 +43,7 @@ type Props = {
   presets?: Presets;
   setFilter: (data: TAuditLogFilterFormData) => void;
   filter: TAuditLogFilterFormData;
-  project?: Workspace;
+  project?: Project;
 };
 
 const getActiveFilterCount = (filter: TAuditLogFilterFormData) => {
@@ -72,7 +71,7 @@ const getActiveFilterCount = (filter: TAuditLogFilterFormData) => {
 };
 
 export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
-  const { data: workspaces = [] } = useGetUserWorkspaces();
+  const { data: workspaces = [] } = useGetUserProjects();
   const { currentOrg } = useOrganization();
 
   const workspacesInOrg = workspaces.filter((ws) => ws.orgId === currentOrg?.id);
@@ -94,10 +93,20 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
   const selectedEventTypes = watch("eventType") as EventType[] | undefined;
   const selectedProject = project ?? watch("project");
 
+  const currentSelectedEventTypes = selectedEventTypes ?? [];
+  const hasSecretEventFilter = currentSelectedEventTypes.some((eventType) =>
+    secretEvents.includes(eventType)
+  );
   const showSecretsSection =
-    selectedEventTypes?.some(
-      (eventType) => secretEvents.includes(eventType) && eventType !== EventType.GET_SECRETS
-    ) || selectedEventTypes?.length === 0;
+    selectedProject?.type !== ProjectType.PAM &&
+    (hasSecretEventFilter || currentSelectedEventTypes.length === 0);
+
+  const filteredEventTypes = useMemo(() => {
+    const projectEvents = project?.type ? projectToEventsMap[project.type] : undefined;
+    if (!projectEvents) return eventTypes;
+
+    return eventTypes.filter((v) => projectEvents.includes(v.value as EventType));
+  }, [project]);
 
   const availableEnvironments = useMemo(() => {
     if (!selectedProject) return [];
@@ -113,7 +122,7 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
         <Button variant="outline_bg" colorSchema="primary" className="relative">
           <FontAwesomeIcon icon={faFilterCircleXmark} />
           {activeFilterCount > 0 && (
-            <Badge className="absolute bottom-0 right-0" variant="primary">
+            <Badge className="absolute -top-2 -right-2" variant="info">
               {activeFilterCount}
             </Badge>
           )}
@@ -121,12 +130,12 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="mt-4 overflow-visible py-4">
         <form onSubmit={handleSubmit(setFilter)}>
-          <div className="flex min-w-64 flex-col font-inter">
+          <div className="flex max-w-96 min-w-96 flex-col font-inter">
             <div className="mb-3 flex items-center border-b border-b-mineshaft-500 px-3 pb-2">
               <div className="flex w-full items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span>Filters</span>
-                  <Badge className="px-1.5 py-0.5" variant="primary">
+                  <Badge isSquare variant="info">
                     {activeFilterCount}
                   </Badge>
                 </div>
@@ -154,7 +163,7 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
               <LogFilterItem
                 label="Events"
                 onClear={() => {
-                  resetField("eventType");
+                  setValue("eventType", [], { shouldDirty: true });
                 }}
               >
                 <Controller
@@ -162,76 +171,24 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
                   name="eventType"
                   render={({ field }) => (
                     <FormControl>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <div className="thin-scrollbar inline-flex w-full cursor-pointer items-center justify-between whitespace-nowrap rounded-md border border-mineshaft-500 bg-mineshaft-700 px-3 py-2 font-inter text-sm font-normal text-bunker-200 outline-none data-[placeholder]:text-mineshaft-200">
-                            {selectedEventTypes?.length === 1
-                              ? eventTypes.find(
-                                  (eventType) => eventType.value === selectedEventTypes[0]
-                                )?.label
-                              : selectedEventTypes?.length === 0
-                                ? "All events"
-                                : `${selectedEventTypes?.length} events selected`}
-                            <FontAwesomeIcon icon={faCaretDown} className="ml-2 text-xs" />
-                          </div>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent
-                          align="end"
-                          sideOffset={2}
-                          className="thin-scrollbar z-[100] max-h-80 overflow-hidden"
-                        >
-                          <div className="max-h-80 overflow-y-auto">
-                            {eventTypes && eventTypes.length > 0 ? (
-                              eventTypes.map((eventType) => {
-                                const isSelected = selectedEventTypes?.includes(
-                                  eventType.value as EventType
-                                );
-
-                                return (
-                                  <DropdownMenuItem
-                                    onSelect={(event) =>
-                                      eventTypes.length > 1 && event.preventDefault()
-                                    }
-                                    onClick={() => {
-                                      if (
-                                        selectedEventTypes?.includes(eventType.value as EventType)
-                                      ) {
-                                        field.onChange(
-                                          selectedEventTypes?.filter(
-                                            (e: string) => e !== eventType.value
-                                          )
-                                        );
-                                      } else {
-                                        field.onChange([
-                                          ...(selectedEventTypes || []),
-                                          eventType.value
-                                        ]);
-                                      }
-                                    }}
-                                    key={`event-type-${eventType.value}`}
-                                    icon={
-                                      isSelected ? (
-                                        <FontAwesomeIcon
-                                          icon={faCheckCircle}
-                                          className="pr-0.5 text-primary"
-                                        />
-                                      ) : (
-                                        <div className="pl-[1.01rem]" />
-                                      )
-                                    }
-                                    iconPos="left"
-                                    className="w-[28.4rem] text-sm"
-                                  >
-                                    {eventType.label}
-                                  </DropdownMenuItem>
-                                );
-                              })
-                            ) : (
-                              <div />
-                            )}
-                          </div>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <FilterableSelect
+                        value={filteredEventTypes.filter((eventType) =>
+                          field.value.includes(eventType.value as EventType)
+                        )}
+                        isMulti
+                        isClearable
+                        onChange={(options) =>
+                          field.onChange(
+                            (options as MultiValue<(typeof filteredEventTypes)[number]>).map(
+                              (option) => option.value
+                            )
+                          )
+                        }
+                        placeholder="All events"
+                        options={filteredEventTypes}
+                        getOptionValue={(option) => option.value}
+                        getOptionLabel={(option) => option.label}
+                      />
                     </FormControl>
                   )}
                 />
@@ -239,37 +196,33 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
               <LogFilterItem
                 label="Source"
                 onClear={() => {
-                  resetField("userAgentType");
+                  setValue("userAgentType", undefined, { shouldDirty: true });
                 }}
               >
                 <Controller
                   control={control}
                   name="userAgentType"
-                  render={({ field: { onChange, value, ...field }, fieldState: { error } }) => (
+                  render={({ field: { onChange, value }, fieldState: { error } }) => (
                     <FormControl
                       errorText={error?.message}
                       isError={Boolean(error)}
                       className="w-full"
                     >
-                      <Select
-                        {...field}
-                        value={value === undefined ? "all" : value}
-                        onValueChange={(e) => {
-                          if (e === "all") onChange(undefined);
-                          else setValue("userAgentType", e as UserAgentType, { shouldDirty: true });
-                        }}
-                        className={twMerge("w-full border border-mineshaft-500 bg-mineshaft-700")}
-                        position="popper"
-                      >
-                        <SelectItem value="all" key="all">
-                          All sources
-                        </SelectItem>
-                        {userAgentTypes.map(({ label, value: userAgent }) => (
-                          <SelectItem value={userAgent} key={label}>
-                            {label}
-                          </SelectItem>
-                        ))}
-                      </Select>
+                      <FilterableSelect
+                        value={
+                          userAgentTypes.find(
+                            (userAgentType) => value === (userAgentType.value as UserAgentType)
+                          ) ?? null
+                        }
+                        isClearable
+                        onChange={(option) =>
+                          onChange((option as SingleValue<(typeof userAgentTypes)[number]>)?.value)
+                        }
+                        placeholder="All sources"
+                        options={userAgentTypes}
+                        getOptionValue={(option) => option.value}
+                        getOptionLabel={(option) => option.label}
+                      />
                     </FormControl>
                   )}
                 />
@@ -278,10 +231,10 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
                 <LogFilterItem
                   label="Project"
                   onClear={() => {
-                    resetField("project");
-                    resetField("environment");
-                    setValue("secretPath", "");
-                    setValue("secretKey", "");
+                    setValue("project", null, { shouldDirty: true });
+                    setValue("environment", undefined, { shouldDirty: true });
+                    setValue("secretPath", "", { shouldDirty: true });
+                    setValue("secretKey", "", { shouldDirty: true });
                   }}
                 >
                   <Controller
@@ -326,9 +279,9 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
                     exit={{ opacity: 0, height: 0 }}
                     transition={{ duration: 0.3 }}
                   >
-                    <div className="mb-3 mt-2">
+                    <div className="mt-2 mb-3">
                       <p className="text-xs opacity-60">Secrets</p>
-                      <div className="h-[1px] w-full rounded-full bg-mineshaft-500" />
+                      <div className="h-px w-full rounded-full bg-mineshaft-500" />
                     </div>
                     <LogFilterItem
                       label="Environment"
@@ -339,7 +292,7 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
                       }
                       className={twMerge(!selectedProject && "opacity-50")}
                       onClear={() => {
-                        resetField("environment");
+                        setValue("environment", undefined, { shouldDirty: true });
                       }}
                     >
                       <Controller
@@ -380,7 +333,7 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
                       }
                       className={twMerge(!selectedProject && "opacity-50")}
                       onClear={() => {
-                        setValue("secretPath", "");
+                        setValue("secretPath", "", { shouldDirty: true });
                       }}
                     >
                       <Controller
@@ -411,7 +364,7 @@ export const LogsFilter = ({ presets, setFilter, filter, project }: Props) => {
                       className={twMerge(!selectedProject && "opacity-50")}
                       label="Secret Key"
                       onClear={() => {
-                        setValue("secretKey", "");
+                        setValue("secretKey", "", { shouldDirty: true });
                       }}
                     >
                       <Controller

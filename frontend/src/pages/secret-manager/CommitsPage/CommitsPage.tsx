@@ -1,14 +1,17 @@
-import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { faChevronLeft } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { PageHeader } from "@app/components/v2";
 import { NoticeBannerV2 } from "@app/components/v2/NoticeBannerV2/NoticeBannerV2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   ProjectPermissionCommitsActions,
   ProjectPermissionSub
 } from "@app/context/ProjectPermissionContext/types";
+import { ProjectType } from "@app/hooks/api/projects/types";
 
 import { CommitHistoryTab } from "./components/CommitHistoryTab";
 
@@ -17,11 +20,15 @@ export const CommitsPage = () => {
     from: ROUTE_PATHS.SecretManager.CommitsPage.id,
     select: (el) => el.environment
   });
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const navigate = useNavigate();
   const folderId = useParams({
     from: ROUTE_PATHS.SecretManager.CommitsPage.id,
     select: (el) => el.folderId
+  });
+  const orgId = useParams({
+    from: ROUTE_PATHS.SecretManager.CommitsPage.id,
+    select: (el) => el.orgId
   });
   const routerQueryParams: { secretPath?: string } = useSearch({
     from: ROUTE_PATHS.SecretManager.CommitsPage.id
@@ -31,9 +38,10 @@ export const CommitsPage = () => {
 
   const handleSelectCommit = (commitId: string) => {
     navigate({
-      to: "/projects/secret-management/$projectId/commits/$environment/$folderId/$commitId",
+      to: "/organizations/$orgId/projects/secret-management/$projectId/commits/$environment/$folderId/$commitId",
       params: {
-        projectId: currentWorkspace.id,
+        orgId,
+        projectId: currentProject.id,
         folderId,
         environment: envSlug,
         commitId
@@ -46,9 +54,22 @@ export const CommitsPage = () => {
   };
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-7xl justify-center bg-bunker-800 py-4 text-white">
-      <div className="w-full max-w-[75vw]">
+    <div className="mx-auto mb-4 flex h-full w-full max-w-8xl justify-center bg-bunker-800 text-white">
+      <div className="w-full">
+        <Link
+          to="/organizations/$orgId/projects/secret-management/$projectId/secrets/$envSlug"
+          params={{
+            orgId,
+            projectId: currentProject.id,
+            envSlug
+          }}
+          className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+        >
+          <FontAwesomeIcon icon={faChevronLeft} />
+          Secrets
+        </Link>
         <PageHeader
+          scope={ProjectType.SecretManager}
           title="Commits"
           description="Track, inspect, and restore your secrets and folders with confidence. View the complete history of changes made to your environment, examine specific modifications at each commit point, and preview the exact impact before rolling back to previous states."
         />
@@ -67,7 +88,7 @@ export const CommitsPage = () => {
         >
           <CommitHistoryTab
             onSelectCommit={handleSelectCommit}
-            projectId={currentWorkspace.id}
+            projectId={currentProject.id}
             environment={envSlug}
             secretPath={secretPath}
           />

@@ -13,7 +13,7 @@ import {
   Select,
   SelectItem
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   useCreatePkiAlert,
   useGetPkiAlertById,
@@ -60,15 +60,15 @@ type Props = {
 };
 
 export const PkiAlertModal = ({ popUp, handlePopUpToggle }: Props) => {
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentProject } = useProject();
+  const projectId = currentProject?.id || "";
 
   const { data: alert } = useGetPkiAlertById(
     (popUp?.pkiAlert?.data as { alertId: string })?.alertId || ""
   );
 
   const { data: pkiCollections } = useListWorkspacePkiCollections({
-    workspaceId: projectId
+    projectId
   });
 
   const { mutateAsync: createPkiAlert } = useCreatePkiAlert();
@@ -113,52 +113,44 @@ export const PkiAlertModal = ({ popUp, handlePopUpToggle }: Props) => {
     alertUnit,
     emails
   }: FormData) => {
-    try {
-      if (!projectId) return;
+    if (!projectId) return;
 
-      const emailArray = emails
-        .split(",")
-        .map((email) => email.trim())
-        .filter((email) => email.length > 0);
+    const emailArray = emails
+      .split(",")
+      .map((email) => email.trim())
+      .filter((email) => email.length > 0);
 
-      const alertBeforeDays = convertToDays(alertUnit, Number(alertBefore));
+    const alertBeforeDays = convertToDays(alertUnit, Number(alertBefore));
 
-      if (alert) {
-        // update
-        await updatePkiAlert({
-          alertId: alert.id,
-          pkiCollectionId,
-          name,
-          projectId,
-          alertBeforeDays,
-          emails: emailArray
-        });
-      } else {
-        // create
-        await createPkiAlert({
-          name,
-          projectId,
-          pkiCollectionId,
-          alertBeforeDays,
-          emails: emailArray
-        });
-      }
-
-      handlePopUpToggle("pkiAlert", false);
-
-      reset();
-
-      createNotification({
-        text: `Successfully ${alert ? "updated" : "created"} alert`,
-        type: "success"
+    if (alert) {
+      // update
+      await updatePkiAlert({
+        alertId: alert.id,
+        pkiCollectionId,
+        name,
+        projectId,
+        alertBeforeDays,
+        emails: emailArray
       });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: `Failed to ${alert ? "updated" : "created"} alert`,
-        type: "error"
+    } else {
+      // create
+      await createPkiAlert({
+        name,
+        projectId,
+        pkiCollectionId,
+        alertBeforeDays,
+        emails: emailArray
       });
     }
+
+    handlePopUpToggle("pkiAlert", false);
+
+    reset();
+
+    createNotification({
+      text: `Successfully ${alert ? "updated" : "created"} alert`,
+      type: "success"
+    });
   };
 
   return (

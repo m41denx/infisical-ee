@@ -1,3 +1,4 @@
+/* eslint-disable no-await-in-loop */
 import { ForbiddenError } from "@casl/ability";
 import * as x509 from "@peculiar/x509";
 
@@ -17,14 +18,23 @@ import { TCertificateAuthorityDALFactory } from "@app/services/certificate-autho
 import { CaCapability, CaType } from "@app/services/certificate-authority/certificate-authority-enums";
 import { caSupportsCapability } from "@app/services/certificate-authority/certificate-authority-maps";
 import { TCertificateAuthoritySecretDALFactory } from "@app/services/certificate-authority/certificate-authority-secret-dal";
+import { TCertificateSyncDALFactory } from "@app/services/certificate-sync/certificate-sync-dal";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { TPkiCollectionDALFactory } from "@app/services/pki-collection/pki-collection-dal";
 import { TPkiCollectionItemDALFactory } from "@app/services/pki-collection/pki-collection-item-dal";
+import { TPkiSyncDALFactory } from "@app/services/pki-sync/pki-sync-dal";
+import { TPkiSyncQueueFactory } from "@app/services/pki-sync/pki-sync-queue";
+import { triggerAutoSyncForCertificate } from "@app/services/pki-sync/pki-sync-utils";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 import { getProjectKmsCertificateKeyId } from "@app/services/project/project-fns";
 
 import { expandInternalCa, getCaCertChain, rebuildCaCrl } from "../certificate-authority/certificate-authority-fns";
-import { getCertificateCredentials, revocationReasonToCrlCode, splitPemChain } from "./certificate-fns";
+import {
+  generatePkcs12FromCertificate,
+  getCertificateCredentials,
+  revocationReasonToCrlCode,
+  splitPemChain
+} from "./certificate-fns";
 import { TCertificateSecretDALFactory } from "./certificate-secret-dal";
 import {
   CertExtendedKeyUsage,
@@ -35,13 +45,17 @@ import {
   TGetCertBodyDTO,
   TGetCertBundleDTO,
   TGetCertDTO,
+  TGetCertPkcs12DTO,
   TGetCertPrivateKeyDTO,
   TImportCertDTO,
   TRevokeCertDTO
 } from "./certificate-types";
 
 type TCertificateServiceFactoryDep = {
-  certificateDAL: Pick<TCertificateDALFactory, "findOne" | "deleteById" | "update" | "find" | "transaction" | "create">;
+  certificateDAL: Pick<
+    TCertificateDALFactory,
+    "findOne" | "deleteById" | "update" | "find" | "transaction" | "create" | "findById"
+  >;
   certificateSecretDAL: Pick<TCertificateSecretDALFactory, "findOne" | "create">;
   certificateBodyDAL: Pick<TCertificateBodyDALFactory, "findOne" | "create">;
   certificateAuthorityDAL: Pick<TCertificateAuthorityDALFactory, "findById" | "findByIdWithAssociatedCa">;
@@ -53,6 +67,9 @@ type TCertificateServiceFactoryDep = {
   projectDAL: Pick<TProjectDALFactory, "findProjectBySlug" | "findOne" | "updateById" | "findById" | "transaction">;
   kmsService: Pick<TKmsServiceFactory, "generateKmsKey" | "encryptWithKmsKey" | "decryptWithKmsKey">;
   permissionService: Pick<TPermissionServiceFactory, "getProjectPermission">;
+  certificateSyncDAL: Pick<TCertificateSyncDALFactory, "findPkiSyncIdsByCertificateId">;
+  pkiSyncDAL: Pick<TPkiSyncDALFactory, "find">;
+  pkiSyncQueue: Pick<TPkiSyncQueueFactory, "queuePkiSyncSyncCertificatesById">;
 };
 
 export type TCertificateServiceFactory = ReturnType<typeof certificateServiceFactory>;
@@ -69,13 +86,16 @@ export const certificateServiceFactory = ({
   pkiCollectionItemDAL,
   projectDAL,
   kmsService,
-  permissionService
+  permissionService,
+  certificateSyncDAL,
+  pkiSyncDAL,
+  pkiSyncQueue
 }: TCertificateServiceFactoryDep) => {
   /**
    * Return details for certificate with serial number [serialNumber]
    */
-  const getCert = async ({ serialNumber, actorId, actorAuthMethod, actor, actorOrgId }: TGetCertDTO) => {
-    const cert = await certificateDAL.findOne({ serialNumber });
+  const getCert = async ({ id, serialNumber, actorId, actorAuthMethod, actor, actorOrgId }: TGetCertDTO) => {
+    const cert = id ? await certificateDAL.findById(id) : await certificateDAL.findOne({ serialNumber });
 
     const { permission } = await permissionService.getProjectPermission({
       actor,
@@ -100,13 +120,14 @@ export const certificateServiceFactory = ({
    * Get certificate private key.
    */
   const getCertPrivateKey = async ({
+    id,
     serialNumber,
     actorId,
     actorAuthMethod,
     actor,
     actorOrgId
   }: TGetCertPrivateKeyDTO) => {
-    const cert = await certificateDAL.findOne({ serialNumber });
+    const cert = id ? await certificateDAL.findById(id) : await certificateDAL.findOne({ serialNumber });
 
     const { permission } = await permissionService.getProjectPermission({
       actor,
@@ -139,8 +160,8 @@ export const certificateServiceFactory = ({
   /**
    * Delete certificate with serial number [serialNumber]
    */
-  const deleteCert = async ({ serialNumber, actorId, actorAuthMethod, actor, actorOrgId }: TDeleteCertDTO) => {
-    const cert = await certificateDAL.findOne({ serialNumber });
+  const deleteCert = async ({ id, serialNumber, actorId, actorAuthMethod, actor, actorOrgId }: TDeleteCertDTO) => {
+    const cert = id ? await certificateDAL.findById(id) : await certificateDAL.findOne({ serialNumber });
 
     const { permission } = await permissionService.getProjectPermission({
       actor,
@@ -158,6 +179,13 @@ export const certificateServiceFactory = ({
 
     const deletedCert = await certificateDAL.deleteById(cert.id);
 
+    // Trigger auto sync for PKI syncs connected to this certificate
+    await triggerAutoSyncForCertificate(cert.id, {
+      certificateSyncDAL,
+      pkiSyncDAL,
+      pkiSyncQueue
+    });
+
     return {
       deletedCert
     };
@@ -169,6 +197,7 @@ export const certificateServiceFactory = ({
    * of its issuing CA
    */
   const revokeCert = async ({
+    id,
     serialNumber,
     revocationReason,
     actorId,
@@ -176,7 +205,7 @@ export const certificateServiceFactory = ({
     actor,
     actorOrgId
   }: TRevokeCertDTO) => {
-    const cert = await certificateDAL.findOne({ serialNumber });
+    const cert = id ? await certificateDAL.findById(id) : await certificateDAL.findOne({ serialNumber });
 
     if (!cert.caId) {
       throw new BadRequestError({
@@ -222,6 +251,13 @@ export const certificateServiceFactory = ({
       }
     );
 
+    // Trigger auto sync for PKI syncs connected to this certificate
+    await triggerAutoSyncForCertificate(cert.id, {
+      certificateSyncDAL,
+      pkiSyncDAL,
+      pkiSyncQueue
+    });
+
     // Note: External CA revocation handling would go here for supported CA types
     // Currently, only internal CAs and ACME CAs support revocation
 
@@ -259,8 +295,8 @@ export const certificateServiceFactory = ({
    * Return certificate body and certificate chain for certificate with
    * serial number [serialNumber]
    */
-  const getCertBody = async ({ serialNumber, actorId, actorAuthMethod, actor, actorOrgId }: TGetCertBodyDTO) => {
-    const cert = await certificateDAL.findOne({ serialNumber });
+  const getCertBody = async ({ id, serialNumber, actorId, actorAuthMethod, actor, actorOrgId }: TGetCertBodyDTO) => {
+    const cert = id ? await certificateDAL.findById(id) : await certificateDAL.findOne({ serialNumber });
 
     const { permission } = await permissionService.getProjectPermission({
       actor,
@@ -277,6 +313,14 @@ export const certificateServiceFactory = ({
     );
 
     const certBody = await certificateBodyDAL.findOne({ certId: cert.id });
+
+    if (!certBody) {
+      throw new NotFoundError({ message: "Certificate body not found" });
+    }
+
+    if (!certBody.encryptedCertificate) {
+      throw new BadRequestError({ message: "Certificate data not available" });
+    }
 
     const certificateManagerKeyId = await getProjectKmsCertificateKeyId({
       projectId: cert.projectId,
@@ -545,8 +589,15 @@ export const certificateServiceFactory = ({
    * Return certificate body and certificate chain for certificate with
    * serial number [serialNumber]
    */
-  const getCertBundle = async ({ serialNumber, actorId, actorAuthMethod, actor, actorOrgId }: TGetCertBundleDTO) => {
-    const cert = await certificateDAL.findOne({ serialNumber });
+  const getCertBundle = async ({
+    id,
+    serialNumber,
+    actorId,
+    actorAuthMethod,
+    actor,
+    actorOrgId
+  }: TGetCertBundleDTO) => {
+    const cert = id ? await certificateDAL.findById(id) : await certificateDAL.findOne({ serialNumber });
 
     const { permission } = await permissionService.getProjectPermission({
       actor,
@@ -567,6 +618,14 @@ export const certificateServiceFactory = ({
     );
 
     const certBody = await certificateBodyDAL.findOne({ certId: cert.id });
+
+    if (!certBody) {
+      throw new NotFoundError({ message: "Certificate body not found" });
+    }
+
+    if (!certBody.encryptedCertificate) {
+      throw new BadRequestError({ message: "Certificate data not available" });
+    }
 
     const certificateManagerKeyId = await getProjectKmsCertificateKeyId({
       projectId: cert.projectId,
@@ -626,7 +685,73 @@ export const certificateServiceFactory = ({
       certificate,
       certificateChain,
       privateKey,
-      serialNumber,
+      serialNumber: cert.serialNumber,
+      cert
+    };
+  };
+
+  const getCertPkcs12 = async ({
+    id,
+    serialNumber,
+    password,
+    alias,
+    actorId,
+    actorAuthMethod,
+    actor,
+    actorOrgId
+  }: TGetCertPkcs12DTO) => {
+    if (!password || password.trim() === "") {
+      throw new BadRequestError({ message: "Password is required for PKCS12 keystore generation" });
+    }
+
+    if (password.length < 6) {
+      throw new BadRequestError({
+        message: "Password must be at least 6 characters long for PKCS12 keystore security"
+      });
+    }
+
+    if (!alias || alias.trim() === "") {
+      throw new BadRequestError({ message: "Alias is required for PKCS12 keystore generation" });
+    }
+    const cert = id ? await certificateDAL.findById(id) : await certificateDAL.findOne({ serialNumber });
+
+    const { permission } = await permissionService.getProjectPermission({
+      actor,
+      actorId,
+      projectId: cert.projectId,
+      actorAuthMethod,
+      actorOrgId,
+      actionProjectType: ActionProjectType.CertificateManager
+    });
+
+    ForbiddenError.from(permission).throwUnlessCan(
+      ProjectPermissionCertificateActions.ReadPrivateKey,
+      ProjectPermissionSub.Certificates
+    );
+
+    // Get certificate bundle (certificate, chain, private key)
+    const { certificate, certificateChain, privateKey } = await getCertBundle({
+      id: cert.id,
+      actor,
+      actorId,
+      actorAuthMethod,
+      actorOrgId
+    });
+
+    if (!privateKey) {
+      throw new BadRequestError({ message: "Certificate private key is required for PKCS12 export" });
+    }
+
+    const pkcs12Data = await generatePkcs12FromCertificate({
+      certificate,
+      certificateChain: certificateChain || "",
+      privateKey,
+      password,
+      alias
+    });
+
+    return {
+      pkcs12Data,
       cert
     };
   };
@@ -638,6 +763,7 @@ export const certificateServiceFactory = ({
     revokeCert,
     getCertBody,
     importCert,
-    getCertBundle
+    getCertBundle,
+    getCertPkcs12
   };
 };

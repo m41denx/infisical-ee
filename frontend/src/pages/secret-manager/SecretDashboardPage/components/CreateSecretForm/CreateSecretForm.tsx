@@ -1,12 +1,12 @@
 import { ClipboardEvent, useRef } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { faTriangleExclamation } from "@fortawesome/free-solid-svg-icons";
+import { faTriangleExclamation, faWarning } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
-import { Button, FormControl, Input, PasswordGenerator } from "@app/components/v2";
+import { Button, FormControl, Input, PasswordGenerator, Tooltip } from "@app/components/v2";
 import { CreatableSelect } from "@app/components/v2/CreatableSelect";
 import { InfisicalSecretInput } from "@app/components/v2/InfisicalSecretInput";
 import { ProjectPermissionActions, ProjectPermissionSub, useProjectPermission } from "@app/context";
@@ -32,7 +32,7 @@ type TFormSchema = z.infer<typeof typeSchema>;
 
 type Props = {
   environment: string;
-  workspaceId: string;
+  projectId: string;
   secretPath?: string;
   // modal props
   autoCapitalize?: boolean;
@@ -42,7 +42,7 @@ type Props = {
 
 export const CreateSecretForm = ({
   environment,
-  workspaceId,
+  projectId,
   secretPath = "/",
   autoCapitalize = true,
   isProtectedBranch = false,
@@ -66,7 +66,7 @@ export const CreateSecretForm = ({
   const { permission } = useProjectPermission();
   const canReadTags = permission.can(ProjectPermissionActions.Read, ProjectPermissionSub.Tags);
   const { data: projectTags, isPending: isTagsLoading } = useGetWsTags(
-    canReadTags ? workspaceId : ""
+    canReadTags ? projectId : ""
   );
 
   const secretKeyInputRef = useRef<HTMLInputElement>(null);
@@ -77,69 +77,55 @@ export const CreateSecretForm = ({
   const slugSchema = z.string().trim().toLowerCase().min(1);
   const createNewTag = async (slug: string) => {
     // TODO: Replace with slugSchema generic
-    try {
-      const parsedSlug = slugSchema.parse(slug);
-      await createWsTag.mutateAsync({
-        workspaceID: workspaceId,
-        tagSlug: parsedSlug,
-        tagColor: ""
-      });
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to create new tag"
-      });
-    }
+    const parsedSlug = slugSchema.parse(slug);
+    await createWsTag.mutateAsync({
+      projectId,
+      tagSlug: parsedSlug,
+      tagColor: ""
+    });
   };
 
   const handleFormSubmit = async ({ key, value, tags }: TFormSchema) => {
-    try {
-      if (isBatchMode) {
-        const pendingSecretCreate: PendingSecretCreate = {
-          id: key,
-          type: PendingAction.Create,
-          secretKey: key,
-          secretValue: value || "",
-          secretComment: "",
-          tags: tags?.map((el) => ({ id: el.value, slug: el.label })),
-          timestamp: Date.now(),
-          resourceType: "secret"
-        };
-        addPendingChange(pendingSecretCreate, {
-          workspaceId,
-          environment,
-          secretPath
-        });
-        closePopUp(PopUpNames.CreateSecretForm);
-        reset();
-        return;
-      }
-      await createSecretV3({
-        environment,
-        workspaceId,
-        secretPath,
+    if (isBatchMode) {
+      const pendingSecretCreate: PendingSecretCreate = {
+        id: key,
+        type: PendingAction.Create,
         secretKey: key,
         secretValue: value || "",
         secretComment: "",
-        type: SecretType.Shared,
-        tagIds: tags?.map((el) => el.value)
+        tags: tags?.map((el) => ({ id: el.value, slug: el.label })),
+        timestamp: Date.now(),
+        resourceType: "secret"
+      };
+      addPendingChange(pendingSecretCreate, {
+        projectId,
+
+        environment,
+        secretPath
       });
       closePopUp(PopUpNames.CreateSecretForm);
       reset();
-
-      createNotification({
-        type: isProtectedBranch ? "info" : "success",
-        text: isProtectedBranch
-          ? "Requested changes have been sent for review"
-          : "Successfully created secret"
-      });
-    } catch (error) {
-      console.log(error);
-      createNotification({
-        type: "error",
-        text: "Failed to create secret"
-      });
+      return;
     }
+    await createSecretV3({
+      environment,
+      projectId,
+      secretPath,
+      secretKey: key,
+      secretValue: value || "",
+      secretComment: "",
+      type: SecretType.Shared,
+      tagIds: tags?.map((el) => el.value)
+    });
+    closePopUp(PopUpNames.CreateSecretForm);
+    reset();
+
+    createNotification({
+      type: isProtectedBranch ? "info" : "success",
+      text: isProtectedBranch
+        ? "Requested changes have been sent for review"
+        : "Successfully created secret"
+    });
   };
 
   const handlePaste = (e: ClipboardEvent<HTMLInputElement>) => {
@@ -177,6 +163,29 @@ export const CreateSecretForm = ({
             // @ts-expect-error this is for multiple ref single component
             secretKeyInputRef.current = e;
           }}
+          warning={
+            secretKey?.includes(" ") ? (
+              <Tooltip
+                className="w-full max-w-72"
+                content={
+                  <div>
+                    Secret key contains whitespaces.
+                    <br />
+                    <br /> If this is the desired format, you need to provide it as{" "}
+                    <code className="rounded-md bg-mineshaft-500 px-1 py-0.5">
+                      {encodeURIComponent(secretKey.trim())}
+                    </code>{" "}
+                    when making API requests.
+                  </div>
+                }
+              >
+                <FontAwesomeIcon
+                  icon={faWarning}
+                  className="absolute right-0 mr-3 text-yellow-600"
+                />
+              </Tooltip>
+            ) : undefined
+          }
           placeholder="Type your secret name"
           onPaste={handlePaste}
           autoCapitalization={autoCapitalize}
@@ -188,6 +197,21 @@ export const CreateSecretForm = ({
         render={({ field }) => (
           <FormControl
             label="Value"
+            tooltipText={
+              <div>
+                You can add references to other secrets using the format{" "}
+                <code className="rounded-sm bg-mineshaft-600 px-1 py-0.5">
+                  &#36;{"{"}secret_name{"}"}
+                </code>
+                <br />
+                <br />
+                You can go to the referenced secret by holding the{" "}
+                <code className="rounded-sm bg-mineshaft-600 px-1 py-0.5">Cmd</code> (Mac) or{" "}
+                <code className="rounded-sm bg-mineshaft-600 px-1 py-0.5">Ctrl</code>{" "}
+                (Windows/Linux) key and clicking on the secret name.
+              </div>
+            }
+            tooltipClassName="max-w-md"
             isError={Boolean(errors?.value)}
             errorText={errors?.value?.message}
           >

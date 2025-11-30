@@ -16,7 +16,7 @@ import {
 } from "@app/components/v2";
 import { SecretPathInput } from "@app/components/v2/SecretPathInput";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useCreateIntegration, useGetIntegrationAuthApps } from "@app/hooks/api";
 import {
   useGetIntegrationAuthOctopusDeployScopeValues,
@@ -47,7 +47,7 @@ type TFormData = z.infer<typeof formSchema>;
 export const OctopusDeployConfigurePage = () => {
   const navigate = useNavigate();
   const createIntegration = useCreateIntegration();
-
+  const { currentOrg } = useOrganization();
   const { watch, control, reset, handleSubmit } = useForm<TFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -56,7 +56,7 @@ export const OctopusDeployConfigurePage = () => {
     }
   });
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const integrationAuthId = useSearch({
     from: ROUTE_PATHS.SecretManager.Integratons.OctopusDeployCloudConfigurePage.id,
     select: (el) => el.integrationAuthId
@@ -107,62 +107,55 @@ export const OctopusDeployConfigurePage = () => {
     targetRoles,
     scope
   }: TFormData) => {
-    try {
-      await createIntegration.mutateAsync({
-        integrationAuthId,
-        isActive: true,
-        scope,
-        app: targetResource.name,
-        appId: targetResource.appId,
-        targetEnvironment: targetSpace.Name,
-        targetEnvironmentId: targetSpace.Id,
-        metadata: {
-          octopusDeployScopeValues: {
-            Environment: targetEnvironments?.map(({ Id }) => Id),
-            Action: targetActions?.map(({ Id }) => Id),
-            Channel: targetChannels?.map(({ Id }) => Id),
-            ProcessOwner: targetProcesses?.map(({ Id }) => Id),
-            Role: targetRoles?.map(({ Id }) => Id),
-            Machine: targetMachines?.map(({ Id }) => Id)
-          }
-        },
-        sourceEnvironment: sourceEnvironment.slug,
-        secretPath
-      });
-
-      createNotification({
-        type: "success",
-        text: "Successfully created integration"
-      });
-      navigate({
-        to: "/projects/secret-management/$projectId/integrations",
-        params: {
-          projectId: currentWorkspace.id
-        },
-        search: {
-          selectedTab: IntegrationsListPageTabs.NativeIntegrations
+    await createIntegration.mutateAsync({
+      integrationAuthId,
+      isActive: true,
+      scope,
+      app: targetResource.name,
+      appId: targetResource.appId,
+      targetEnvironment: targetSpace.Name,
+      targetEnvironmentId: targetSpace.Id,
+      metadata: {
+        octopusDeployScopeValues: {
+          Environment: targetEnvironments?.map(({ Id }) => Id),
+          Action: targetActions?.map(({ Id }) => Id),
+          Channel: targetChannels?.map(({ Id }) => Id),
+          ProcessOwner: targetProcesses?.map(({ Id }) => Id),
+          Role: targetRoles?.map(({ Id }) => Id),
+          Machine: targetMachines?.map(({ Id }) => Id)
         }
-      });
-    } catch (err) {
-      createNotification({
-        type: "error",
-        text: "Failed to create integration"
-      });
-      console.error(err);
-    }
+      },
+      sourceEnvironment: sourceEnvironment.slug,
+      secretPath
+    });
+
+    createNotification({
+      type: "success",
+      text: "Successfully created integration"
+    });
+    navigate({
+      to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
+      params: {
+        orgId: currentOrg.id,
+        projectId: currentProject.id
+      },
+      search: {
+        selectedTab: IntegrationsListPageTabs.NativeIntegrations
+      }
+    });
   };
 
   useEffect(() => {
-    if (!octopusDeployResources || !octopusDeploySpaces || !currentWorkspace) return;
+    if (!octopusDeployResources || !octopusDeploySpaces || !currentProject) return;
 
     reset({
       targetResource: octopusDeployResources[0],
       targetSpace: octopusDeploySpaces.find((space) => space.IsDefault),
-      sourceEnvironment: currentWorkspace.environments[0],
+      sourceEnvironment: currentProject.environments[0],
       secretPath: "/",
       scope: OctopusDeployScope.Project
     });
-  }, [octopusDeploySpaces, octopusDeployResources, currentWorkspace]);
+  }, [octopusDeploySpaces, octopusDeployResources, currentProject]);
 
   if (isLoadingOctopusDeploySpaces || isOctopusDeployResourcesLoading)
     return (
@@ -178,7 +171,7 @@ export const OctopusDeployConfigurePage = () => {
     >
       <Card className="max-w-4xl rounded-md p-8 pt-4">
         <CardTitle className="text-center">
-          <SiOctopusdeploy size="1.2rem" className="mb-1 mr-2 inline-block" />
+          <SiOctopusdeploy size="1.2rem" className="mr-2 mb-1 inline-block" />
           Octopus Deploy Integration
         </CardTitle>
         <div className="grid grid-cols-2 gap-4">
@@ -196,9 +189,9 @@ export const OctopusDeployConfigurePage = () => {
                   value={value}
                   getOptionLabel={(option) => option.name}
                   onChange={onChange}
-                  options={currentWorkspace?.environments}
+                  options={currentProject?.environments}
                   placeholder="Select a project environment"
-                  isDisabled={!currentWorkspace?.environments.length}
+                  isDisabled={!currentProject?.environments.length}
                 />
               </FormControl>
             )}
@@ -219,7 +212,7 @@ export const OctopusDeployConfigurePage = () => {
           />
           <div className="col-span-2 flex w-full flex-row items-center pb-2">
             <div className="w-full border-t border-mineshaft-500" />
-            <span className="mx-2 whitespace-nowrap text-xs text-mineshaft-400">Sync To</span>
+            <span className="mx-2 text-xs whitespace-nowrap text-mineshaft-400">Sync To</span>
             <div className="w-full border-t border-mineshaft-500" />
           </div>
           <Controller

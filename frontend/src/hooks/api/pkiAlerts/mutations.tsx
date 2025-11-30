@@ -2,10 +2,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiRequest } from "@app/config/request";
 
-import { workspaceKeys } from "../workspace";
+import { projectKeys } from "../projects";
 import { pkiAlertKeys } from "./queries";
 import { TCreatePkiAlertDTO, TDeletePkiAlertDTO, TPkiAlert, TUpdatePkiAlertDTO } from "./types";
 
+// TODO: DEPRECATE
 export const useCreatePkiAlert = () => {
   const queryClient = useQueryClient();
   return useMutation<TPkiAlert, object, TCreatePkiAlertDTO>({
@@ -14,11 +15,12 @@ export const useCreatePkiAlert = () => {
       return alert;
     },
     onSuccess: (_, { projectId }) => {
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.getWorkspacePkiAlerts(projectId) });
+      queryClient.invalidateQueries({ queryKey: projectKeys.getProjectPkiAlerts(projectId) });
     }
   });
 };
 
+// TODO: DEPRECATE
 export const useUpdatePkiAlert = () => {
   const queryClient = useQueryClient();
   return useMutation<TPkiAlert, object, TUpdatePkiAlertDTO>({
@@ -30,12 +32,13 @@ export const useUpdatePkiAlert = () => {
       return alert;
     },
     onSuccess: (_, { projectId, alertId }) => {
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.getWorkspacePkiAlerts(projectId) });
+      queryClient.invalidateQueries({ queryKey: projectKeys.getProjectPkiAlerts(projectId) });
       queryClient.invalidateQueries({ queryKey: pkiAlertKeys.getPkiAlertById(alertId) });
     }
   });
 };
 
+// TODO: DEPRECATE
 export const useDeletePkiAlert = () => {
   const queryClient = useQueryClient();
   return useMutation<TPkiAlert, object, TDeletePkiAlertDTO>({
@@ -44,7 +47,7 @@ export const useDeletePkiAlert = () => {
       return alert;
     },
     onSuccess: (_, { projectId, alertId }) => {
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.getWorkspacePkiAlerts(projectId) });
+      queryClient.invalidateQueries({ queryKey: projectKeys.getProjectPkiAlerts(projectId) });
       queryClient.invalidateQueries({ queryKey: pkiAlertKeys.getPkiAlertById(alertId) });
     }
   });

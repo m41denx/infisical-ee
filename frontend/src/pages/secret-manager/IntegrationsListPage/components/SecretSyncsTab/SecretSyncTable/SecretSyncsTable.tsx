@@ -36,7 +36,7 @@ import {
   THead,
   Tr
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import { SECRET_SYNC_MAP } from "@app/helpers/secretSyncs";
 import {
   getUserTablePreference,
@@ -109,7 +109,7 @@ export const SecretSyncsTable = ({ secretSyncs }: Props) => {
     environmentIds: []
   });
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   const {
     search,
@@ -235,46 +235,32 @@ export const SecretSyncsTable = ({ secretSyncs }: Props) => {
 
     const isAutoSyncEnabled = !secretSync.isAutoSyncEnabled;
 
-    try {
-      await updateSync.mutateAsync({
-        syncId: secretSync.id,
-        destination: secretSync.destination,
-        isAutoSyncEnabled,
-        projectId: secretSync.projectId
-      });
+    await updateSync.mutateAsync({
+      syncId: secretSync.id,
+      destination: secretSync.destination,
+      isAutoSyncEnabled,
+      projectId: secretSync.projectId
+    });
 
-      createNotification({
-        text: `Successfully ${isAutoSyncEnabled ? "enabled" : "disabled"} auto-sync for ${destinationName} Sync`,
-        type: "success"
-      });
-    } catch {
-      createNotification({
-        text: `Failed to ${isAutoSyncEnabled ? "enable" : "disable"} auto-sync for ${destinationName} Sync`,
-        type: "error"
-      });
-    }
+    createNotification({
+      text: `Successfully ${isAutoSyncEnabled ? "enabled" : "disabled"} auto-sync for ${destinationName} Sync`,
+      type: "success"
+    });
   };
 
   const handleTriggerSync = async (secretSync: TSecretSync) => {
     const destinationName = SECRET_SYNC_MAP[secretSync.destination].name;
 
-    try {
-      await triggerSync.mutateAsync({
-        syncId: secretSync.id,
-        destination: secretSync.destination,
-        projectId: secretSync.projectId
-      });
+    await triggerSync.mutateAsync({
+      syncId: secretSync.id,
+      destination: secretSync.destination,
+      projectId: secretSync.projectId
+    });
 
-      createNotification({
-        text: `Successfully triggered ${destinationName} Sync`,
-        type: "success"
-      });
-    } catch {
-      createNotification({
-        text: `Failed to trigger ${destinationName} Sync`,
-        type: "error"
-      });
-    }
+    createNotification({
+      text: `Successfully triggered ${destinationName} Sync`,
+      type: "success"
+    });
   };
 
   return (
@@ -301,7 +287,7 @@ export const SecretSyncsTable = ({ secretSyncs }: Props) => {
               <FontAwesomeIcon icon={faFilter} />
             </IconButton>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="thin-scrollbar max-h-[70vh] overflow-y-auto" align="end">
+          <DropdownMenuContent className="max-h-[70vh] thin-scrollbar overflow-y-auto" align="end">
             <DropdownMenuLabel>Status</DropdownMenuLabel>
             {[SecretSyncStatus.Running, SecretSyncStatus.Succeeded, SecretSyncStatus.Failed].map(
               (status) => (
@@ -372,7 +358,7 @@ export const SecretSyncsTable = ({ secretSyncs }: Props) => {
               <DropdownMenuItem isDisabled>No Secret Syncs Configured</DropdownMenuItem>
             )}
             <DropdownMenuLabel>Environment</DropdownMenuLabel>
-            {currentWorkspace.environments.map((env) => (
+            {currentProject.environments.map((env) => (
               <DropdownMenuItem
                 onClick={(e) => {
                   e.preventDefault();
@@ -441,7 +427,7 @@ export const SecretSyncsTable = ({ secretSyncs }: Props) => {
                   </IconButton>
                 </div>
               </Th>
-              <Th className="min-w-[10.5rem]">
+              <Th className="min-w-42">
                 <div className="flex items-center">
                   Status
                   <IconButton

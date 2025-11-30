@@ -1,10 +1,12 @@
 import { subject } from "@casl/ability";
-import { faEdit, faTriangleExclamation } from "@fortawesome/free-solid-svg-icons";
+import { faEdit } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { AlertTriangleIcon } from "lucide-react";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { GenericFieldLabel } from "@app/components/secret-syncs";
-import { Badge, IconButton, Tooltip } from "@app/components/v2";
+import { IconButton, Tooltip } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { ProjectPermissionSub } from "@app/context";
 import { ProjectPermissionSecretSyncActions } from "@app/context/ProjectPermissionContext/types";
 import { TSecretSync } from "@app/hooks/api/secretSyncs";
@@ -29,17 +31,14 @@ export const SecretSyncSourceSection = ({ secretSync, onEditSource }: Props) => 
     <div>
       <div className="flex w-full flex-col gap-3 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-4 py-3">
         <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
-          <h3 className="font-semibold text-mineshaft-100">Source</h3>
+          <h3 className="font-medium text-mineshaft-100">Source</h3>
           <div>
             {(!folder || !environment) && (
               <Tooltip content="The source location for this sync has been deleted. Configure a new source or remove this sync.">
                 <div className="mr-1 inline-block w-min">
-                  <Badge
-                    className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap"
-                    variant="primary"
-                  >
-                    <FontAwesomeIcon icon={faTriangleExclamation} />
-                    <span>Folder Deleted</span>
+                  <Badge variant="danger">
+                    <AlertTriangleIcon />
+                    Folder Deleted
                   </Badge>
                 </div>
               </Tooltip>

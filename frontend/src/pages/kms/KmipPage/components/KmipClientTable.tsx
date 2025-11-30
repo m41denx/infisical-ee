@@ -39,9 +39,9 @@ import {
 import {
   ProjectPermissionKmipActions,
   ProjectPermissionSub,
+  useProject,
   useProjectPermission,
-  useSubscription,
-  useWorkspace
+  useSubscription
 } from "@app/context";
 import {
   getUserTablePreference,
@@ -59,9 +59,9 @@ import { KmipClientCertificateModal } from "./KmipClientCertificateModal";
 import { KmipClientModal } from "./KmipClientModal";
 
 export const KmipClientTable = () => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
-  const projectId = currentWorkspace?.id ?? "";
+  const projectId = currentProject?.id ?? "";
 
   const {
     offset,
@@ -143,7 +143,7 @@ export const KmipClientTable = () => {
     >
       <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
         <div className="mb-4 flex items-center justify-between">
-          <p className="whitespace-nowrap text-xl font-semibold text-mineshaft-100">KMIP Clients</p>
+          <p className="text-xl font-medium whitespace-nowrap text-mineshaft-100">KMIP Clients</p>
           <div className="flex w-full justify-end pr-4">
             <a
               target="_blank"
@@ -170,7 +170,9 @@ export const KmipClientTable = () => {
                 leftIcon={<FontAwesomeIcon icon={faPlus} />}
                 onClick={() => {
                   if (subscription && !subscription.kmip) {
-                    handlePopUpOpen("upgradePlan");
+                    handlePopUpOpen("upgradePlan", {
+                      isEnterpriseFeature: true
+                    });
                     return;
                   }
 
@@ -342,7 +344,8 @@ export const KmipClientTable = () => {
         <UpgradePlanModal
           isOpen={popUp.upgradePlan.isOpen}
           onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-          text="KMIP requires an enterprise plan."
+          text="Your current plan does not include access to KMIP. To unlock this feature, please upgrade to Infisical Enterprise plan."
+          isEnterpriseFeature={popUp.upgradePlan.data?.isEnterpriseFeature}
         />
       </div>
     </motion.div>

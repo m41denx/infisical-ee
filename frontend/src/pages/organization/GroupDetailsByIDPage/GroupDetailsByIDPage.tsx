@@ -1,9 +1,10 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { faChevronLeft } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { twMerge } from "tailwind-merge";
 
-import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
 import {
@@ -18,7 +19,7 @@ import {
   Tooltip
 } from "@app/components/v2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { OrgPermissionGroupActions, OrgPermissionSubjects } from "@app/context";
+import { OrgPermissionGroupActions, OrgPermissionSubjects, useOrganization } from "@app/context";
 import { useDeleteGroup } from "@app/hooks/api";
 import { useGetGroupById } from "@app/hooks/api/groups/queries";
 import { usePopUp } from "@app/hooks/usePopUp";
@@ -26,6 +27,7 @@ import { usePopUp } from "@app/hooks/usePopUp";
 import { GroupCreateUpdateModal } from "./components/GroupCreateUpdateModal";
 import { GroupDetailsSection } from "./components/GroupDetailsSection";
 import { GroupMembersSection } from "./components/GroupMembersSection";
+import { GroupProjectsSection } from "./components/GroupProjectsSection";
 
 export enum TabSections {
   Member = "members",
@@ -43,47 +45,56 @@ const Page = () => {
 
   const { data, isPending } = useGetGroupById(groupId);
 
+  const { isSubOrganization, currentOrg } = useOrganization();
+
   const { mutateAsync: deleteMutateAsync } = useDeleteGroup();
 
   const { popUp, handlePopUpOpen, handlePopUpClose, handlePopUpToggle } = usePopUp([
     "groupCreateUpdate",
-    "deleteGroup",
-    "upgradePlan"
+    "deleteGroup"
   ] as const);
 
   const onDeleteGroupSubmit = async ({ name, id }: { name: string; id: string }) => {
-    try {
-      await deleteMutateAsync({
-        id
-      });
-      createNotification({
-        text: `Successfully deleted the ${name} group`,
-        type: "success"
-      });
-      navigate({
-        to: "/organization/access-management" as const,
-        search: {
-          selectedTab: TabSections.Groups
-        }
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: `Failed to delete the ${name} group`,
-        type: "error"
-      });
-    }
+    await deleteMutateAsync({
+      id
+    });
+    createNotification({
+      text: `Successfully deleted the ${name} group`,
+      type: "success"
+    });
+    navigate({
+      to: "/organizations/$orgId/access-management" as const,
+      params: { orgId: currentOrg.id },
+      search: {
+        selectedTab: TabSections.Groups
+      }
+    });
 
     handlePopUpClose("deleteGroup");
   };
 
-  if (isPending) return <Spinner size="sm" className="ml-2 mt-2" />;
+  if (isPending) return <Spinner size="sm" className="mt-2 ml-2" />;
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       {data && (
-        <div className="mx-auto mb-6 w-full max-w-7xl">
-          <PageHeader title={data.group.name}>
+        <div className="mx-auto w-full max-w-8xl">
+          <Link
+            to="/organizations/$orgId/access-management"
+            params={{ orgId: currentOrg.id }}
+            search={{
+              selectedTab: TabSections.Groups
+            }}
+            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+          >
+            <FontAwesomeIcon icon={faChevronLeft} />
+            Organization Groups
+          </Link>
+          <PageHeader
+            scope={isSubOrganization ? "namespace" : "org"}
+            description={`${isSubOrganization ? "Sub-" : ""}Organization Group`}
+            title={data.group.name}
+          >
             <DropdownMenu>
               <DropdownMenuTrigger asChild className="rounded-lg">
                 <div className="hover:text-primary-400 data-[state=open]:text-primary-400">
@@ -124,7 +135,7 @@ const Page = () => {
                     <DropdownMenuItem
                       className={twMerge(
                         isAllowed
-                          ? "hover:!bg-red-500 hover:!text-white"
+                          ? "hover:bg-red-500! hover:text-white!"
                           : "pointer-events-none cursor-not-allowed opacity-50"
                       )}
                       onClick={async () => {
@@ -142,11 +153,14 @@ const Page = () => {
               </DropdownMenuContent>
             </DropdownMenu>
           </PageHeader>
-          <div className="flex">
-            <div className="mr-4 w-96">
+          <div className="flex flex-col gap-4 md:flex-row">
+            <div className="w-full md:w-96">
               <GroupDetailsSection groupId={groupId} handlePopUpOpen={handlePopUpOpen} />
             </div>
-            <GroupMembersSection groupId={groupId} groupSlug={data.group.slug} />
+            <div className="flex grow flex-col gap-4">
+              <GroupMembersSection groupId={groupId} groupSlug={data.group.slug} />
+              <GroupProjectsSection groupId={groupId} groupSlug={data.group.slug} />
+            </div>
           </div>
         </div>
       )}
@@ -165,11 +179,6 @@ const Page = () => {
         onDeleteApproved={() =>
           onDeleteGroupSubmit(popUp?.deleteGroup?.data as { name: string; id: string })
         }
-      />
-      <UpgradePlanModal
-        isOpen={popUp.upgradePlan.isOpen}
-        onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text={(popUp.upgradePlan?.data as { description: string })?.description}
       />
     </div>
   );

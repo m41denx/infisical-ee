@@ -15,28 +15,20 @@ export const DeleteAccountSection = () => {
   const { mutateAsync: deleteUserMutateAsync, isPending } = useDeleteMe();
 
   const handleDeleteAccountSubmit = async () => {
-    try {
-      await deleteUserMutateAsync();
+    await deleteUserMutateAsync();
 
-      createNotification({
-        text: "Successfully deleted account",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully deleted account",
+      type: "success"
+    });
 
-      navigate({ to: "/login" });
-      handlePopUpClose("deleteAccount");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to delete account",
-        type: "error"
-      });
-    }
+    navigate({ to: "/login" });
+    handlePopUpClose("deleteAccount");
   };
 
   return (
     <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-      <p className="mb-4 text-xl font-semibold text-mineshaft-100">Danger Zone</p>
+      <p className="mb-4 text-xl font-medium text-mineshaft-100">Danger Zone</p>
       <Button
         isLoading={isPending}
         colorSchema="danger"

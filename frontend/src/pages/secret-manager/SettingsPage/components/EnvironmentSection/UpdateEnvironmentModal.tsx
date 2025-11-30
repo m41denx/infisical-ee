@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, FormControl, Input, Modal, ModalContent } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import { useUpdateWsEnvironment } from "@app/hooks/api";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 import { slugSchema } from "@app/lib/schemas";
@@ -23,7 +23,7 @@ const schema = z.object({
 export type FormData = z.infer<typeof schema>;
 
 export const UpdateEnvironmentModal = ({ popUp, handlePopUpClose, handlePopUpToggle }: Props) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { mutateAsync, isPending } = useUpdateWsEnvironment();
   const { control, handleSubmit, reset } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -33,29 +33,21 @@ export const UpdateEnvironmentModal = ({ popUp, handlePopUpClose, handlePopUpTog
   const oldEnvId = (popUp?.updateEnv?.data as { id: string })?.id;
 
   const onFormSubmit = async ({ name, slug }: FormData) => {
-    try {
-      if (!currentWorkspace?.id) return;
+    if (!currentProject?.id) return;
 
-      await mutateAsync({
-        workspaceId: currentWorkspace.id,
-        name,
-        slug,
-        id: oldEnvId
-      });
+    await mutateAsync({
+      projectId: currentProject.id,
+      name,
+      slug,
+      id: oldEnvId
+    });
 
-      createNotification({
-        text: "Successfully updated environment",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully updated environment",
+      type: "success"
+    });
 
-      handlePopUpClose("updateEnv");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to update environment",
-        type: "error"
-      });
-    }
+    handlePopUpClose("updateEnv");
   };
 
   return (

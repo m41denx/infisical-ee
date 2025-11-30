@@ -19,7 +19,7 @@ import {
   SelectItem,
   Switch
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   ProjectPermissionActions,
   ProjectPermissionSub
@@ -95,13 +95,13 @@ type Props = {
 };
 
 export const MicrosoftTeamsIntegrationForm = ({ onClose }: Props) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { data: microsoftTeamsConfig } = useGetWorkspaceWorkflowIntegrationConfig({
-    workspaceId: currentWorkspace?.id ?? "",
+    projectId: currentProject?.id ?? "",
     integration: WorkflowIntegrationPlatform.MICROSOFT_TEAMS
   });
   const { data: microsoftTeamsIntegrations } = useGetMicrosoftTeamsIntegrations(
-    currentWorkspace?.orgId
+    currentProject?.orgId
   );
 
   const { mutateAsync: updateProjectMicrosoftTeamsConfig } =
@@ -130,37 +130,30 @@ export const MicrosoftTeamsIntegrationForm = ({ onClose }: Props) => {
   });
 
   const handleIntegrationSave = async (data: TMicrosoftTeamsConfigForm) => {
-    try {
-      if (!currentWorkspace) {
-        return;
-      }
-
-      await updateProjectMicrosoftTeamsConfig({
-        workspaceId: currentWorkspace.id,
-        isAccessRequestNotificationEnabled: data.isAccessRequestNotificationEnabled,
-        isSecretRequestNotificationEnabled: data.isSecretRequestNotificationEnabled,
-        ...(data.isAccessRequestNotificationEnabled && {
-          accessRequestChannels: data.accessRequestChannels
-        }),
-        ...(data.isSecretRequestNotificationEnabled && {
-          secretRequestChannels: data.secretRequestChannels
-        }),
-        integration: WorkflowIntegrationPlatform.MICROSOFT_TEAMS,
-        integrationId: data.microsoftTeamsIntegrationId
-      });
-
-      createNotification({
-        type: "success",
-        text: "Successfully created microsoft teams integration"
-      });
-
-      onClose();
-    } catch {
-      createNotification({
-        type: "error",
-        text: "Failed to create microsoft teams integration"
-      });
+    if (!currentProject) {
+      return;
     }
+
+    await updateProjectMicrosoftTeamsConfig({
+      projectId: currentProject.id,
+      isAccessRequestNotificationEnabled: data.isAccessRequestNotificationEnabled,
+      isSecretRequestNotificationEnabled: data.isSecretRequestNotificationEnabled,
+      ...(data.isAccessRequestNotificationEnabled && {
+        accessRequestChannels: data.accessRequestChannels
+      }),
+      ...(data.isSecretRequestNotificationEnabled && {
+        secretRequestChannels: data.secretRequestChannels
+      }),
+      integration: WorkflowIntegrationPlatform.MICROSOFT_TEAMS,
+      integrationId: data.microsoftTeamsIntegrationId
+    });
+
+    createNotification({
+      type: "success",
+      text: "Successfully created microsoft teams integration"
+    });
+
+    onClose();
   };
 
   const selectedAccessRequestTeamId = watch("accessRequestChannels.teamId");
@@ -286,7 +279,7 @@ export const MicrosoftTeamsIntegrationForm = ({ onClose }: Props) => {
                 <FormControl
                   isError={Boolean(error)}
                   errorText={error?.message}
-                  className="mb-2 mt-3"
+                  className="mt-3 mb-2"
                 >
                   <Switch
                     id="secret-approval-notification"

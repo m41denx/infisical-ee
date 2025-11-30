@@ -16,34 +16,7 @@ const adminRoute = route("/admin", [
   ])
 ]);
 
-const organizationRoutes = route("/organization", [
-  route("/projects", "organization/ProjectsPage/route.tsx"),
-  route("/access-management", "organization/AccessManagementPage/route.tsx"),
-  route("/audit-logs", "organization/AuditLogsPage/route.tsx"),
-  route("/billing", "organization/BillingPage/route.tsx"),
-  route("/secret-sharing", [
-    index("organization/SecretSharingPage/route.tsx"),
-    route("/settings", "organization/SecretSharingSettingsPage/route.tsx")
-  ]),
-  route("/settings", [
-    index("organization/SettingsPage/route.tsx"),
-    route("/oauth/callback", "organization/SettingsPage/OauthCallbackPage/route.tsx")
-  ]),
-  route("/groups/$groupId", "organization/GroupDetailsByIDPage/route.tsx"),
-  route("/members/$membershipId", "organization/UserDetailsByIDPage/route.tsx"),
-  route("/roles/$roleId", "organization/RoleByIDPage/route.tsx"),
-  route("/identities/$identityId", "organization/IdentityDetailsByIDPage/route.tsx"),
-  route("/app-connections", [
-    index("organization/AppConnections/AppConnectionsPage/route.tsx"),
-    route(
-      "/$appConnection/oauth/callback",
-      "organization/AppConnections/OauthCallbackPage/route.tsx"
-    )
-  ]),
-  route("/gateways", [index("organization/Gateways/GatewayListPage/route.tsx")])
-]);
-
-const secretManagerRoutes = route("/projects/secret-management/$projectId", [
+const secretManagerRoutes = route("/organizations/$orgId/projects/secret-management/$projectId", [
   layout("secret-manager-layout", "secret-manager/layout.tsx", [
     route("/overview", "secret-manager/OverviewPage/route.tsx"),
     route("/secrets/$envSlug", "secret-manager/SecretDashboardPage/route.tsx"),
@@ -63,6 +36,7 @@ const secretManagerRoutes = route("/projects/secret-management/$projectId", [
     ]),
     route("/audit-logs", "project/AuditLogsPage/route-secret-manager.tsx"),
     route("/access-management", "project/AccessControlPage/route-secret-manager.tsx"),
+    route("/app-connections", "project/AppConnectionsPage/route-secret-manager.tsx"),
     route("/roles/$roleSlug", "project/RoleDetailsBySlugPage/route-secret-manager.tsx"),
     route("/identities/$identityId", "project/IdentityDetailsByIDPage/route-secret-manager.tsx"),
     route("/members/$membershipId", "project/MemberDetailsByIDPage/route-secret-manager.tsx"),
@@ -298,21 +272,26 @@ const secretManagerIntegrationsRedirect = route("/integrations", [
   )
 ]);
 
-const certManagerRoutes = route("/projects/cert-management/$projectId", [
+const certManagerRoutes = route("/organizations/$orgId/projects/cert-management/$projectId", [
   layout("cert-manager-layout", "cert-manager/layout.tsx", [
+    route("/policies", "cert-manager/PoliciesPage/route.tsx"),
     route("/subscribers", [
       index("cert-manager/PkiSubscribersPage/route.tsx"),
       route("/$subscriberName", "cert-manager/PkiSubscriberDetailsByIDPage/route.tsx")
     ]),
     route("/certificate-templates", [index("cert-manager/PkiTemplateListPage/route.tsx")]),
-    route("/certificates", "cert-manager/CertificatesPage/route.tsx"),
     route("/certificate-authorities", "cert-manager/CertificateAuthoritiesPage/route.tsx"),
     route("/alerting", "cert-manager/AlertingPage/route.tsx"),
-    route("/ca/$caName", "cert-manager/CertAuthDetailsByIDPage/route.tsx"),
+    route("/ca/$caId", "cert-manager/CertAuthDetailsByIDPage/route.tsx"),
     route("/pki-collections/$collectionId", "cert-manager/PkiCollectionDetailsByIDPage/routes.tsx"),
+    route("/integrations", [
+      index("cert-manager/IntegrationsListPage/route.tsx"),
+      route("/$syncId", "cert-manager/PkiSyncDetailsByIDPage/route.tsx")
+    ]),
     route("/settings", "cert-manager/SettingsPage/route.tsx"),
     route("/audit-logs", "project/AuditLogsPage/route-cert-manager.tsx"),
     route("/access-management", "project/AccessControlPage/route-cert-manager.tsx"),
+    route("/app-connections", "project/AppConnectionsPage/route-cert-manager.tsx"),
     route("/roles/$roleSlug", "project/RoleDetailsBySlugPage/route-cert-manager.tsx"),
     route("/identities/$identityId", "project/IdentityDetailsByIDPage/route-cert-manager.tsx"),
     route("/members/$membershipId", "project/MemberDetailsByIDPage/route-cert-manager.tsx"),
@@ -320,7 +299,7 @@ const certManagerRoutes = route("/projects/cert-management/$projectId", [
   ])
 ]);
 
-const kmsRoutes = route("/projects/kms/$projectId", [
+const kmsRoutes = route("/organizations/$orgId/projects/kms/$projectId", [
   layout("kms-layout", "kms/layout.tsx", [
     route("/overview", "kms/OverviewPage/route.tsx"),
     route("/kmip", "kms/KmipPage/route.tsx"),
@@ -334,7 +313,7 @@ const kmsRoutes = route("/projects/kms/$projectId", [
   ])
 ]);
 
-const sshRoutes = route("/projects/ssh/$projectId", [
+const sshRoutes = route("/organizations/$orgId/projects/ssh/$projectId", [
   layout("ssh-layout", "ssh/layout.tsx", [
     route("/overview", "ssh/SshHostsPage/route.tsx"),
     route("/certificates", "ssh/SshCertsPage/route.tsx"),
@@ -351,7 +330,7 @@ const sshRoutes = route("/projects/ssh/$projectId", [
   ])
 ]);
 
-const secretScanningRoutes = route("/projects/secret-scanning/$projectId", [
+const secretScanningRoutes = route("/organizations/$orgId/projects/secret-scanning/$projectId", [
   layout("secret-scanning-layout", "secret-scanning/layout.tsx", [
     route("/data-sources", [
       index("secret-scanning/SecretScanningDataSourcesPage/route.tsx"),
@@ -361,6 +340,7 @@ const secretScanningRoutes = route("/projects/secret-scanning/$projectId", [
     route("/settings", "secret-scanning/SettingsPage/route.tsx"),
     route("/audit-logs", "project/AuditLogsPage/route-secret-scanning.tsx"),
     route("/access-management", "project/AccessControlPage/route-secret-scanning.tsx"),
+    route("/app-connections", "project/AppConnectionsPage/route-secret-scanning.tsx"),
     route("/roles/$roleSlug", "project/RoleDetailsBySlugPage/route-secret-scanning.tsx"),
     route("/identities/$identityId", "project/IdentityDetailsByIDPage/route-secret-scanning.tsx"),
     route("/members/$membershipId", "project/MemberDetailsByIDPage/route-secret-scanning.tsx"),
@@ -368,11 +348,60 @@ const secretScanningRoutes = route("/projects/secret-scanning/$projectId", [
   ])
 ]);
 
+const pamRoutes = route("/organizations/$orgId/projects/pam/$projectId", [
+  layout("pam-layout", "pam/layout.tsx", [
+    route("/accounts", "pam/PamAccountsPage/route.tsx"),
+    route("/sessions", [
+      index("pam/PamSessionsPage/route.tsx"),
+      route("/$sessionId", "pam/PamSessionsByIDPage/route.tsx")
+    ]),
+    route("/resources", "pam/PamResourcesPage/route.tsx"),
+    route("/audit-logs", "project/AuditLogsPage/route-pam.tsx"),
+    route("/settings", "pam/SettingsPage/route.tsx"),
+
+    // Access Management
+    route("/access-management", "project/AccessControlPage/route-pam.tsx"),
+    route("/roles/$roleSlug", "project/RoleDetailsBySlugPage/route-pam.tsx"),
+    route("/identities/$identityId", "project/IdentityDetailsByIDPage/route-pam.tsx"),
+    route("/members/$membershipId", "project/MemberDetailsByIDPage/route-pam.tsx"),
+    route("/groups/$groupId", "project/GroupDetailsByIDPage/route-pam.tsx")
+  ])
+]);
+
+const organizationRoutes = route("/organizations/$orgId", [
+  route("/projects", "organization/ProjectsPage/route.tsx"),
+  route("/access-management", "organization/AccessManagementPage/route.tsx"),
+  route("/audit-logs", "organization/AuditLogsPage/route.tsx"),
+  route("/billing", "organization/BillingPage/route.tsx"),
+  route("/secret-sharing", [index("organization/SecretSharingPage/route.tsx")]),
+  route("/settings", [
+    index("organization/SettingsPage/route.tsx"),
+    route("/oauth/callback", "organization/SettingsPage/OauthCallbackPage/route.tsx")
+  ]),
+  route("/groups/$groupId", "organization/GroupDetailsByIDPage/route.tsx"),
+  route("/members/$membershipId", "organization/UserDetailsByIDPage/route.tsx"),
+  route("/roles/$roleId", "organization/RoleByIDPage/route.tsx"),
+  route("/identities/$identityId", "organization/IdentityDetailsByIDPage/route.tsx"),
+  route("/app-connections", [
+    index("organization/AppConnections/AppConnectionsPage/route.tsx"),
+    route(
+      "/$appConnection/oauth/callback",
+      "organization/AppConnections/OauthCallbackPage/route.tsx"
+    )
+  ]),
+  route("/networking", "organization/NetworkingPage/route.tsx"),
+
+  // Added these dummy routes to avoid errors when navigating from the organization-redirect and project-redirect
+  route("/projects/$", ""),
+  route("/$", "")
+]);
+
 export const routes = rootRoute("root.tsx", [
   index("index.tsx"),
   route("/shared/secret/$secretId", "public/ViewSharedSecretByIDPage/route.tsx"),
   route("/secret-request/secret/$secretRequestId", "public/ViewSecretRequestByIDPage/route.tsx"),
   route("/share-secret", "public/ShareSecretPage/route.tsx"),
+  route("/upgrade-path", "public/UpgradePathPage/route.tsx"),
   route("/cli-redirect", "auth/CliRedirectPage/route.tsx"),
   middleware("restrict-login-signup.tsx", [
     route("/admin/signup", "admin/SignUpPage/route.tsx"),
@@ -400,12 +429,14 @@ export const routes = rootRoute("root.tsx", [
     route("/personal-settings", [
       layout("user/layout.tsx", [index("user/PersonalSettingsPage/route.tsx")])
     ]),
-    route("/organization/none", "organization/NoOrgPage/route.tsx"),
+    route("/organizations/none", "organization/NoOrgPage/route.tsx"),
     middleware("inject-org-details.tsx", [
+      route("/organization/$", "redirects/organization-redirect.tsx"),
+      route("/projects/$", "redirects/project-redirect.tsx"),
       adminRoute,
       layout("org-layout", "organization/layout.tsx", [
         organizationRoutes,
-        route("/secret-manager/$projectId", [
+        route("/organizations/$orgId/secret-manager/$projectId", [
           route("/approval", "secret-manager/redirects/redirect-approval-page.tsx")
         ]),
         secretManagerRoutes,
@@ -413,7 +444,8 @@ export const routes = rootRoute("root.tsx", [
         certManagerRoutes,
         kmsRoutes,
         sshRoutes,
-        secretScanningRoutes
+        secretScanningRoutes,
+        pamRoutes
       ])
     ])
   ])

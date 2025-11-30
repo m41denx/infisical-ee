@@ -1,11 +1,12 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { InfoIcon } from "lucide-react";
 
 import { PageHeader, Tab, TabList, TabPanel, Tabs } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { getProjectBaseURL } from "@app/helpers/project";
-import { ProjectType } from "@app/hooks/api/workspace/types";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { ProjectAccessControlTabs } from "@app/types/project";
 
 import {
@@ -18,7 +19,8 @@ import {
 
 const Page = () => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
   const selectedTab = useSearch({
     strict: false,
     select: (el) => el.selectedTab
@@ -26,36 +28,54 @@ const Page = () => {
 
   const updateSelectedTab = (tab: string) => {
     navigate({
-      to: `${getProjectBaseURL(currentWorkspace.type)}/access-management` as const,
+      to: `${getProjectBaseURL(currentProject.type)}/access-management` as const,
       search: (prev) => ({ ...prev, selectedTab: tab }),
       params: {
-        projectId: currentWorkspace.id
+        orgId: currentOrg.id,
+        projectId: currentProject.id
       }
     });
   };
 
-  const isSecretManager = currentWorkspace.type === ProjectType.SecretManager;
+  const isSecretManager = currentProject.type === ProjectType.SecretManager;
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
-      <div className="mx-auto mb-6 w-full max-w-7xl">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+      <div className="mx-auto mb-6 w-full max-w-8xl">
         <PageHeader
-          title="Access Control"
-          description="Manage fine-grained access for users, groups, roles, and identities within your project resources."
-        />
-        <Tabs value={selectedTab} onValueChange={updateSelectedTab}>
+          scope={currentProject.type}
+          title="Project Access Control"
+          description="Manage fine-grained access for users, groups, roles, and machine identities within your project resources."
+        >
+          <Link
+            to="/organizations/$orgId/access-management"
+            params={{
+              orgId: currentOrg.id
+            }}
+            className="flex items-center gap-x-1.5 text-xs whitespace-nowrap text-neutral hover:underline"
+          >
+            <InfoIcon size={12} /> Looking for organization access control?
+          </Link>
+        </PageHeader>
+        <Tabs orientation="vertical" value={selectedTab} onValueChange={updateSelectedTab}>
           <TabList>
-            <Tab value={ProjectAccessControlTabs.Member}>Users</Tab>
-            <Tab value={ProjectAccessControlTabs.Groups}>Groups</Tab>
-            <Tab value={ProjectAccessControlTabs.Identities}>
-              <div className="flex items-center">
-                <p>Machine Identities</p>
-              </div>
+            <Tab variant="project" value={ProjectAccessControlTabs.Member}>
+              Users
+            </Tab>
+            <Tab variant="project" value={ProjectAccessControlTabs.Groups}>
+              Groups
+            </Tab>
+            <Tab variant="project" value={ProjectAccessControlTabs.Identities}>
+              Machine Identities
             </Tab>
             {isSecretManager && (
-              <Tab value={ProjectAccessControlTabs.ServiceTokens}>Service Tokens</Tab>
+              <Tab variant="project" value={ProjectAccessControlTabs.ServiceTokens}>
+                Service Tokens
+              </Tab>
             )}
-            <Tab value={ProjectAccessControlTabs.Roles}>Project Roles</Tab>
+            <Tab variant="project" value={ProjectAccessControlTabs.Roles}>
+              Roles
+            </Tab>
           </TabList>
           <TabPanel value={ProjectAccessControlTabs.Member}>
             <MembersTab />

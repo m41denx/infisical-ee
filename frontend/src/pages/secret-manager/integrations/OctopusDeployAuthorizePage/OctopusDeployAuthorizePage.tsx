@@ -6,9 +6,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { createNotification } from "@app/components/notifications";
 import { Button, Card, CardTitle, FormControl, Input } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { removeTrailingSlash } from "@app/helpers/string";
 import { useSaveIntegrationAccessToken } from "@app/hooks/api";
 
@@ -22,37 +21,30 @@ type TForm = z.infer<typeof formSchema>;
 export const OctopusDeployAuthorizePage = () => {
   const navigate = useNavigate();
   const { mutateAsync, isPending } = useSaveIntegrationAccessToken();
-  const { currentWorkspace } = useWorkspace();
-
+  const { currentProject } = useProject();
+  const { currentOrg } = useOrganization();
   const { control, handleSubmit } = useForm<TForm>({
     resolver: zodResolver(formSchema)
   });
 
   const onSubmit = async ({ instanceUrl, apiKey }: TForm) => {
-    try {
-      const integrationAuth = await mutateAsync({
-        workspaceId: currentWorkspace.id,
-        integration: "octopus-deploy",
-        url: removeTrailingSlash(instanceUrl),
-        accessToken: apiKey
-      });
+    const integrationAuth = await mutateAsync({
+      workspaceId: currentProject.id,
+      integration: "octopus-deploy",
+      url: removeTrailingSlash(instanceUrl),
+      accessToken: apiKey
+    });
 
-      navigate({
-        to: "/projects/secret-management/$projectId/integrations/octopus-deploy/create",
-        params: {
-          projectId: currentWorkspace.id
-        },
-        search: {
-          integrationAuthId: integrationAuth.id
-        }
-      });
-    } catch (err: any) {
-      createNotification({
-        type: "error",
-        text: err.message ?? "Error authorizing integration"
-      });
-      console.error(err);
-    }
+    navigate({
+      to: "/organizations/$orgId/projects/secret-management/$projectId/integrations/octopus-deploy/create",
+      params: {
+        orgId: currentOrg.id,
+        projectId: currentProject.id
+      },
+      search: {
+        integrationAuthId: integrationAuth.id
+      }
+    });
   };
 
   return (
@@ -83,12 +75,12 @@ export const OctopusDeployAuthorizePage = () => {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pb-[0.03rem] pt-[0.04rem] text-sm text-yellow opacity-80 hover:opacity-100">
+              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pt-[0.04rem] pb-[0.03rem] text-sm text-yellow opacity-80 hover:opacity-100">
                 <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
                 Docs
                 <FontAwesomeIcon
                   icon={faArrowUpRightFromSquare}
-                  className="mb-[0.07rem] ml-1.5 text-xxs"
+                  className="text-xxs mb-[0.07rem] ml-1.5"
                 />
               </div>
             </a>
@@ -131,7 +123,7 @@ export const OctopusDeployAuthorizePage = () => {
           type="submit"
           colorSchema="primary"
           variant="outline_bg"
-          className="mb-6 ml-auto mr-6 mt-2 w-min"
+          className="mt-2 mr-6 mb-6 ml-auto w-min"
           isLoading={isPending}
           isDisabled={isPending}
         >

@@ -1,3 +1,5 @@
+import { useParams } from "@tanstack/react-router";
+
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
 import { DeleteActionModal, Modal, ModalContent } from "@app/components/v2";
@@ -46,8 +48,7 @@ type Props = {
 
 type TRevokeOptions = {
   identityId: string;
-  organizationId: string;
-};
+} & ({ projectId: string } | { organizationId: string });
 
 export const Content = ({
   identityId,
@@ -61,7 +62,9 @@ export const Content = ({
 >) => {
   const { currentOrg } = useOrganization();
   const orgId = currentOrg?.id || "";
-
+  const { projectId } = useParams({
+    strict: false
+  });
   const { popUp, handlePopUpOpen, handlePopUpToggle } = usePopUp([
     "revokeAuthMethod",
     "upgradePlan",
@@ -140,25 +143,21 @@ export const Content = ({
   }
 
   const handleDeleteAuthMethod = async () => {
-    try {
-      await revokeMethod({
-        identityId,
-        organizationId: orgId
-      });
+    await revokeMethod({
+      identityId,
+      ...(projectId
+        ? { projectId }
+        : {
+            organizationId: orgId
+          })
+    });
 
-      createNotification({
-        text: "Successfully removed auth method",
-        type: "success"
-      });
-
-      handlePopUpToggle("revokeAuthMethod", false);
-      onDeleteAuthMethod();
-    } catch {
-      createNotification({
-        text: "Failed to remove auth method",
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully removed auth method",
+      type: "success"
+    });
+    handlePopUpToggle("revokeAuthMethod", false);
+    onDeleteAuthMethod();
   };
 
   return (
@@ -183,7 +182,7 @@ export const Content = ({
       <UpgradePlanModal
         isOpen={popUp.upgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text={(popUp.upgradePlan?.data as { description: string })?.description}
+        text={`Your current plan does not include access to ${popUp.upgradePlan.data?.featureName}. To unlock this feature, please upgrade to Infisical ${popUp.upgradePlan.data?.isEnterpriseFeature ? "Enterprise" : "Pro"} plan.`}
       />
     </>
   );

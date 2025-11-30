@@ -2,7 +2,13 @@
 import { Knex } from "knex";
 
 import { TDbClient } from "@app/db";
-import { SecretVersionsV2Schema, TableName, TSecretVersionsV2, TSecretVersionsV2Update } from "@app/db/schemas";
+import {
+  AccessScope,
+  SecretVersionsV2Schema,
+  TableName,
+  TSecretVersionsV2,
+  TSecretVersionsV2Update
+} from "@app/db/schemas";
 import { BadRequestError, DatabaseError } from "@app/lib/errors";
 import { buildFindFilter, ormify, selectAllTableCols, sqlNestRelationships, TFindOpt } from "@app/lib/knex";
 import { logger } from "@app/lib/logger";
@@ -72,7 +78,7 @@ export const secretVersionV2BridgeDALFactory = (db: TDbClient) => {
         .where(`${TableName.SecretVersionV2}.folderId`, folderId)
         .join(TableName.SecretV2, `${TableName.SecretV2}.id`, `${TableName.SecretVersionV2}.secretId`)
         .join<TSecretVersionsV2, TSecretVersionsV2 & { secretId: string; max: number }>(
-          (tx || db)(TableName.SecretVersionV2)
+          (tx || db.replicaNode())(TableName.SecretVersionV2)
             .where(`${TableName.SecretVersionV2}.folderId`, folderId)
             .groupBy("secretId")
             .max("version")
@@ -121,7 +127,7 @@ export const secretVersionV2BridgeDALFactory = (db: TDbClient) => {
         .where("folderId", folderId)
         .whereIn(`${TableName.SecretVersionV2}.secretId`, secretIds)
         .join(
-          (tx || db)(TableName.SecretVersionV2)
+          (tx || db.replicaNode())(TableName.SecretVersionV2)
             .groupBy("secretId")
             .max("version")
             .select("secretId")
@@ -176,7 +182,6 @@ export const secretVersionV2BridgeDALFactory = (db: TDbClient) => {
 
   const findVersionsBySecretIdWithActors = async ({
     secretId,
-    projectId,
     secretVersions,
     findOpt = {},
     tx
@@ -189,14 +194,23 @@ export const secretVersionV2BridgeDALFactory = (db: TDbClient) => {
   }) => {
     try {
       const { offset, limit, sort = [["createdAt", "desc"]] } = findOpt;
-      const query = (tx || db)(TableName.SecretVersionV2)
+      const query = (tx || db.replicaNode())(TableName.SecretVersionV2)
+        .leftJoin(TableName.SecretFolder, `${TableName.SecretFolder}.id`, `${TableName.SecretVersionV2}.folderId`)
+        .leftJoin(TableName.Environment, `${TableName.Environment}.id`, `${TableName.SecretFolder}.envId`)
         .leftJoin(TableName.Users, `${TableName.Users}.id`, `${TableName.SecretVersionV2}.userActorId`)
-        .leftJoin(
-          TableName.ProjectMembership,
-          `${TableName.ProjectMembership}.userId`,
-          `${TableName.SecretVersionV2}.userActorId`
-        )
         .leftJoin(TableName.Identity, `${TableName.Identity}.id`, `${TableName.SecretVersionV2}.identityActorId`)
+        .leftJoin(TableName.UserGroupMembership, `${TableName.UserGroupMembership}.userId`, `${TableName.Users}.id`)
+        .leftJoin(TableName.Membership, (qb) => {
+          void qb
+            .on(`${TableName.Membership}.scope`, db.raw("?", [AccessScope.Project]))
+            .andOn(`${TableName.Membership}.scopeProjectId`, `${TableName.Environment}.projectId`)
+            .andOn((sqb) => {
+              void sqb
+                .on(`${TableName.Membership}.actorUserId`, `${TableName.SecretVersionV2}.userActorId`)
+                .orOn(`${TableName.Membership}.actorIdentityId`, `${TableName.SecretVersionV2}.identityActorId`)
+                .orOn(`${TableName.Membership}.actorGroupId`, `${TableName.UserGroupMembership}.groupId`);
+            });
+        })
         .leftJoin(TableName.SecretV2, `${TableName.SecretVersionV2}.secretId`, `${TableName.SecretV2}.id`)
         .leftJoin(
           TableName.SecretVersionV2Tag,
@@ -210,19 +224,14 @@ export const secretVersionV2BridgeDALFactory = (db: TDbClient) => {
         )
         .where((qb) => {
           void qb.where(`${TableName.SecretVersionV2}.secretId`, secretId);
-          void qb.where(`${TableName.ProjectMembership}.projectId`, projectId);
-          if (secretVersions?.length) void qb.whereIn(`${TableName.SecretVersionV2}.version`, secretVersions);
-        })
-        .orWhere((qb) => {
-          void qb.where(`${TableName.SecretVersionV2}.secretId`, secretId);
-          void qb.whereNull(`${TableName.ProjectMembership}.projectId`);
           if (secretVersions?.length) void qb.whereIn(`${TableName.SecretVersionV2}.version`, secretVersions);
         })
         .select(
           selectAllTableCols(TableName.SecretVersionV2),
           db.ref("username").withSchema(TableName.Users).as("userActorName"),
           db.ref("name").withSchema(TableName.Identity).as("identityActorName"),
-          db.ref("id").withSchema(TableName.ProjectMembership).as("membershipId"),
+          db.ref("id").withSchema(TableName.Membership).as("membershipId"),
+          db.ref("actorGroupId").withSchema(TableName.Membership).as("groupId"),
           db.ref("id").withSchema(TableName.SecretTag).as("tagId"),
           db.ref("color").withSchema(TableName.SecretTag).as("tagColor"),
           db.ref("slug").withSchema(TableName.SecretTag).as("tagSlug")
@@ -250,7 +259,8 @@ export const secretVersionV2BridgeDALFactory = (db: TDbClient) => {
           ...SecretVersionsV2Schema.parse(el),
           userActorName: el.userActorName,
           identityActorName: el.identityActorName,
-          membershipId: el.membershipId
+          membershipId: el.membershipId,
+          groupId: el.groupId
         }),
         childrenMapper: [
           {

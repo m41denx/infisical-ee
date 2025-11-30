@@ -1,5 +1,7 @@
 import { Helmet } from "react-helmet";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { faChevronLeft } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
@@ -15,9 +17,15 @@ import {
   Tooltip
 } from "@app/components/v2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import {
+  ProjectPermissionActions,
+  ProjectPermissionSub,
+  useOrganization,
+  useProject
+} from "@app/context";
 import { CaType, useDeleteCa, useGetCa } from "@app/hooks/api";
 import { TInternalCertificateAuthority } from "@app/hooks/api/ca/types";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { usePopUp } from "@app/hooks/usePopUp";
 
 import { CaInstallCertModal } from "../CertificateAuthoritiesPage/components/CaInstallCertModal";
@@ -30,19 +38,19 @@ import {
 } from "./components";
 
 const Page = () => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
+  const { currentOrg } = useOrganization();
   const navigate = useNavigate();
   const params = useParams({
     from: ROUTE_PATHS.CertManager.CertAuthDetailsByIDPage.id
   });
-  const { caName } = params as { caName: string };
+  const { caId } = params as { caId: string };
   const { data } = useGetCa({
-    caName,
-    projectId: currentWorkspace?.id || "",
+    caId,
     type: CaType.INTERNAL
   }) as { data: TInternalCertificateAuthority };
 
-  const projectId = currentWorkspace?.id || "";
+  const projectId = currentProject?.id || "";
 
   const { mutateAsync: deleteCa } = useDeleteCa();
 
@@ -54,40 +62,49 @@ const Page = () => {
   ] as const);
 
   const onRemoveCaSubmit = async () => {
-    try {
-      if (!currentWorkspace?.slug) return;
+    if (!currentProject?.slug) return;
 
-      await deleteCa({
-        caName,
-        projectId: currentWorkspace.id,
-        type: CaType.INTERNAL
-      });
+    await deleteCa({
+      id: data.id,
+      projectId: currentProject.id,
+      type: CaType.INTERNAL
+    });
 
-      createNotification({
-        text: "Successfully deleted CA",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully deleted CA",
+      type: "success"
+    });
 
-      handlePopUpClose("deleteCa");
-      navigate({
-        to: "/projects/cert-management/$projectId/certificate-authorities",
-        params: {
-          projectId
-        }
-      });
-    } catch {
-      createNotification({
-        text: "Failed to delete CA",
-        type: "error"
-      });
-    }
+    handlePopUpClose("deleteCa");
+    navigate({
+      to: "/organizations/$orgId/projects/cert-management/$projectId/certificate-authorities",
+      params: {
+        orgId: currentOrg.id,
+        projectId
+      }
+    });
   };
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       {data && (
-        <div className="mx-auto mb-6 w-full max-w-7xl">
-          <PageHeader title={data.name}>
+        <div className="mx-auto mb-6 w-full max-w-8xl">
+          <Link
+            to="/organizations/$orgId/projects/cert-management/$projectId/certificate-authorities"
+            params={{
+              orgId: currentOrg.id,
+              projectId
+            }}
+            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+          >
+            <FontAwesomeIcon icon={faChevronLeft} />
+            Certificate Authorities
+          </Link>
+          <PageHeader
+            scope={ProjectType.CertificateManager}
+            description="Manage certificate authority"
+            title={data.name}
+          >
             <DropdownMenu>
               <DropdownMenuTrigger asChild className="rounded-lg">
                 <div className="hover:text-primary-400 data-[state=open]:text-primary-400">
@@ -105,7 +122,7 @@ const Page = () => {
                     <DropdownMenuItem
                       className={twMerge(
                         isAllowed
-                          ? "hover:!bg-red-500 hover:!text-white"
+                          ? "hover:bg-red-500! hover:text-white!"
                           : "pointer-events-none cursor-not-allowed opacity-50"
                       )}
                       onClick={() => handlePopUpOpen("deleteCa")}
@@ -120,7 +137,7 @@ const Page = () => {
           </PageHeader>
           <div className="flex">
             <div className="mr-4 w-96">
-              <CaDetailsSection caName={data.name} handlePopUpOpen={handlePopUpOpen} />
+              <CaDetailsSection caId={data.id} handlePopUpOpen={handlePopUpOpen} />
             </div>
             <div className="w-full">
               <CaCertificatesSection caId={data.id} />

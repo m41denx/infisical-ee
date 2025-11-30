@@ -16,7 +16,7 @@ import {
   Spinner
 } from "@app/components/v2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import {
   useCreateIntegration,
   useGetIntegrationAuthApps,
@@ -81,7 +81,7 @@ type TFormData = z.infer<typeof formSchema>;
 export const BitbucketConfigurePage = () => {
   const navigate = useNavigate();
   const createIntegration = useCreateIntegration();
-
+  const { currentOrg } = useOrganization();
   const { watch, control, handleSubmit, setValue, reset } = useForm<TFormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -96,7 +96,7 @@ export const BitbucketConfigurePage = () => {
     from: ROUTE_PATHS.SecretManager.Integratons.BitbucketConfigurePage.id,
     select: (el) => el.integrationAuthId
   });
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   const { data: bitbucketWorkspaces, isPending: isBitbucketWorkspacesLoading } =
     useGetIntegrationAuthBitbucketWorkspaces((integrationAuthId as string) ?? "");
@@ -126,43 +126,36 @@ export const BitbucketConfigurePage = () => {
   }: TFormData) => {
     if (!targetRepo || !targetWorkspace) return;
 
-    try {
-      await createIntegration.mutateAsync({
-        integrationAuthId,
-        isActive: true,
-        app: targetRepo.name,
-        appId: targetRepo.appId,
-        sourceEnvironment: sourceEnvironment.slug,
-        targetEnvironment: targetWorkspace.name,
-        targetEnvironmentId: targetWorkspace.slug,
-        ...(scope.value === BitbucketScope.Env &&
-          targetEnvironment && {
-            targetService: targetEnvironment.name,
-            targetServiceId: targetEnvironment.uuid
-          }),
-        secretPath
-      });
+    await createIntegration.mutateAsync({
+      integrationAuthId,
+      isActive: true,
+      app: targetRepo.name,
+      appId: targetRepo.appId,
+      sourceEnvironment: sourceEnvironment.slug,
+      targetEnvironment: targetWorkspace.name,
+      targetEnvironmentId: targetWorkspace.slug,
+      ...(scope.value === BitbucketScope.Env &&
+        targetEnvironment && {
+          targetService: targetEnvironment.name,
+          targetServiceId: targetEnvironment.uuid
+        }),
+      secretPath
+    });
 
-      createNotification({
-        type: "success",
-        text: "Successfully created integration"
-      });
-      navigate({
-        to: "/projects/secret-management/$projectId/integrations",
-        params: {
-          projectId: currentWorkspace.id
-        },
-        search: {
-          selectedTab: IntegrationsListPageTabs.NativeIntegrations
-        }
-      });
-    } catch (err) {
-      createNotification({
-        type: "error",
-        text: "Failed to create integration"
-      });
-      console.error(err);
-    }
+    createNotification({
+      type: "success",
+      text: "Successfully created integration"
+    });
+    navigate({
+      to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
+      params: {
+        orgId: currentOrg.id,
+        projectId: currentProject.id
+      },
+      search: {
+        selectedTab: IntegrationsListPageTabs.NativeIntegrations
+      }
+    });
   };
 
   useEffect(() => {
@@ -171,18 +164,18 @@ export const BitbucketConfigurePage = () => {
       bitbucketRepo ||
       !bitbucketRepos ||
       !bitbucketWorkspaces ||
-      !currentWorkspace
+      !currentProject
     )
       return;
 
     reset({
       targetRepo: bitbucketRepos[0],
       targetWorkspace: bitbucketWorkspaces[0],
-      sourceEnvironment: currentWorkspace.environments[0],
+      sourceEnvironment: currentProject.environments[0],
       secretPath: "/",
       scope: ScopeOptions[0]
     });
-  }, [bitbucketWorkspaces, bitbucketRepos, currentWorkspace]);
+  }, [bitbucketWorkspaces, bitbucketRepos, currentProject]);
 
   if (isBitbucketWorkspacesLoading || isBitbucketReposLoading)
     return (
@@ -200,7 +193,7 @@ export const BitbucketConfigurePage = () => {
     >
       <Card className="max-w-md rounded-md p-8 pt-4">
         <CardTitle className="text-center">
-          <SiBitbucket size="1.2rem" className="mb-1 mr-2 inline-block" />
+          <SiBitbucket size="1.2rem" className="mr-2 mb-1 inline-block" />
           Bitbucket Integration
         </CardTitle>
         <Controller
@@ -217,9 +210,9 @@ export const BitbucketConfigurePage = () => {
                 value={value}
                 getOptionLabel={(option) => option.name}
                 onChange={onChange}
-                options={currentWorkspace?.environments}
+                options={currentProject?.environments}
                 placeholder="Select a project environment"
-                isDisabled={!currentWorkspace?.environments.length}
+                isDisabled={!currentProject?.environments.length}
               />
             </FormControl>
           )}

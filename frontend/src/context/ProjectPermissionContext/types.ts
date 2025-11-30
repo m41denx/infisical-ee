@@ -62,13 +62,27 @@ export enum ProjectPermissionSecretSyncActions {
   RemoveSecrets = "remove-secrets"
 }
 
+export enum ProjectPermissionPkiSyncActions {
+  Read = "read",
+  Create = "create",
+  Edit = "edit",
+  Delete = "delete",
+  SyncCertificates = "sync-certificates",
+  ImportCertificates = "import-certificates",
+  RemoveCertificates = "remove-certificates"
+}
+
 export enum ProjectPermissionIdentityActions {
   Read = "read",
   Create = "create",
   Edit = "edit",
   Delete = "delete",
   GrantPrivileges = "grant-privileges",
-  AssumePrivileges = "assume-privileges"
+  AssumePrivileges = "assume-privileges",
+  RevokeAuth = "revoke-auth",
+  CreateToken = "create-token",
+  GetToken = "get-token",
+  DeleteToken = "delete-token"
 }
 
 export enum ProjectPermissionMemberActions {
@@ -114,6 +128,15 @@ export enum ProjectPermissionPkiTemplateActions {
   ListCerts = "list-certs"
 }
 
+export enum ProjectPermissionCertificateProfileActions {
+  Read = "read",
+  Create = "create",
+  Edit = "edit",
+  Delete = "delete",
+  IssueCert = "issue-cert",
+  RevealAcmeEabSecret = "reveal-acme-eab-secret"
+}
+
 export enum ProjectPermissionSecretRotationActions {
   Read = "read",
   ReadGeneratedCredentials = "read-generated-credentials",
@@ -154,6 +177,14 @@ export enum ProjectPermissionAuditLogsActions {
   Read = "read"
 }
 
+export enum ProjectPermissionAppConnectionActions {
+  Read = "read-app-connections",
+  Create = "create-app-connections",
+  Edit = "edit-app-connections",
+  Delete = "delete-app-connections",
+  Connect = "connect-app-connections"
+}
+
 export enum PermissionConditionOperators {
   $IN = "$in",
   $ALL = "$all",
@@ -169,12 +200,30 @@ export enum ProjectPermissionCommitsActions {
   PerformRollback = "perform-rollback"
 }
 
+export enum ProjectPermissionPamAccountActions {
+  Access = "access",
+  Read = "read",
+  Create = "create",
+  Edit = "edit",
+  Delete = "delete"
+}
+
+export enum ProjectPermissionPamSessionActions {
+  Read = "read"
+  // Terminate = "terminate"
+}
+
 export type IdentityManagementSubjectFields = {
   identityId: string;
 };
 
+export type AppConnectionSubjectFields = {
+  connectionId: string;
+};
+
 export type ConditionalProjectPermissionSubject =
   | ProjectPermissionSub.SecretSyncs
+  | ProjectPermissionSub.PkiSyncs
   | ProjectPermissionSub.Secrets
   | ProjectPermissionSub.DynamicSecrets
   | ProjectPermissionSub.Identity
@@ -184,7 +233,9 @@ export type ConditionalProjectPermissionSubject =
   | ProjectPermissionSub.SecretFolders
   | ProjectPermissionSub.SecretImports
   | ProjectPermissionSub.SecretRotation
-  | ProjectPermissionSub.SecretEvents;
+  | ProjectPermissionSub.SecretEvents
+  | ProjectPermissionSub.AppConnections
+  | ProjectPermissionSub.PamAccounts;
 
 export const formatedConditionsOperatorNames: { [K in PermissionConditionOperators]: string } = {
   [PermissionConditionOperators.$EQ]: "equal to",
@@ -255,15 +306,22 @@ export enum ProjectPermissionSub {
   PkiAlerts = "pki-alerts",
   PkiCollections = "pki-collections",
   PkiSubscribers = "pki-subscribers",
+  CertificateProfiles = "certificate-profiles",
   Kms = "kms",
   Cmek = "cmek",
   SecretSyncs = "secret-syncs",
+  PkiSyncs = "pki-syncs",
   Kmip = "kmip",
   Commits = "commits",
   SecretScanningDataSources = "secret-scanning-data-sources",
   SecretScanningFindings = "secret-scanning-findings",
   SecretScanningConfigs = "secret-scanning-configs",
-  SecretEvents = "secret-events"
+  SecretEvents = "secret-events",
+  AppConnections = "app-connections",
+  PamFolders = "pam-folders",
+  PamResources = "pam-resources",
+  PamAccounts = "pam-accounts",
+  PamSessions = "pam-sessions"
 }
 
 export type SecretSubjectFields = {
@@ -302,6 +360,10 @@ export type SecretSyncSubjectFields = {
   secretPath: string;
 };
 
+export type PkiSyncSubjectFields = {
+  subscriberId: string;
+};
+
 export type SecretRotationSubjectFields = {
   environment: string;
   secretPath: string;
@@ -318,6 +380,12 @@ export type PkiSubscriberSubjectFields = {
 export type PkiTemplateSubjectFields = {
   name: string;
   // (dangtony98): consider adding [commonName] as a subject field in the future
+};
+
+export type PamAccountSubjectFields = {
+  resourceName: string;
+  accountName: string;
+  accountPath: string;
 };
 
 export type ProjectPermissionSet =
@@ -347,6 +415,13 @@ export type ProjectPermissionSet =
       (
         | ProjectPermissionSub.SecretSyncs
         | (ForcedSubject<ProjectPermissionSub.SecretSyncs> & SecretSyncSubjectFields)
+      )
+    ]
+  | [
+      ProjectPermissionPkiSyncActions,
+      (
+        | ProjectPermissionSub.PkiSyncs
+        | (ForcedSubject<ProjectPermissionSub.PkiSyncs> & PkiSyncSubjectFields)
       )
     ]
   | [
@@ -409,6 +484,7 @@ export type ProjectPermissionSet =
         | (ForcedSubject<ProjectPermissionSub.PkiSubscribers> & PkiSubscriberSubjectFields)
       )
     ]
+  | [ProjectPermissionCertificateProfileActions, ProjectPermissionSub.CertificateProfiles]
   | [ProjectPermissionActions, ProjectPermissionSub.PkiAlerts]
   | [ProjectPermissionActions, ProjectPermissionSub.PkiCollections]
   | [ProjectPermissionActions.Delete, ProjectPermissionSub.Project]
@@ -431,6 +507,23 @@ export type ProjectPermissionSet =
         | ProjectPermissionSub.SecretEvents
         | (ForcedSubject<ProjectPermissionSub.SecretEvents> & SecretEventSubjectFields)
       )
-    ];
+    ]
+  | [
+      ProjectPermissionAppConnectionActions,
+      (
+        | ProjectPermissionSub.AppConnections
+        | (ForcedSubject<ProjectPermissionSub.AppConnections> & AppConnectionSubjectFields)
+      )
+    ]
+  | [ProjectPermissionActions, ProjectPermissionSub.PamFolders]
+  | [ProjectPermissionActions, ProjectPermissionSub.PamResources]
+  | [
+      ProjectPermissionPamAccountActions,
+      (
+        | ProjectPermissionSub.PamAccounts
+        | (ForcedSubject<ProjectPermissionSub.PamAccounts> & PamAccountSubjectFields)
+      )
+    ]
+  | [ProjectPermissionPamSessionActions, ProjectPermissionSub.PamSessions];
 
 export type TProjectPermission = MongoAbility<ProjectPermissionSet>;

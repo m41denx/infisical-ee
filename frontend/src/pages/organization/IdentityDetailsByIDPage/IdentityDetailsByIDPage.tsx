@@ -1,20 +1,27 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { faChevronLeft } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
-import { DeleteActionModal, PageHeader } from "@app/components/v2";
+import { Button, DeleteActionModal, Modal, ModalContent, PageHeader } from "@app/components/v2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { OrgPermissionIdentityActions, OrgPermissionSubjects, useOrganization } from "@app/context";
-import { useDeleteIdentity, useGetIdentityById } from "@app/hooks/api";
+import {
+  OrgPermissionActions,
+  OrgPermissionIdentityActions,
+  OrgPermissionSubjects,
+  useOrganization
+} from "@app/context";
+import { useDeleteOrgIdentity, useGetOrgIdentityMembershipById } from "@app/hooks/api";
 import { usePopUp } from "@app/hooks/usePopUp";
 import { ViewIdentityAuthModal } from "@app/pages/organization/IdentityDetailsByIDPage/components/ViewIdentityAuthModal/ViewIdentityAuthModal";
 import { OrgAccessControlTabSections } from "@app/types/org";
 
 import { IdentityAuthMethodModal } from "../AccessManagementPage/components/OrgIdentityTab/components/IdentitySection/IdentityAuthMethodModal";
-import { IdentityModal } from "../AccessManagementPage/components/OrgIdentityTab/components/IdentitySection/IdentityModal";
+import { OrgIdentityModal } from "../AccessManagementPage/components/OrgIdentityTab/components/IdentitySection/OrgIdentityModal";
 import {
   IdentityAuthenticationSection,
   IdentityDetailsSection,
@@ -27,10 +34,11 @@ const Page = () => {
     from: ROUTE_PATHS.Organization.IdentityDetailsByIDPage.id
   });
   const identityId = params.identityId as string;
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isSubOrganization } = useOrganization();
   const orgId = currentOrg?.id || "";
-  const { data } = useGetIdentityById(identityId);
-  const { mutateAsync: deleteIdentity } = useDeleteIdentity();
+  const { data } = useGetOrgIdentityMembershipById(identityId);
+  const { mutateAsync: deleteIdentity, isPending: isDeletingIdentity } = useDeleteOrgIdentity();
+  const isAuthHidden = orgId !== data?.identity?.orgId;
 
   const { popUp, handlePopUpOpen, handlePopUpClose, handlePopUpToggle } = usePopUp([
     "identity",
@@ -41,54 +49,104 @@ const Page = () => {
   ] as const);
 
   const onDeleteIdentitySubmit = async (id: string) => {
-    try {
-      await deleteIdentity({
-        identityId: id,
-        organizationId: orgId
-      });
+    await deleteIdentity({
+      identityId: id,
+      orgId
+    });
 
-      createNotification({
-        text: "Successfully deleted identity",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully deleted machine identity",
+      type: "success"
+    });
 
-      handlePopUpClose("deleteIdentity");
-      navigate({
-        to: "/organization/access-management",
-        search: {
-          selectedTab: OrgAccessControlTabSections.Identities
-        }
-      });
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to delete identity";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    handlePopUpClose("deleteIdentity");
+    navigate({
+      to: "/organizations/$orgId/access-management" as const,
+      params: { orgId },
+      search: {
+        selectedTab: OrgAccessControlTabSections.Identities
+      }
+    });
   };
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       {data && (
-        <div className="mx-auto mb-6 w-full max-w-7xl">
-          <PageHeader title={data.identity.name} />
-          <div className="flex">
-            <div className="mr-4 w-96">
-              <IdentityDetailsSection identityId={identityId} handlePopUpOpen={handlePopUpOpen} />
-              <IdentityAuthenticationSection
+        <div className="mx-auto w-full max-w-8xl">
+          <Link
+            to="/organizations/$orgId/access-management"
+            params={{ orgId }}
+            search={{
+              selectedTab: OrgAccessControlTabSections.Identities
+            }}
+            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+          >
+            <FontAwesomeIcon icon={faChevronLeft} />
+            Organization Machine Identities
+          </Link>
+          <PageHeader
+            scope={isSubOrganization ? "namespace" : "org"}
+            description={`${isSubOrganization ? "Sub-" : ""}Organization Machine Identity`}
+            title={data.identity.name}
+          >
+            <div className="flex items-center gap-2">
+              {isSubOrganization && data.identity.orgId !== currentOrg.id && (
+                <OrgPermissionCan
+                  I={OrgPermissionActions.Delete}
+                  a={OrgPermissionSubjects.Identity}
+                  renderTooltip
+                  allowedLabel="Remove from sub-organization"
+                >
+                  {(isAllowed) => (
+                    <Button
+                      colorSchema="danger"
+                      variant="outline_bg"
+                      size="xs"
+                      isDisabled={!isAllowed}
+                      isLoading={isDeletingIdentity}
+                      onClick={() =>
+                        handlePopUpOpen("deleteIdentity", {
+                          identityId: data.identity.id,
+                          name: data.identity.name
+                        })
+                      }
+                    >
+                      Unlink Machine Identity
+                    </Button>
+                  )}
+                </OrgPermissionCan>
+              )}
+            </div>
+          </PageHeader>
+          <div className="flex flex-col gap-4 md:flex-row">
+            <div className="w-full md:w-96">
+              <IdentityDetailsSection
+                isOrgIdentity={data.identity.orgId === currentOrg.id}
                 identityId={identityId}
                 handlePopUpOpen={handlePopUpOpen}
               />
+              {!isAuthHidden && (
+                <IdentityAuthenticationSection
+                  identityId={identityId}
+                  handlePopUpOpen={handlePopUpOpen}
+                />
+              )}
             </div>
             <IdentityProjectsSection identityId={identityId} />
           </div>
         </div>
       )}
-      <IdentityModal popUp={popUp} handlePopUpToggle={handlePopUpToggle} />
+      <Modal
+        isOpen={popUp?.identity?.isOpen}
+        onOpenChange={(isOpen) => handlePopUpToggle("identity", isOpen)}
+      >
+        <ModalContent
+          bodyClassName="overflow-visible"
+          title={`${popUp?.identity?.data ? "Update" : "Create"} Machine Identity`}
+        >
+          <OrgIdentityModal popUp={popUp} handlePopUpToggle={handlePopUpToggle} />
+        </ModalContent>
+      </Modal>
       <IdentityAuthMethodModal
         popUp={popUp}
         handlePopUpOpen={handlePopUpOpen}
@@ -97,7 +155,8 @@ const Page = () => {
       <UpgradePlanModal
         isOpen={popUp.upgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text={(popUp.upgradePlan?.data as { description: string })?.description}
+        text={`Your current plan does not include access to ${popUp.upgradePlan.data?.featureName}. To unlock this feature, please upgrade to Infisical ${popUp.upgradePlan.data?.isEnterpriseFeature ? "Enterprise" : "Pro"} plan.`}
+        isEnterpriseFeature={popUp.upgradePlan.data?.isEnterpriseFeature}
       />
       <DeleteActionModal
         isOpen={popUp.deleteIdentity.isOpen}

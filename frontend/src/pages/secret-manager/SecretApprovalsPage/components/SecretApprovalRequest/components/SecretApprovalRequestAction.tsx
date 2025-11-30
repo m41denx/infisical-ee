@@ -13,6 +13,7 @@ import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, Checkbox, FormControl, Input } from "@app/components/v2";
+import { useProject } from "@app/context";
 import {
   usePerformSecretApprovalRequestMerge,
   useUpdateSecretApprovalRequestStatus
@@ -28,7 +29,6 @@ type Props = {
   canApprove?: boolean;
   isBypasser: boolean;
   statusChangeByEmail?: string;
-  workspaceId: string;
   enforcementLevel: EnforcementLevel;
 };
 
@@ -39,11 +39,11 @@ export const SecretApprovalRequestAction = ({
   isMergable,
   approvals,
   statusChangeByEmail,
-  workspaceId,
   enforcementLevel,
   canApprove,
   isBypasser
 }: Props) => {
+  const { projectId } = useProject();
   const { mutateAsync: performSecretApprovalMerge, isPending: isMerging } =
     usePerformSecretApprovalRequestMerge();
 
@@ -59,43 +59,27 @@ export const SecretApprovalRequestAction = ({
   };
 
   const handleSecretApprovalRequestMerge = async () => {
-    try {
-      await performSecretApprovalMerge({
-        id: approvalRequestId,
-        workspaceId,
-        bypassReason: byPassApproval ? bypassReason : undefined
-      });
-      createNotification({
-        type: "success",
-        text: "Successfully merged the request"
-      });
-    } catch (err) {
-      console.log(err);
-      createNotification({
-        type: "error",
-        text: "Failed to update the request status"
-      });
-    }
+    await performSecretApprovalMerge({
+      id: approvalRequestId,
+      projectId,
+      bypassReason: byPassApproval ? bypassReason : undefined
+    });
+    createNotification({
+      type: "success",
+      text: "Successfully merged the request"
+    });
   };
 
   const handleSecretApprovalStatusChange = async (reqState: "open" | "close") => {
-    try {
-      await updateSecretStatusChange({
-        id: approvalRequestId,
-        status: reqState,
-        workspaceId
-      });
-      createNotification({
-        type: "success",
-        text: "Successfully updated the request"
-      });
-    } catch (err) {
-      console.log(err);
-      createNotification({
-        type: "error",
-        text: "Failed to update the request status"
-      });
-    }
+    await updateSecretStatusChange({
+      id: approvalRequestId,
+      status: reqState,
+      projectId
+    });
+    createNotification({
+      type: "success",
+      text: "Successfully updated the request"
+    });
   };
 
   const isSoftEnforcement = enforcementLevel === EnforcementLevel.Soft;
@@ -168,7 +152,7 @@ export const SecretApprovalRequestAction = ({
                 isChecked={byPassApproval}
                 id="byPassApproval"
                 checkIndicatorBg="text-white"
-                className={twMerge("mr-2", byPassApproval ? "!border-red/50 !bg-red/30" : "")}
+                className={twMerge("mr-2", byPassApproval ? "border-red/50! bg-red/30!" : "")}
               >
                 <span className="text-sm">
                   Merge without waiting for approval (bypass secret change policy)

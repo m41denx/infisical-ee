@@ -14,8 +14,14 @@ import { format } from "date-fns";
 import { twMerge } from "tailwind-merge";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
-import { Badge, IconButton, Td, Tooltip, Tr } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { IconButton, Td, Tooltip, Tr } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
+import {
+  ProjectPermissionActions,
+  ProjectPermissionSub,
+  useOrganization,
+  useProject
+} from "@app/context";
 import { TCloudIntegration } from "@app/hooks/api/integrations/types";
 import { TIntegration } from "@app/hooks/api/types";
 
@@ -37,7 +43,8 @@ export const IntegrationRow = ({
   cloudIntegration
 }: IProps) => {
   const navigate = useNavigate();
-  const { currentWorkspace } = useWorkspace();
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
 
   const { id, secretPath, syncMessage, isSynced } = integration;
 
@@ -59,10 +66,11 @@ export const IntegrationRow = ({
     <Tr
       onClick={() =>
         navigate({
-          to: "/projects/secret-management/$projectId/integrations/$integrationId",
+          to: "/organizations/$orgId/projects/secret-management/$projectId/integrations/$integrationId",
           params: {
+            orgId: currentOrg.id,
             integrationId: integration.id,
-            projectId: currentWorkspace.id
+            projectId: currentProject.id
           }
         })
       }
@@ -82,18 +90,18 @@ export const IntegrationRow = ({
           <span className="hidden lg:inline">{cloudIntegration?.name}</span>
         </div>
       </Td>
-      <Td className="!min-w-[8rem] max-w-0">
+      <Td className="max-w-0 min-w-32!">
         <Tooltip side="top" className="max-w-2xl break-words" content={secretPath}>
           <p className="truncate">{secretPath}</p>
         </Tooltip>{" "}
       </Td>
       <Td>{environment?.name ?? "-"}</Td>
-      <Td className="!min-w-[5rem] max-w-0">
+      <Td className="max-w-0 min-w-20!">
         <div className="flex items-center gap-2">
           <p className="truncate">{getIntegrationDestination(integration)}</p>
           <Tooltip
             position="left"
-            className="min-w-[20rem] max-w-lg"
+            className="max-w-lg min-w-[20rem]"
             content={<IntegrationDetails integration={integration} />}
           >
             <FontAwesomeIcon icon={faInfoCircle} className="text-mineshaft-400" />
@@ -103,7 +111,7 @@ export const IntegrationRow = ({
       <Td>
         {" "}
         {typeof integration.isSynced !== "boolean" ? (
-          <Badge variant="primary" key={integration.id}>
+          <Badge variant="info" key={integration.id}>
             Pending Sync
           </Badge>
         ) : (
@@ -119,11 +127,11 @@ export const IntegrationRow = ({
                     >
                       <FontAwesomeIcon
                         icon={faCalendarCheck}
-                        className="ml-1 pr-1.5 pt-0.5 text-sm"
+                        className="ml-1 pt-0.5 pr-1.5 text-sm"
                       />
                       <div className="text-xs">Last Synced</div>
                     </div>
-                    <div className="rounded bg-mineshaft-600 p-2 text-xs">
+                    <div className="rounded-sm bg-mineshaft-600 p-2 text-xs">
                       {format(new Date(integration.lastUsed!), "yyyy-MM-dd, hh:mm aaa")}
                     </div>
                   </div>
@@ -131,10 +139,10 @@ export const IntegrationRow = ({
                 {failureMessage && (
                   <div>
                     <div className="mb-2 flex self-start text-red">
-                      <FontAwesomeIcon icon={faXmark} className="ml-1 pr-1.5 pt-0.5 text-sm" />
+                      <FontAwesomeIcon icon={faXmark} className="ml-1 pt-0.5 pr-1.5 text-sm" />
                       <div className="text-xs">Failure Reason</div>
                     </div>
-                    <div className="rounded bg-mineshaft-600 p-2 text-xs">{failureMessage}</div>
+                    <div className="rounded-sm bg-mineshaft-600 p-2 text-xs">{failureMessage}</div>
                   </div>
                 )}
               </div>

@@ -5,10 +5,10 @@ import { z } from "zod";
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
 import { Button, FormControl, Input } from "@app/components/v2";
-import { useProjectPermission, useSubscription, useWorkspace } from "@app/context";
+import { useProject, useProjectPermission, useSubscription } from "@app/context";
 import { usePopUp } from "@app/hooks";
+import { useUpdateWorkspaceAuditLogsRetention } from "@app/hooks/api/projects/queries";
 import { ProjectMembershipRole } from "@app/hooks/api/roles/types";
-import { useUpdateWorkspaceAuditLogsRetention } from "@app/hooks/api/workspace/queries";
 
 const formSchema = z.object({
   auditLogsRetentionDays: z.coerce.number().min(0)
@@ -19,8 +19,8 @@ type TForm = z.infer<typeof formSchema>;
 export const AuditLogsRetentionSection = () => {
   const { mutateAsync: updateAuditLogsRetention } = useUpdateWorkspaceAuditLogsRetention();
 
-  const { currentWorkspace } = useWorkspace();
-  const { membership } = useProjectPermission();
+  const { currentProject } = useProject();
+  const { hasProjectRole } = useProjectPermission();
   const { subscription } = useSubscription();
   const { popUp, handlePopUpOpen, handlePopUpToggle } = usePopUp(["upgradePlan"] as const);
 
@@ -32,46 +32,38 @@ export const AuditLogsRetentionSection = () => {
     resolver: zodResolver(formSchema),
     values: {
       auditLogsRetentionDays:
-        currentWorkspace?.auditLogsRetentionDays ?? subscription?.auditLogsRetentionDays ?? 0
+        currentProject?.auditLogsRetentionDays ?? subscription?.auditLogsRetentionDays ?? 0
     }
   });
 
-  if (!currentWorkspace) return null;
+  if (!currentProject) return null;
 
   const handleAuditLogsRetentionSubmit = async ({ auditLogsRetentionDays }: TForm) => {
-    try {
-      if (!subscription?.auditLogs) {
-        handlePopUpOpen("upgradePlan", {
-          description: "You can only configure audit logs retention if you upgrade your plan."
-        });
-
-        return;
-      }
-
-      if (subscription && auditLogsRetentionDays > subscription?.auditLogsRetentionDays) {
-        handlePopUpOpen("upgradePlan", {
-          description:
-            "To update your audit logs retention period to a higher value, upgrade your plan."
-        });
-
-        return;
-      }
-
-      await updateAuditLogsRetention({
-        auditLogsRetentionDays,
-        projectSlug: currentWorkspace.slug
+    if (!subscription?.auditLogs) {
+      handlePopUpOpen("upgradePlan", {
+        text: "Configuring audit logs retention can be unlocked if you upgrade to Infisical Pro plan."
       });
 
-      createNotification({
-        text: "Successfully updated audit logs retention period",
-        type: "success"
-      });
-    } catch {
-      createNotification({
-        text: "Failed updating audit logs retention period",
-        type: "error"
-      });
+      return;
     }
+
+    if (subscription && auditLogsRetentionDays > subscription?.auditLogsRetentionDays) {
+      handlePopUpOpen("upgradePlan", {
+        text: "Updating audit logs retention period to a higher value can be unlocked if you upgrade to Infisical Pro plan."
+      });
+
+      return;
+    }
+
+    await updateAuditLogsRetention({
+      auditLogsRetentionDays,
+      projectSlug: currentProject.slug
+    });
+
+    createNotification({
+      text: "Successfully updated audit logs retention period",
+      type: "success"
+    });
   };
 
   // render only for dedicated/self-hosted instances of Infisical
@@ -82,14 +74,14 @@ export const AuditLogsRetentionSection = () => {
     return null;
   }
 
-  const isAdmin = membership.roles.includes(ProjectMembershipRole.Admin);
+  const isAdmin = hasProjectRole(ProjectMembershipRole.Admin);
   return (
     <>
       <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
         <div className="flex w-full items-center justify-between">
-          <p className="text-xl font-semibold">Audit Logs Retention</p>
+          <p className="text-xl font-medium">Audit Logs Retention</p>
         </div>
-        <p className="mb-4 mt-2 max-w-2xl text-sm text-gray-400">
+        <p className="mt-2 mb-4 max-w-2xl text-sm text-gray-400">
           Set the number of days to keep your project audit logs.
         </p>
         <form onSubmit={handleSubmit(handleAuditLogsRetentionSubmit)} autoComplete="off">
@@ -122,7 +114,7 @@ export const AuditLogsRetentionSection = () => {
       <UpgradePlanModal
         isOpen={popUp.upgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text={(popUp.upgradePlan?.data as { description: string })?.description}
+        text={popUp.upgradePlan?.data?.text}
       />
     </>
   );

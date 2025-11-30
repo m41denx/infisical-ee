@@ -87,34 +87,23 @@ export const UserOrgMembershipModal = ({ popUp, handlePopUpOpen, handlePopUpTogg
   }, [popUp?.orgMembership?.data, roles]);
 
   const onFormSubmit = async ({ role, metadata }: FormData) => {
-    try {
-      if (!orgId) return;
+    if (!orgId) return;
 
-      await updateOrgMembership({
-        organizationId: orgId,
-        membershipId: popUpData.membershipId,
-        role: role.slug,
-        metadata
-      });
+    await updateOrgMembership({
+      organizationId: orgId,
+      membershipId: popUpData.membershipId,
+      role: role.slug,
+      metadata
+    });
 
-      handlePopUpToggle("orgMembership", false);
+    handlePopUpToggle("orgMembership", false);
 
-      createNotification({
-        text: "Successfully updated user organization role",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully updated user organization role",
+      type: "success"
+    });
 
-      reset();
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to update user organization role";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    reset();
   };
 
   return (
@@ -148,8 +137,7 @@ export const UserOrgMembershipModal = ({ popUp, handlePopUpOpen, handlePopUpTogg
 
                     if (isCustomRole && subscription && !subscription?.rbac) {
                       handlePopUpOpen("upgradePlan", {
-                        description:
-                          "You can assign custom roles to members if you upgrade your Infisical plan."
+                        text: "Your current plan does not include access to assig custom roles to members. To unlock this feature, please upgrade to Infisical Pro plan."
                       });
                       return;
                     }
@@ -169,7 +157,7 @@ export const UserOrgMembershipModal = ({ popUp, handlePopUpOpen, handlePopUpTogg
           <div className="mb-3 flex flex-col space-y-2">
             {metadataFormFields.fields.map(({ id: metadataFieldId }, i) => (
               <div key={metadataFieldId} className="flex items-end space-x-2">
-                <div className="flex-grow">
+                <div className="grow">
                   {i === 0 && <span className="text-xs text-mineshaft-400">Key</span>}
                   <Controller
                     control={control}
@@ -185,7 +173,7 @@ export const UserOrgMembershipModal = ({ popUp, handlePopUpOpen, handlePopUpTogg
                     )}
                   />
                 </div>
-                <div className="flex-grow">
+                <div className="grow">
                   {i === 0 && (
                     <FormLabel label="Value" className="text-xs text-mineshaft-400" isOptional />
                   )}

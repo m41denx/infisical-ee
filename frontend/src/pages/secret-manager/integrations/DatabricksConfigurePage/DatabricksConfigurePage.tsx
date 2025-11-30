@@ -20,7 +20,7 @@ import {
   SelectItem
 } from "@app/components/v2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useCreateIntegration } from "@app/hooks/api";
 import {
   useGetIntegrationAuthApps,
@@ -32,8 +32,8 @@ export const DatabricksConfigurePage = () => {
   const navigate = useNavigate();
   const { mutateAsync, isPending } = useCreateIntegration();
 
-  const { currentWorkspace } = useWorkspace();
-
+  const { currentProject } = useProject();
+  const { currentOrg } = useOrganization();
   const integrationAuthId = useSearch({
     from: ROUTE_PATHS.SecretManager.Integratons.DatabricksConfigurePage.id,
     select: (el) => el.integrationAuthId
@@ -49,55 +49,52 @@ export const DatabricksConfigurePage = () => {
     });
 
   const [selectedSourceEnvironment, setSelectedSourceEnvironment] = useState(
-    currentWorkspace.environments[0].slug
+    currentProject.environments[0].slug
   );
   const [targetScope, setTargetScope] = useState("");
   const [secretPath, setSecretPath] = useState("/");
 
   const handleButtonClick = async () => {
-    try {
-      if (!integrationAuth?.id) return;
+    if (!integrationAuth?.id) return;
 
-      if (!targetScope) {
-        createNotification({
-          type: "error",
-          text: "Please select a scope"
-        });
-        return;
-      }
-
-      const selectedScope = integrationAuthScopes?.find(
-        (integrationAuthScope) => integrationAuthScope.name === targetScope
-      );
-
-      if (!selectedScope) {
-        createNotification({
-          type: "error",
-          text: "Invalid scope selected"
-        });
-        return;
-      }
-
-      await mutateAsync({
-        integrationAuthId: integrationAuth?.id,
-        isActive: true,
-        app: selectedScope.name, // scope name
-        sourceEnvironment: selectedSourceEnvironment,
-        secretPath
+    if (!targetScope) {
+      createNotification({
+        type: "error",
+        text: "Please select a scope"
       });
-
-      navigate({
-        to: "/projects/secret-management/$projectId/integrations",
-        params: {
-          projectId: currentWorkspace.id
-        },
-        search: {
-          selectedTab: IntegrationsListPageTabs.NativeIntegrations
-        }
-      });
-    } catch (err) {
-      console.error(err);
+      return;
     }
+
+    const selectedScope = integrationAuthScopes?.find(
+      (integrationAuthScope) => integrationAuthScope.name === targetScope
+    );
+
+    if (!selectedScope) {
+      createNotification({
+        type: "error",
+        text: "Invalid scope selected"
+      });
+      return;
+    }
+
+    await mutateAsync({
+      integrationAuthId: integrationAuth?.id,
+      isActive: true,
+      app: selectedScope.name, // scope name
+      sourceEnvironment: selectedSourceEnvironment,
+      secretPath
+    });
+
+    navigate({
+      to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
+      params: {
+        orgId: currentOrg.id,
+        projectId: currentProject.id
+      },
+      search: {
+        selectedTab: IntegrationsListPageTabs.NativeIntegrations
+      }
+    });
   };
 
   return integrationAuth && selectedSourceEnvironment && integrationAuthScopes ? (
@@ -125,12 +122,12 @@ export const DatabricksConfigurePage = () => {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pb-[0.03rem] pt-[0.04rem] text-sm text-yellow opacity-80 hover:opacity-100">
+              <div className="mb-1 ml-2 inline-block cursor-default rounded-md bg-yellow/20 px-1.5 pt-[0.04rem] pb-[0.03rem] text-sm text-yellow opacity-80 hover:opacity-100">
                 <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
                 Docs
                 <FontAwesomeIcon
                   icon={faArrowUpRightFromSquare}
-                  className="mb-[0.07rem] ml-1.5 text-xxs"
+                  className="text-xxs mb-[0.07rem] ml-1.5"
                 />
               </div>
             </a>
@@ -143,7 +140,7 @@ export const DatabricksConfigurePage = () => {
             onValueChange={(val) => setSelectedSourceEnvironment(val)}
             className="w-full border border-mineshaft-500"
           >
-            {currentWorkspace?.environments.map((sourceEnvironment) => (
+            {currentProject?.environments.map((sourceEnvironment) => (
               <SelectItem
                 value={sourceEnvironment.slug}
                 key={`source-environment-${sourceEnvironment.slug}`}
@@ -192,7 +189,7 @@ export const DatabricksConfigurePage = () => {
           onClick={handleButtonClick}
           colorSchema="primary"
           variant="outline_bg"
-          className="mb-6 ml-auto mr-6 mt-2 w-min"
+          className="mt-2 mr-6 mb-6 ml-auto w-min"
           isLoading={isPending}
           isDisabled={integrationAuthScopes.length === 0 || isPending}
         >

@@ -2,7 +2,7 @@ import { faFingerprint } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Link } from "@tanstack/react-router";
 
-import { useSubscription, useWorkspace } from "@app/context";
+import { useOrganization, useProject, useSubscription } from "@app/context";
 import { EventType } from "@app/hooks/api/auditLogs/enums";
 import { TSecretSync } from "@app/hooks/api/secretSyncs";
 import { LogsSection } from "@app/pages/organization/AuditLogsPage/components/LogsSection";
@@ -19,14 +19,15 @@ type Props = {
 
 export const SecretSyncAuditLogsSection = ({ secretSync }: Props) => {
   const { subscription } = useSubscription();
-  const { currentWorkspace } = useWorkspace();
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
 
   const auditLogsRetentionDays = subscription?.auditLogsRetentionDays ?? 30;
 
   return (
     <div className="flex max-h-full w-full flex-col gap-3 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-4 py-3">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
-        <h3 className="font-semibold text-mineshaft-100">Sync Logs</h3>
+        <h3 className="font-medium text-mineshaft-100">Sync Logs</h3>
         {subscription.auditLogs && (
           <p className="text-xs text-bunker-300">
             Displaying audit logs from the last {Math.min(auditLogsRetentionDays, 60)} days
@@ -37,7 +38,7 @@ export const SecretSyncAuditLogsSection = ({ secretSync }: Props) => {
         <LogsSection
           refetchInterval={4000}
           showFilters={false}
-          project={currentWorkspace}
+          project={currentProject}
           presets={{
             eventMetadata: { syncId: secretSync.id },
             startDate: new Date(
@@ -53,7 +54,12 @@ export const SecretSyncAuditLogsSection = ({ secretSync }: Props) => {
             <p>
               Please{" "}
               {subscription && subscription.slug !== null ? (
-                <Link to="/organization/billing" target="_blank" rel="noopener noreferrer">
+                <Link
+                  to="/organizations/$orgId/billing"
+                  params={{ orgId: currentOrg.id }}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   <a
                     className="cursor-pointer underline transition-all hover:text-white"
                     target="_blank"

@@ -2,9 +2,10 @@ import { Knex } from "knex";
 
 import { TDbClient } from "@app/db";
 import {
+  AccessScope,
   SecretApprovalRequestsSchema,
   TableName,
-  TOrgMemberships,
+  TMemberships,
   TSecretApprovalRequests,
   TSecretApprovalRequestsSecrets,
   TUserGroupMembership,
@@ -36,6 +37,7 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
       .where(filter)
       .join(TableName.SecretFolder, `${TableName.SecretApprovalRequest}.folderId`, `${TableName.SecretFolder}.id`)
       .join(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
+      .join(TableName.Project, `${TableName.Environment}.projectId`, `${TableName.Project}.id`)
       .join(
         TableName.SecretApprovalPolicy,
         `${TableName.SecretApprovalRequest}.policyId`,
@@ -109,24 +111,22 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
         `secretApprovalReviewerUser.id`
       )
 
-      .leftJoin<TOrgMemberships>(
-        db(TableName.OrgMembership).as("approverOrgMembership"),
-        `${TableName.SecretApprovalPolicyApprover}.approverUserId`,
-        `approverOrgMembership.userId`
-      )
+      .leftJoin<TMemberships>(db(TableName.Membership).as("approverOrgMembership"), (qb) => {
+        qb.on(`${TableName.SecretApprovalPolicyApprover}.approverUserId`, `approverOrgMembership.actorUserId`)
+          .andOn(`approverOrgMembership.scopeOrgId`, `${TableName.Project}.orgId`)
+          .andOn(`approverOrgMembership.scope`, db.raw("?", [AccessScope.Organization]));
+      })
 
-      .leftJoin<TOrgMemberships>(
-        db(TableName.OrgMembership).as("approverGroupOrgMembership"),
-        `secretApprovalPolicyGroupApproverUser.id`,
-        `approverGroupOrgMembership.userId`
-      )
-
-      .leftJoin<TOrgMemberships>(
-        db(TableName.OrgMembership).as("reviewerOrgMembership"),
-        `${TableName.SecretApprovalRequestReviewer}.reviewerUserId`,
-        `reviewerOrgMembership.userId`
-      )
-
+      .leftJoin<TMemberships>(db(TableName.Membership).as("approverGroupOrgMembership"), (qb) => {
+        qb.on(`secretApprovalPolicyGroupApproverUser.id`, `approverGroupOrgMembership.actorUserId`)
+          .andOn(`approverGroupOrgMembership.scopeOrgId`, `${TableName.Project}.orgId`)
+          .andOn(`approverGroupOrgMembership.scope`, db.raw("?", [AccessScope.Organization]));
+      })
+      .leftJoin<TMemberships>(db(TableName.Membership).as("reviewerOrgMembership"), (qb) => {
+        qb.on(`${TableName.SecretApprovalRequestReviewer}.reviewerUserId`, `reviewerOrgMembership.actorUserId`)
+          .andOn(`reviewerOrgMembership.scopeOrgId`, `${TableName.Project}.orgId`)
+          .andOn(`reviewerOrgMembership.scope`, db.raw("?", [AccessScope.Organization]));
+      })
       .select(selectAllTableCols(TableName.SecretApprovalRequest))
       .select(
         tx.ref("approverUserId").withSchema(TableName.SecretApprovalPolicyApprover),
@@ -166,6 +166,7 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
         tx.ref("reviewerUserId").withSchema(TableName.SecretApprovalRequestReviewer),
         tx.ref("status").withSchema(TableName.SecretApprovalRequestReviewer).as("reviewerStatus"),
         tx.ref("comment").withSchema(TableName.SecretApprovalRequestReviewer).as("reviewerComment"),
+        tx.ref("createdAt").withSchema(TableName.SecretApprovalRequestReviewer).as("reviewerCreatedAt"),
         tx.ref("email").withSchema("secretApprovalReviewerUser").as("reviewerEmail"),
         tx.ref("username").withSchema("secretApprovalReviewerUser").as("reviewerUsername"),
         tx.ref("firstName").withSchema("secretApprovalReviewerUser").as("reviewerFirstName"),
@@ -180,11 +181,7 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
         tx.ref("enforcementLevel").withSchema(TableName.SecretApprovalPolicy).as("policyEnforcementLevel"),
         tx.ref("allowedSelfApprovals").withSchema(TableName.SecretApprovalPolicy).as("policyAllowedSelfApprovals"),
         tx.ref("approvals").withSchema(TableName.SecretApprovalPolicy).as("policyApprovals"),
-        tx.ref("deletedAt").withSchema(TableName.SecretApprovalPolicy).as("policyDeletedAt"),
-        tx
-          .ref("shouldCheckSecretPermission")
-          .withSchema(TableName.SecretApprovalPolicy)
-          .as("policySecretReadAccessCompat")
+        tx.ref("deletedAt").withSchema(TableName.SecretApprovalPolicy).as("policyDeletedAt")
       );
 
   const findById = async (id: string, tx?: Knex) => {
@@ -224,8 +221,7 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
             enforcementLevel: el.policyEnforcementLevel,
             envId: el.policyEnvId,
             deletedAt: el.policyDeletedAt,
-            allowedSelfApprovals: el.policyAllowedSelfApprovals,
-            shouldCheckSecretPermission: el.policySecretReadAccessCompat
+            allowedSelfApprovals: el.policyAllowedSelfApprovals
           }
         }),
         childrenMapper: [
@@ -240,6 +236,7 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
               reviewerUsername: username,
               reviewerFirstName: firstName,
               reviewerComment: comment,
+              reviewerCreatedAt: createdAt,
               reviewerIsOrgMembershipActive: isOrgMembershipActive
             }) =>
               userId
@@ -251,6 +248,7 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
                     lastName,
                     username,
                     comment: comment ?? "",
+                    createdAt,
                     isOrgMembershipActive
                   }
                 : undefined
@@ -345,21 +343,26 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
 
   const findProjectRequestCount = async (projectId: string, userId: string, policyId?: string, tx?: Knex) => {
     try {
-      const docs = await (tx || db)
+      const docs = await (tx || db.replicaNode())
         .with(
           "temp",
           (tx || db.replicaNode())(TableName.SecretApprovalRequest)
             .join(TableName.SecretFolder, `${TableName.SecretApprovalRequest}.folderId`, `${TableName.SecretFolder}.id`)
             .join(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
             .join(
-              TableName.SecretApprovalPolicyApprover,
-              `${TableName.SecretApprovalRequest}.policyId`,
-              `${TableName.SecretApprovalPolicyApprover}.policyId`
-            )
-            .join(
               TableName.SecretApprovalPolicy,
               `${TableName.SecretApprovalRequest}.policyId`,
               `${TableName.SecretApprovalPolicy}.id`
+            )
+            .leftJoin(
+              TableName.SecretApprovalPolicyApprover,
+              `${TableName.SecretApprovalPolicy}.id`,
+              `${TableName.SecretApprovalPolicyApprover}.policyId`
+            )
+            .leftJoin(
+              TableName.UserGroupMembership,
+              `${TableName.SecretApprovalPolicyApprover}.approverGroupId`,
+              `${TableName.UserGroupMembership}.groupId`
             )
             .where({ projectId })
             .where((qb) => {
@@ -370,10 +373,10 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
                 void bd
                   .where(`${TableName.SecretApprovalPolicyApprover}.approverUserId`, userId)
                   .orWhere(`${TableName.SecretApprovalRequest}.committerUserId`, userId)
+                  .orWhere(`${TableName.UserGroupMembership}.userId`, userId)
             )
             .select("status", `${TableName.SecretApprovalRequest}.id`)
             .groupBy(`${TableName.SecretApprovalRequest}.id`, "status")
-            .count("status")
         )
         .select("status")
         .from("temp")
@@ -494,9 +497,8 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
         .distinctOn(`${TableName.SecretApprovalRequest}.id`)
         .as("inner");
 
-      const query = (tx || db)
+      const query = (tx || db.replicaNode())
         .select("*")
-        .select(db.raw("count(*) OVER() as total_count"))
         .from(innerQuery)
         .orderBy("createdAt", "desc") as typeof innerQuery;
 
@@ -516,15 +518,20 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
         });
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const countResult = await (tx || db.replicaNode())
+        .count({ count: "*" })
+        .from(query.clone().as("count_query"))
+        .first();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const totalCount = Number(countResult?.count || 0);
+
       const docs = await (tx || db)
         .with("w", query)
         .select("*")
         .from<Awaited<typeof query>[number]>("w")
         .where("w.rank", ">=", offset)
         .andWhere("w.rank", "<", offset + limit);
-
-      // @ts-expect-error knex does not infer
-      const totalCount = Number(docs[0]?.total_count || 0);
 
       const formattedDoc = sqlNestRelationships({
         data: docs,
@@ -670,6 +677,7 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
         .select(
           db.ref("projectId").withSchema(TableName.Environment),
           db.ref("slug").withSchema(TableName.Environment).as("environment"),
+          db.ref("name").withSchema(TableName.Environment).as("environmentName"),
           db.ref("id").withSchema(TableName.SecretApprovalRequestReviewer).as("reviewerId"),
           db.ref("reviewerUserId").withSchema(TableName.SecretApprovalRequestReviewer),
           db.ref("status").withSchema(TableName.SecretApprovalRequestReviewer).as("reviewerStatus"),
@@ -699,29 +707,29 @@ export const secretApprovalRequestDALFactory = (db: TDbClient) => {
         )
         .as("inner");
 
-      const countQuery = (await (tx || db)
-        .select(db.raw("count(*) OVER() as total_count"))
-        .from(innerQuery.clone().distinctOn(`${TableName.SecretApprovalRequest}.id`))) as Array<{
-        total_count: number;
-      }>;
-
       const query = (tx || db).select("*").from(innerQuery).orderBy("createdAt", "desc") as typeof innerQuery;
 
       if (search) {
         void query.where((qb) => {
           void qb
             .whereRaw(`CONCAT_WS(' ', ??, ??) ilike ?`, [
-              db.ref("firstName").withSchema("committerUser"),
-              db.ref("lastName").withSchema("committerUser"),
+              db.ref("committerUserFirstName"),
+              db.ref("committerUserLastName"),
               `%${search}%`
             ])
-            .orWhereRaw(`?? ilike ?`, [db.ref("username").withSchema("committerUser"), `%${search}%`])
-            .orWhereRaw(`?? ilike ?`, [db.ref("email").withSchema("committerUser"), `%${search}%`])
-            .orWhereILike(`${TableName.Environment}.name`, `%${search}%`)
-            .orWhereILike(`${TableName.Environment}.slug`, `%${search}%`)
-            .orWhereILike(`${TableName.SecretApprovalPolicy}.secretPath`, `%${search}%`);
+            .orWhereRaw(`?? ilike ?`, [db.ref("committerUserUsername"), `%${search}%`])
+            .orWhereRaw(`?? ilike ?`, [db.ref("committerUserEmail"), `%${search}%`])
+            .orWhereILike(`environmentName`, `%${search}%`)
+            .orWhereILike(`environment`, `%${search}%`)
+            .orWhereILike(`policySecretPath`, `%${search}%`);
         });
       }
+
+      const countQuery = (await (tx || db)
+        .select(db.raw("count(*) OVER() as total_count"))
+        .from(query.clone().as("outer"))) as Array<{
+        total_count: number;
+      }>;
 
       const rankOffset = offset + 1;
       const docs = await (tx || db)

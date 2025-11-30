@@ -1,8 +1,8 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { faCopy, faEllipsisV } from "@fortawesome/free-solid-svg-icons";
+import { faChevronLeft, faCopy, faEllipsisV } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
@@ -30,7 +30,7 @@ export const Page = () => {
     from: ROUTE_PATHS.Organization.RoleByIDPage.id
   });
   const roleId = params.roleId as string;
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isSubOrganization } = useOrganization();
   const orgId = currentOrg?.id || "";
   const { data } = useGetOrgRole(orgId, roleId);
   const { mutateAsync: deleteOrgRole } = useDeleteOrgRole();
@@ -42,54 +42,52 @@ export const Page = () => {
   ] as const);
 
   const onDeleteOrgRoleSubmit = async () => {
-    try {
-      if (!orgId || !roleId) return;
+    if (!orgId || !roleId) return;
 
-      await deleteOrgRole({
-        orgId,
-        id: roleId
-      });
+    await deleteOrgRole({
+      orgId,
+      id: roleId
+    });
 
-      createNotification({
-        text: "Successfully deleted organization role",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully deleted organization role",
+      type: "success"
+    });
 
-      handlePopUpClose("deleteOrgRole");
-      navigate({
-        to: "/organization/access-management" as const,
-        search: {
-          selectedTab: OrgAccessControlTabSections.Roles
-        }
-      });
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to delete organization role";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    handlePopUpClose("deleteOrgRole");
+    navigate({
+      to: "/organizations/$orgId/access-management" as const,
+      params: { orgId },
+      search: {
+        selectedTab: OrgAccessControlTabSections.Roles
+      }
+    });
   };
 
   const isCustomRole = !["admin", "member", "no-access"].includes(data?.slug ?? "");
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       {data && (
-        <div className="mx-auto mb-6 w-full max-w-7xl">
+        <div className="mx-auto w-full max-w-8xl">
+          <Link
+            to="/organizations/$orgId/access-management"
+            params={{ orgId }}
+            search={{
+              selectedTab: OrgAccessControlTabSections.Roles
+            }}
+            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+          >
+            <FontAwesomeIcon icon={faChevronLeft} />
+            Roles
+          </Link>
           <PageHeader
-            title={
-              <div className="flex flex-col">
-                <div>
-                  <span>{data.name}</span>
-                  <p className="text-sm font-[400] normal-case leading-3 text-mineshaft-400">
-                    {data.slug} {data.description && `- ${data.description}`}
-                  </p>
-                </div>
-              </div>
+            scope={isSubOrganization ? "namespace" : "org"}
+            title={data.name}
+            description={
+              <>
+                {data.slug} {data.description && `- ${data.description}`}
+              </>
             }
           >
             {isCustomRole && (

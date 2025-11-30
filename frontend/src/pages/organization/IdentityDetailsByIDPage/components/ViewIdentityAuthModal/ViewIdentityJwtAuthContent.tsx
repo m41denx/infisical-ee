@@ -1,7 +1,8 @@
-import { faBan, faEye } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faBan } from "@fortawesome/free-solid-svg-icons";
+import { EyeIcon } from "lucide-react";
 
-import { Badge, EmptyState, Spinner, Tooltip } from "@app/components/v2";
+import { EmptyState, Spinner, Tooltip } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { useGetIdentityJwtAuth } from "@app/hooks/api";
 import { IdentityJwtConfigurationType } from "@app/hooks/api/identities/enums";
 import { IdentityJwtAuthForm } from "@app/pages/organization/AccessManagementPage/components/OrgIdentityTab/components/IdentitySection/IdentityJwtAuthForm";
@@ -48,6 +49,7 @@ export const ViewIdentityJwtAuthContent = ({
     <ViewIdentityContentWrapper
       onEdit={() => handlePopUpOpen("identityAuthMethod")}
       onDelete={onDelete}
+      identityId={identityId}
     >
       <IdentityAuthFieldDisplay label="Access Token TTL (seconds)">
         {data.accessTokenTTL}
@@ -75,15 +77,13 @@ export const ViewIdentityJwtAuthContent = ({
                 side="right"
                 className="max-w-xl p-2"
                 content={
-                  <p className="break-words rounded bg-mineshaft-600 p-2">{data.jwksCaCert}</p>
+                  <p className="rounded-sm bg-mineshaft-600 p-2 break-words">{data.jwksCaCert}</p>
                 }
               >
-                <div className="w-min">
-                  <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                    <FontAwesomeIcon icon={faEye} />
-                    <span>Reveal</span>
-                  </Badge>
-                </div>
+                <Badge variant="neutral">
+                  <EyeIcon />
+                  Reveal
+                </Badge>
               </Tooltip>
             )}
           </IdentityAuthFieldDisplay>
@@ -98,17 +98,15 @@ export const ViewIdentityJwtAuthContent = ({
                   className="max-w-xl p-2"
                   key={key}
                   content={
-                    <p className="whitespace-normal break-words rounded bg-mineshaft-600 p-2">
+                    <p className="rounded-sm bg-mineshaft-600 p-2 break-words whitespace-normal">
                       {key}
                     </p>
                   }
                 >
-                  <div className="inline-block w-min">
-                    <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                      <FontAwesomeIcon icon={faEye} />
-                      <span>Key {index + 1}</span>
-                    </Badge>
-                  </div>
+                  <Badge variant="neutral">
+                    <EyeIcon />
+                    Key {index + 1}
+                  </Badge>
                 </Tooltip>
               ))}
             </div>
@@ -133,17 +131,15 @@ export const ViewIdentityJwtAuthContent = ({
             side="right"
             className="max-w-xl p-2"
             content={
-              <pre className="whitespace-pre-wrap rounded bg-mineshaft-600 p-2">
+              <pre className="rounded-sm bg-mineshaft-600 p-2 whitespace-pre-wrap">
                 {JSON.stringify(data.boundClaims, null, 2)}
               </pre>
             }
           >
-            <div className="w-min">
-              <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                <FontAwesomeIcon icon={faEye} />
-                <span>Reveal</span>
-              </Badge>
-            </div>
+            <Badge variant="neutral">
+              <EyeIcon />
+              Reveal
+            </Badge>
           </Tooltip>
         )}
       </IdentityAuthFieldDisplay>

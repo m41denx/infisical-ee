@@ -141,7 +141,8 @@ export const secretRawSchema = z.object({
       actorId: z.string().nullable().optional(),
       actorType: z.string().nullable().optional(),
       name: z.string().nullable().optional(),
-      membershipId: z.string().nullable().optional()
+      membershipId: z.string().nullable().optional(),
+      groupId: z.string().nullable().optional()
     })
     .optional()
     .nullable(),
@@ -209,11 +210,11 @@ export const SanitizedIdentityPrivilegeSchema = IdentityProjectAdditionalPrivile
   )
 });
 
-export const SanitizedRoleSchema = ProjectRolesSchema.extend({
+export const SanitizedRoleSchema = ProjectRolesSchema.omit({ version: true }).extend({
   permissions: UnpackedPermissionSchema.array()
 });
 
-export const SanitizedRoleSchemaV1 = ProjectRolesSchema.extend({
+export const SanitizedRoleSchemaV1 = ProjectRolesSchema.omit({ version: true }).extend({
   permissions: UnpackedPermissionSchema.array().transform((caslPermission) =>
     // first map and remove other actions of folder permission
     caslPermission

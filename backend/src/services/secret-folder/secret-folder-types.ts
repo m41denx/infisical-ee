@@ -37,6 +37,7 @@ export type TDeleteFolderDTO = {
   environment: string;
   path: string;
   idOrName: string;
+  forceDelete?: boolean;
 } & TProjectPermission;
 
 export type TGetFolderDTO = {
@@ -63,6 +64,8 @@ export type TGetFoldersDeepByEnvsDTO = {
 
 export type TFindFoldersDeepByParentIdsDTO = {
   parentIds: string[];
+  orderBy?: SecretsOrderBy;
+  orderDirection?: OrderByDirection;
 };
 
 export type TCreateManyFoldersDTO = {

@@ -14,10 +14,10 @@ import {
 } from "@app/components/v2";
 import { useOrganization } from "@app/context";
 import {
-  useAddIdentityToWorkspace,
+  useCreateProjectIdentityMembership,
   useGetIdentityProjectMemberships,
   useGetProjectRoles,
-  useGetUserWorkspaces,
+  useGetUserProjects,
   useGetWorkspaceById
 } from "@app/hooks/api";
 import { UsePopUpState } from "@app/hooks/usePopUp";
@@ -44,8 +44,8 @@ type Props = {
 
 const Content = ({ identityId, handlePopUpToggle }: Omit<Props, "popUp">) => {
   const { currentOrg } = useOrganization();
-  const { data: workspaces = [] } = useGetUserWorkspaces();
-  const { mutateAsync: addIdentityToWorkspace } = useAddIdentityToWorkspace();
+  const { data: workspaces = [] } = useGetUserProjects();
+  const { mutateAsync: addIdentityToWorkspace } = useCreateProjectIdentityMembership();
 
   const {
     control,
@@ -75,30 +75,19 @@ const Content = ({ identityId, handlePopUpToggle }: Omit<Props, "popUp">) => {
   }, [workspaces, projectMemberships]);
 
   const onFormSubmit = async ({ project: selectedProject, role }: FormData) => {
-    try {
-      await addIdentityToWorkspace({
-        workspaceId: selectedProject.id,
-        identityId,
-        role: role.slug || undefined
-      });
+    await addIdentityToWorkspace({
+      projectId: selectedProject.id,
+      identityId,
+      role: role.slug || undefined
+    });
 
-      createNotification({
-        text: "Successfully added identity to project",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully added identity to project",
+      type: "success"
+    });
 
-      reset();
-      handlePopUpToggle("addIdentityToProject", false);
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to add identity to project";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    reset();
+    handlePopUpToggle("addIdentityToProject", false);
   };
 
   const isProjectSelected = Boolean(projectId);
@@ -178,7 +167,7 @@ export const IdentityAddToProjectModal = ({ identityId, popUp, handlePopUpToggle
         handlePopUpToggle("addIdentityToProject", isOpen);
       }}
     >
-      <ModalContent bodyClassName="overflow-visible" title="Add Identity to Project">
+      <ModalContent bodyClassName="overflow-visible" title="Add Machine Identity to Project">
         <Content identityId={identityId} handlePopUpToggle={handlePopUpToggle} />
       </ModalContent>
     </Modal>

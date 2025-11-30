@@ -73,67 +73,53 @@ export const EmailConfirmationStep = ({
   const { mutateAsync: verifyEmailVerificationCode } = useVerifyEmailVerificationCode();
 
   const checkCode = async () => {
-    try {
-      await verifyEmailVerificationCode({ username, code });
-      setCodeError(false);
+    await verifyEmailVerificationCode({ username, code });
+    setCodeError(false);
 
-      createNotification({
-        text: "Successfully verified code",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully verified code",
+      type: "success"
+    });
 
-      switch (authType) {
-        case UserAliasType.SAML: {
-          window.open(`/api/v1/sso/redirect/saml2/organizations/${organizationSlug}`);
-          window.close();
-          break;
-        }
-        case UserAliasType.LDAP: {
-          navigate({ to: "/login/ldap", search: { organizationSlug } });
-          break;
-        }
-        case UserAliasType.OIDC: {
-          window.open(`/api/v1/sso/oidc/login?orgSlug=${organizationSlug}`);
-          window.close();
-          break;
-        }
-        default: {
-          setStep(1);
-          break;
-        }
+    switch (authType) {
+      case UserAliasType.SAML: {
+        window.open(`/api/v1/sso/redirect/saml2/organizations/${organizationSlug}`);
+        window.close();
+        break;
       }
-    } catch {
-      createNotification({
-        text: "Failed to verify code",
-        type: "error"
-      });
+      case UserAliasType.LDAP: {
+        navigate({ to: "/login/ldap", search: { organizationSlug } });
+        break;
+      }
+      case UserAliasType.OIDC: {
+        window.open(`/api/v1/sso/oidc/login?orgSlug=${organizationSlug}`);
+        window.close();
+        break;
+      }
+      default: {
+        setStep(1);
+        break;
+      }
     }
 
     setCode("");
   };
 
   const resendCode = async () => {
-    try {
-      const queryParams = new URLSearchParams(window.location.search);
-      const token = queryParams.get("token");
-      if (!token) {
-        createNotification({
-          text: "Failed to resend code, no token found",
-          type: "error"
-        });
-        return;
-      }
-      await sendEmailVerificationCode(token);
+    const queryParams = new URLSearchParams(window.location.search);
+    const token = queryParams.get("token");
+    if (!token) {
       createNotification({
-        text: "Successfully resent code",
-        type: "success"
-      });
-    } catch {
-      createNotification({
-        text: "Failed to resend code",
+        text: "Failed to resend code, no token found",
         type: "error"
       });
+      return;
     }
+    await sendEmailVerificationCode(token);
+    createNotification({
+      text: "Successfully resent code",
+      type: "success"
+    });
   };
 
   return (
@@ -149,7 +135,7 @@ export const EmailConfirmationStep = ({
           fields={6}
           onChange={setCode}
           {...props}
-          className="mb-2 mt-6"
+          className="mt-6 mb-2"
         />
       </div>
       <div className="mx-auto mt-4 block w-max md:hidden">
@@ -160,11 +146,11 @@ export const EmailConfirmationStep = ({
           fields={6}
           onChange={setCode}
           {...propsPhone}
-          className="mb-2 mt-2"
+          className="mt-2 mb-2"
         />
       </div>
       {codeError && <Error text="Oops. Your code is wrong. Please try again." />}
-      <div className="mx-auto mt-2 flex w-1/4 min-w-[20rem] max-w-xs flex-col items-center justify-center text-center text-sm md:max-w-md md:text-left lg:w-[19%]">
+      <div className="mx-auto mt-2 flex w-1/4 max-w-xs min-w-[20rem] flex-col items-center justify-center text-center text-sm md:max-w-md md:text-left lg:w-[19%]">
         <div className="text-l w-full py-1 text-lg">
           <Button
             type="submit"

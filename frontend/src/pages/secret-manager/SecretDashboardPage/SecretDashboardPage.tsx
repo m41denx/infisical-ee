@@ -3,9 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
 import { subject } from "@casl/ability";
-import { faArrowDown, faArrowUp, faInfoCircle } from "@fortawesome/free-solid-svg-icons";
+import {
+  faArrowDown,
+  faArrowUp,
+  faChevronLeft,
+  faInfoCircle
+} from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
@@ -25,10 +30,12 @@ import {
   ProjectPermissionActions,
   ProjectPermissionDynamicSecretActions,
   ProjectPermissionSub,
-  useProjectPermission,
-  useWorkspace
+  useOrganization,
+  useProject,
+  useProjectPermission
 } from "@app/context";
 import {
+  ProjectPermissionCommitsActions,
   ProjectPermissionSecretActions,
   ProjectPermissionSecretRotationActions
 } from "@app/context/ProjectPermissionContext/types";
@@ -46,13 +53,15 @@ import {
   useGetWsTags
 } from "@app/hooks/api";
 import { useGetProjectSecretsDetails } from "@app/hooks/api/dashboard";
+import { dashboardKeys } from "@app/hooks/api/dashboard/queries";
 import { DashboardSecretsOrderBy } from "@app/hooks/api/dashboard/types";
 import { useGetFolderCommitsCount } from "@app/hooks/api/folderCommits";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
+import { ProjectType, ProjectVersion } from "@app/hooks/api/projects/types";
+import { queryClient } from "@app/hooks/api/reactQuery";
 import { PendingAction } from "@app/hooks/api/secretFolders/types";
 import { useCreateCommit } from "@app/hooks/api/secrets/mutations";
 import { SecretV3RawSanitized } from "@app/hooks/api/types";
-import { ProjectVersion } from "@app/hooks/api/workspace/types";
 import { usePathAccessPolicies } from "@app/hooks/usePathAccessPolicies";
 import { useResizableColWidth } from "@app/hooks/useResizableColWidth";
 import { hasSecretReadValueOrDescribePermission } from "@app/lib/fn/permission";
@@ -93,7 +102,8 @@ const LOADER_TEXT = [
 ];
 
 const Page = () => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
   const navigate = useNavigate({
     from: ROUTE_PATHS.SecretManager.SecretDashboardPage.path
   });
@@ -111,6 +121,9 @@ const Page = () => {
   const tableRef = useRef<HTMLTableElement>(null);
 
   const [isVisible, setIsVisible] = useState(false);
+  const [selectedDynamicSecretId, setSelectedDynamicSecretId] = useState<string | null>(
+    routerQueryParams.dynamicSecretId || ""
+  );
   const { isBatchMode, pendingChanges } = useBatchMode();
   const { loadPendingChanges, setExistingKeys } = useBatchModeActions();
 
@@ -141,15 +154,41 @@ const Page = () => {
   ] as const);
 
   // env slug
-  const workspaceId = currentWorkspace?.id || "";
-  const projectSlug = currentWorkspace?.slug || "";
+  const projectId = currentProject?.id || "";
+  const projectSlug = currentProject?.slug || "";
   const secretPath = (routerQueryParams.secretPath as string) || "/";
 
   useEffect(() => {
-    if (isBatchMode && workspaceId && environment && secretPath) {
-      loadPendingChanges({ workspaceId, environment, secretPath });
+    if (isBatchMode && projectId && environment && secretPath) {
+      loadPendingChanges({ projectId, environment, secretPath });
     }
-  }, [isBatchMode, workspaceId, environment, secretPath, loadPendingChanges]);
+  }, [isBatchMode, projectId, environment, secretPath, loadPendingChanges]);
+
+  useEffect(() => {
+    if (isVisible) setIsVisible(false);
+  }, [environment]);
+
+  useEffect(() => {
+    if (routerQueryParams.dynamicSecretId !== null) {
+      setSelectedDynamicSecretId(routerQueryParams.dynamicSecretId);
+
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          dynamicSecretId: undefined
+        })
+      });
+
+      // if any of the router query params are changed, we have to clear the selected dynamic secret id to avoid re-rendering the lease modal when it suddendly becomes available
+    } else {
+      setSelectedDynamicSecretId(null);
+    }
+  }, [
+    routerQueryParams.filterBy,
+    routerQueryParams.search,
+    routerQueryParams.secretPath,
+    routerQueryParams.tags
+  ]);
 
   const canReadSecret = hasSecretReadValueOrDescribePermission(
     permission,
@@ -182,17 +221,6 @@ const Page = () => {
     })
   );
 
-  const canReadSecretValue = hasSecretReadValueOrDescribePermission(
-    permission,
-    ProjectPermissionSecretActions.ReadValue,
-    {
-      environment,
-      secretPath,
-      secretName: "*",
-      secretTags: ["*"]
-    }
-  );
-
   const canReadSecretImports = permission.can(
     ProjectPermissionActions.Read,
     subject(ProjectPermissionSub.SecretImports, { environment, secretPath })
@@ -213,40 +241,67 @@ const Page = () => {
     ProjectPermissionSub.SecretRollback
   );
 
-  const defaultFilterState = {
-    tags: {},
-    searchFilter: (routerQueryParams.search as string) || "",
-    // these should always be on by default for the UI, they will be disabled for the query below based off permissions
-    include: {
-      [RowType.Folder]: false,
-      [RowType.Import]: false,
-      [RowType.DynamicSecret]: false,
-      [RowType.Secret]: false,
-      [RowType.SecretRotation]: false
-    }
-  };
+  const canReadCommits = permission.can(
+    ProjectPermissionCommitsActions.Read,
+    ProjectPermissionSub.Commits
+  );
+
+  const getFilterStateFromQueryParams = useCallback(() => {
+    const filterByArray = routerQueryParams.filterBy
+      ? (routerQueryParams.filterBy as string).split(",").filter(Boolean)
+      : [];
+
+    const includeFilters = {
+      [RowType.Folder]: filterByArray.includes("folder") || false,
+      [RowType.Import]: filterByArray.includes("import") || false,
+      [RowType.DynamicSecret]: filterByArray.includes("dynamic") || false,
+      [RowType.Secret]: filterByArray.includes("secret") || false,
+      [RowType.SecretRotation]: filterByArray.includes("rotation") || false
+    };
+
+    const tags = routerQueryParams.tags
+      ? routerQueryParams.tags.split(",").reduce(
+          (acc, tag) => {
+            const trimmedTag = tag.trim();
+            if (trimmedTag) {
+              acc[trimmedTag] = true;
+            }
+            return acc;
+          },
+          {} as Record<string, boolean>
+        )
+      : {};
+
+    return {
+      tags,
+      searchFilter: (routerQueryParams.search as string) || "",
+      include: includeFilters
+    };
+  }, [routerQueryParams.search, routerQueryParams.tags, routerQueryParams.filterBy]);
+
+  const defaultFilterState = getFilterStateFromQueryParams();
 
   const [filter, setFilter] = useState<Filter>(defaultFilterState);
   const [debouncedSearchFilter, setDebouncedSearchFilter] = useDebounce(filter.searchFilter);
-  const [filterHistory, setFilterHistory] = useState<Map<string, Filter>>(new Map());
 
   const createSecretPopUp = usePopUpState(PopUpNames.CreateSecretForm);
   const { togglePopUp } = usePopUpAction();
 
   useEffect(() => {
-    if (!currentWorkspace?.environments.find((env) => env.slug === environment)) {
+    if (!currentProject?.environments.find((env) => env.slug === environment)) {
       createNotification({
         text: "No environment found with given slug",
         type: "error"
       });
       navigate({
-        to: "/projects/secret-management/$projectId/overview",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/overview",
         params: {
-          projectId: workspaceId
+          orgId: currentOrg.id,
+          projectId
         }
       });
     }
-  }, [currentWorkspace, environment]);
+  }, [currentProject, environment]);
 
   const isResourceTypeFiltered = Object.values(filter.include).some(Boolean);
   const {
@@ -256,7 +311,7 @@ const Page = () => {
     isFetched
   } = useGetProjectSecretsDetails({
     environment,
-    projectId: workspaceId,
+    projectId,
     secretPath,
     offset,
     limit,
@@ -265,7 +320,6 @@ const Page = () => {
     orderDirection,
     includeImports: canReadSecretImports && (isResourceTypeFiltered ? filter.include.import : true),
     includeFolders: isResourceTypeFiltered ? filter.include.folder : true,
-    viewSecretValue: canReadSecretValue,
     includeDynamicSecrets:
       canReadDynamicSecret && (isResourceTypeFiltered ? filter.include.dynamic : true),
     includeSecrets: canReadSecret && (isResourceTypeFiltered ? filter.include.secret : true),
@@ -310,7 +364,7 @@ const Page = () => {
 
   // fetch imported secrets to show user the overriden ones
   const { data: importedSecrets } = useGetImportedSecretsSingleEnv({
-    projectId: workspaceId,
+    projectId,
     environment,
     path: secretPath,
     options: {
@@ -320,40 +374,50 @@ const Page = () => {
 
   // fetch tags
   const { data: tags } = useGetWsTags(
-    permission.can(ProjectPermissionActions.Read, ProjectPermissionSub.Tags) ? workspaceId : ""
+    permission.can(ProjectPermissionActions.Read, ProjectPermissionSub.Tags) ? projectId : ""
   );
 
   const { pathPolicies, hasPathPolicies } = usePathAccessPolicies({ secretPath, environment });
 
   const { data: boardPolicy } = useGetSecretApprovalPolicyOfABoard({
-    workspaceId,
+    projectId,
     environment,
     secretPath
   });
   const isProtectedBranch = Boolean(boardPolicy);
 
   const handleCreateCommit = async (changes: PendingChanges, message: string) => {
-    try {
-      await createCommit({
-        workspaceId,
-        environment,
-        secretPath,
-        pendingChanges: changes,
-        message
+    await createCommit({
+      projectId,
+      environment,
+      secretPath,
+      pendingChanges: changes,
+      message
+    });
+
+    if (!isProtectedBranch) {
+      pendingChanges.secrets.forEach((secret) => {
+        if (secret.type === "update" && secret.secretValue !== undefined) {
+          queryClient.setQueryData(
+            dashboardKeys.getSecretValue({
+              projectId,
+              environment,
+              secretPath,
+              secretKey: secret.newSecretName ?? secret.secretKey,
+              isOverride: false
+            }),
+            { value: secret.secretValue }
+          );
+        }
       });
-      createNotification({
-        text: isProtectedBranch
-          ? "Requested changes have been sent for review"
-          : "Changes saved successfully",
-        type: "success"
-      });
-    } catch (error) {
-      createNotification({
-        text: "Failed to save changes",
-        type: "error"
-      });
-      console.error(error);
     }
+
+    createNotification({
+      text: isProtectedBranch
+        ? "Requested changes have been sent for review"
+        : "Changes saved successfully",
+      type: "success"
+    });
   };
 
   const {
@@ -362,7 +426,7 @@ const Page = () => {
     fetchNextPage: fetchNextSnapshotList,
     hasNextPage: hasNextSnapshotListPage
   } = useGetWorkspaceSnapshotList({
-    workspaceId,
+    projectId,
     directory: secretPath,
     environment,
     isPaused: !popUp.snapshots.isOpen || !canDoReadRollback,
@@ -375,9 +439,9 @@ const Page = () => {
     isFetching: isFolderCommitsCountFetching
   } = useGetFolderCommitsCount({
     directory: secretPath,
-    workspaceId,
+    projectId,
     environment,
-    isPaused: !canDoReadRollback
+    isPaused: !canReadCommits
   });
 
   const {
@@ -385,13 +449,13 @@ const Page = () => {
     isPending: isSnapshotCountLoading,
     isFetching: isSnapshotCountFetching
   } = useGetWsSnapshotCount({
-    workspaceId,
+    projectId,
     environment,
     directory: secretPath,
     isPaused: !canDoReadRollback
   });
 
-  const isPITEnabled = !currentWorkspace?.showSnapshotsLegacy;
+  const isPITEnabled = !currentProject?.showSnapshotsLegacy;
 
   const changesCount = useMemo(() => {
     return isPITEnabled ? folderCommitsCount : snapshotCount;
@@ -408,9 +472,10 @@ const Page = () => {
   const handleOnClickRollbackMode = () => {
     if (isPITEnabled) {
       navigate({
-        to: "/projects/secret-management/$projectId/commits/$environment/$folderId",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/commits/$environment/$folderId",
         params: {
-          projectId: workspaceId,
+          orgId: currentOrg.id,
+          projectId,
           folderId,
           environment
         },
@@ -460,34 +525,96 @@ const Page = () => {
     );
 
   const handleTagToggle = useCallback(
-    (tagSlug: string) =>
+    (tagSlug: string) => {
       setFilter((state) => {
         const isTagPresent = Boolean(state.tags?.[tagSlug]);
         const newTagFilter = { ...state.tags };
         if (isTagPresent) delete newTagFilter[tagSlug];
         else newTagFilter[tagSlug] = true;
+
+        // Update URL to match filter state
+        const tagsList = Object.keys(newTagFilter).filter((tag) => newTagFilter[tag]);
+        navigate({
+          search: (prev) => ({
+            ...prev,
+            tags: tagsList.length > 0 ? tagsList.join(",") : ""
+          })
+        });
+
         return { ...state, tags: newTagFilter };
-      }),
-    []
+      });
+    },
+    [navigate]
   );
 
   const handleToggleRowType = useCallback(
-    (rowType: RowType) =>
+    (rowType: RowType) => {
       setFilter((state) => {
+        const newInclude = {
+          ...state.include,
+          [rowType]: !state.include[rowType]
+        };
+
+        // Update URL to match filter state
+        const filterByList: string[] = [];
+        if (newInclude[RowType.Folder]) filterByList.push("folder");
+        if (newInclude[RowType.Import]) filterByList.push("import");
+        if (newInclude[RowType.DynamicSecret]) filterByList.push("dynamic");
+        if (newInclude[RowType.Secret]) filterByList.push("secret");
+        if (newInclude[RowType.SecretRotation]) filterByList.push("rotation");
+
+        navigate({
+          search: (prev) => ({
+            ...prev,
+            filterBy: filterByList.length > 0 ? filterByList.join(",") : ""
+          })
+        });
+
         return {
           ...state,
-          include: {
-            ...state.include,
-            [rowType]: !state.include[rowType]
-          }
+          include: newInclude
         };
-      }),
-    []
+      });
+    },
+    [navigate]
   );
 
+  const handleClearFilters = useCallback(() => {
+    setFilter({
+      searchFilter: "",
+      tags: {},
+      include: {
+        [RowType.Folder]: false,
+        [RowType.Import]: false,
+        [RowType.DynamicSecret]: false,
+        [RowType.Secret]: false,
+        [RowType.SecretRotation]: false
+      }
+    });
+    setDebouncedSearchFilter("");
+    navigate({
+      search: (prev) => ({
+        ...prev,
+        search: "",
+        tags: "",
+        filterBy: ""
+      })
+    });
+  }, [navigate]);
+
   const handleSearchChange = useCallback(
-    (searchFilter: string) => setFilter((state) => ({ ...state, searchFilter })),
-    []
+    (searchFilter: string) => {
+      setFilter((state) => ({ ...state, searchFilter }));
+
+      // Update URL to match filter state
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          search: searchFilter || ""
+        })
+      });
+    },
+    [navigate]
   );
 
   const handleToggleVisibility = useCallback(() => setIsVisible((state) => !state), []);
@@ -512,38 +639,10 @@ const Page = () => {
   });
 
   useEffect(() => {
-    // restore filters for path if set
-    const restore = filterHistory.get(secretPath);
-    setFilter(restore ?? defaultFilterState);
-    setDebouncedSearchFilter(restore?.searchFilter ?? "");
-  }, [secretPath]);
-
-  useEffect(() => {
-    if (!routerQueryParams.search && !routerQueryParams.tags) return;
-
-    const queryTags = routerQueryParams.tags
-      ? (routerQueryParams.tags as string).split(",").filter((tag) => Boolean(tag.trim()))
-      : [];
-    const updatedTags: Record<string, boolean> = {};
-    queryTags.forEach((tag) => {
-      updatedTags[tag] = true;
-    });
-
-    setFilter((prev) => ({
-      ...prev,
-      ...defaultFilterState,
-      searchFilter: (routerQueryParams.search as string) ?? "",
-      tags: updatedTags
-    }));
-    setDebouncedSearchFilter(routerQueryParams.search as string);
-    // this is a temp workaround until we fully transition state to query params,
-    navigate({
-      search: (state) => {
-        const { search, tags: qTags, ...query } = state;
-        return query;
-      }
-    });
-  }, [routerQueryParams.search, routerQueryParams.tags]);
+    const filterState = getFilterStateFromQueryParams();
+    setFilter(filterState);
+    setDebouncedSearchFilter(filterState.searchFilter);
+  }, [getFilterStateFromQueryParams]);
 
   const selectedSecrets = useSelectedSecrets();
   const selectedSecretActions = useSelectedSecretActions();
@@ -564,6 +663,9 @@ const Page = () => {
     const newChecks = { ...selectedSecrets };
 
     secrets?.forEach((secret) => {
+      // bulk actions don't apply to rotation secrets (move/delete)
+      if (secret.isRotatedSecret) return;
+
       if (allRowsSelectedOnPage.isChecked) {
         delete newChecks[secret.id];
       } else {
@@ -579,13 +681,6 @@ const Page = () => {
   }
 
   const handleResetFilter = () => {
-    // store for breadcrumb nav to restore previously used filters
-    setFilterHistory((prev) => {
-      const curr = new Map(prev);
-      curr.set(secretPath, filter);
-      return curr;
-    });
-
     setFilter(defaultFilterState);
     setDebouncedSearchFilter("");
   };
@@ -595,7 +690,9 @@ const Page = () => {
       return secrets;
     }
 
-    const mergedSecrets = [...(secrets || [])];
+    const mergedSecrets = [...(secrets || [])] as (SecretV3RawSanitized & {
+      originalKey?: string;
+    })[];
 
     pendingChanges.secrets.forEach((change) => {
       switch (change.type) {
@@ -641,12 +738,13 @@ const Page = () => {
                 ? change.tags?.map((tag) => ({
                     id: tag.id,
                     slug: tag.slug,
-                    projectId: workspaceId,
+                    projectId,
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                     __v: 0
                   })) || []
-                : mergedSecrets[updateIndex].tags
+                : mergedSecrets[updateIndex].tags,
+              originalKey: mergedSecrets[updateIndex].key
             };
           }
           break;
@@ -728,16 +826,28 @@ const Page = () => {
   const mergedSecrets = getMergedSecretsWithPending();
   const mergedFolders = getMergedFoldersWithPending();
 
-  if (!(currentWorkspace?.version === ProjectVersion.V3))
+  if (!(currentProject?.version === ProjectVersion.V3))
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center px-6 text-mineshaft-50 dark:[color-scheme:dark]">
+      <div className="flex h-full w-full flex-col items-center justify-center px-6 text-mineshaft-50 dark:scheme-dark">
         <SecretV2MigrationSection />
       </div>
     );
 
   return (
-    <div className="container mx-auto flex max-w-7xl flex-col text-mineshaft-50 dark:[color-scheme:dark]">
+    <div className="mx-auto flex max-w-8xl flex-col text-mineshaft-50 dark:scheme-dark">
+      <Link
+        to="/organizations/$orgId/projects/secret-management/$projectId/overview"
+        params={{
+          orgId: currentOrg.id,
+          projectId
+        }}
+        className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+      >
+        <FontAwesomeIcon icon={faChevronLeft} />
+        Secrets Overview
+      </Link>
       <PageHeader
+        scope={ProjectType.SecretManager}
         title="Secrets Management"
         description={
           <p className="text-md text-bunker-300">
@@ -788,8 +898,6 @@ const Page = () => {
         <>
           <ActionBar
             environment={environment}
-            workspaceId={workspaceId}
-            projectSlug={projectSlug}
             secretPath={secretPath}
             isVisible={isVisible}
             isBatchMode={isBatchMode}
@@ -808,24 +916,12 @@ const Page = () => {
             isPITEnabled={isPITEnabled}
             hasPathPolicies={hasPathPolicies}
             onRequestAccess={(params) => handlePopUpOpen("requestAccess", params)}
-            onClearFilters={() =>
-              setFilter((prev) => ({
-                ...prev,
-                tags: {},
-                include: {
-                  secret: false,
-                  import: false,
-                  dynamic: false,
-                  rotation: false,
-                  folder: false
-                }
-              }))
-            }
+            onClearFilters={handleClearFilters}
           />
           <div
             ref={tableRef}
             className={twMerge(
-              "thin-scrollbar mt-3 overflow-y-auto overflow-x-hidden rounded-md bg-mineshaft-800 text-left text-sm text-bunker-300",
+              "mt-3 thin-scrollbar overflow-x-hidden overflow-y-auto rounded-md bg-mineshaft-800 text-left text-sm text-bunker-300",
               isNotEmpty && "rounded-b-none"
             )}
           >
@@ -866,11 +962,11 @@ const Page = () => {
                       }`}
                       onMouseDown={handleMouseDown}
                     />
-                    <div className="pointer-events-none absolute -right-[0.04rem] top-2 z-30">
+                    <div className="pointer-events-none absolute top-2 -right-[0.04rem] z-30">
                       <div className="h-5 w-0.5 rounded-[1.5px] bg-gray-400 opacity-50" />
                     </div>
                     <div
-                      className="flex flex-shrink-0 items-center border-r border-mineshaft-600 py-2 pl-4"
+                      className="flex shrink-0 items-center border-r border-mineshaft-600 py-2 pl-4"
                       style={{ width: colWidth }}
                       role="button"
                       tabIndex={0}
@@ -886,7 +982,7 @@ const Page = () => {
                       />
                     </div>
                   </div>
-                  <div className="flex-grow px-4 py-2">Value</div>
+                  <div className="grow px-4 py-2">Value</div>
                 </div>
               )}
               {hasPathPolicies &&
@@ -901,7 +997,7 @@ const Page = () => {
                     <div className="flex items-center text-sm">
                       <FontAwesomeIcon
                         icon={faInfoCircle}
-                        className="ml-[0.15rem] mr-[1.65rem] text-primary"
+                        className="mr-[1.65rem] ml-[0.15rem] text-primary"
                       />
                       <span>You do not have permission to read secrets in this folder</span>
                     </div>
@@ -921,7 +1017,7 @@ const Page = () => {
                     <div className="flex items-center text-sm">
                       <FontAwesomeIcon
                         icon={faInfoCircle}
-                        className="ml-[0.15rem] mr-[1.65rem] text-primary"
+                        className="mr-[1.65rem] ml-[0.15rem] text-primary"
                       />
                       <span>
                         You do not have permission to {!canEditSecrets ? "edit" : ""}
@@ -951,7 +1047,7 @@ const Page = () => {
                   secretImports={imports}
                   isFetching={isDetailsFetching}
                   environment={environment}
-                  workspaceId={workspaceId}
+                  projectId={projectId}
                   secretPath={secretPath}
                   importedSecrets={importedSecrets}
                 />
@@ -960,7 +1056,7 @@ const Page = () => {
                 <FolderListView
                   folders={mergedFolders}
                   environment={environment}
-                  workspaceId={workspaceId}
+                  projectId={projectId}
                   secretPath={secretPath}
                   onNavigateToFolder={handleResetFilter}
                   canNavigate={isFetched}
@@ -968,6 +1064,7 @@ const Page = () => {
               )}
               {canReadDynamicSecret && Boolean(dynamicSecrets?.length) && (
                 <DynamicSecretListView
+                  selectedDynamicSecretId={selectedDynamicSecretId}
                   environment={environment}
                   projectSlug={projectSlug}
                   secretPath={secretPath}
@@ -984,7 +1081,7 @@ const Page = () => {
                   tags={tags}
                   isVisible={isVisible}
                   environment={environment}
-                  workspaceId={workspaceId}
+                  projectId={projectId}
                   secretPath={secretPath}
                   isProtectedBranch={isProtectedBranch}
                   importedBy={importedBy}
@@ -995,7 +1092,7 @@ const Page = () => {
                 <CommitForm
                   onCommit={handleCreateCommit}
                   environment={environment}
-                  workspaceId={workspaceId}
+                  projectId={projectId}
                   secretPath={secretPath}
                   isCommitting={isCommitPending}
                 />
@@ -1046,9 +1143,9 @@ const Page = () => {
             >
               <CreateSecretForm
                 environment={environment}
-                workspaceId={workspaceId}
+                projectId={projectId}
                 secretPath={secretPath}
-                autoCapitalize={currentWorkspace?.autoCapitalization}
+                autoCapitalize={currentProject?.autoCapitalization}
                 isProtectedBranch={isProtectedBranch}
                 isBatchMode={isBatchMode}
               />
@@ -1067,11 +1164,10 @@ const Page = () => {
           )}
           <SecretDropzone
             environment={environment}
-            workspaceId={workspaceId}
+            projectId={projectId}
             secretPath={secretPath}
             isSmaller={isNotEmpty}
-            environments={currentWorkspace?.environments}
-            isProtectedBranch={isProtectedBranch}
+            environments={currentProject?.environments}
           />
           <PitDrawer
             secretSnaphots={snapshotList}
@@ -1088,7 +1184,7 @@ const Page = () => {
         <SnapshotView
           snapshotId={snapshotId || ""}
           environment={environment}
-          workspaceId={workspaceId}
+          projectId={projectId}
           secretPath={secretPath}
           secrets={secrets}
           folders={folders}

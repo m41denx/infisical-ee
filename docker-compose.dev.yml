@@ -71,12 +71,14 @@ services:
     ports:
       - 4000:4000
       - 9464:9464 # for OTEL collection of Prometheus metrics
+      - 9229:9229 # For debugger access
     environment:
       - NODE_ENV=development
       - DB_CONNECTION_URI=postgres://infisical:infisical@db/infisical?sslmode=disable
       - TELEMETRY_ENABLED=false
     volumes:
       - ./backend/src:/app/src
+      - softhsm_tokens:/etc/softhsm2/tokens # SoftHSM tokens are stored in a volume to persist across container restarts
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -198,3 +200,5 @@ volumes:
   ldap_data:
   ldap_config:
   grafana_storage:
+  softhsm_tokens:
+    driver: local

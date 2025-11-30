@@ -1,9 +1,15 @@
+import { Knex } from "knex";
 import { z } from "zod";
 
 import { TCertificateAuthorityCrlDALFactory } from "@app/ee/services/certificate-authority-crl/certificate-authority-crl-dal";
 import { TProjectPermission } from "@app/lib/types";
 import { TCertificateDALFactory } from "@app/services/certificate/certificate-dal";
-import { CertExtendedKeyUsage, CertKeyAlgorithm, CertKeyUsage } from "@app/services/certificate/certificate-types";
+import {
+  CertExtendedKeyUsage,
+  CertKeyAlgorithm,
+  CertKeyUsage,
+  CertSignatureAlgorithm
+} from "@app/services/certificate/certificate-types";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 
@@ -42,7 +48,6 @@ export type TCreateCaDTO =
       notAfter?: string;
       maxPathLength?: number | null;
       keyAlgorithm: CertKeyAlgorithm;
-      enableDirectIssuance: boolean;
     }
   | ({
       isInternal: false;
@@ -60,7 +65,6 @@ export type TCreateCaDTO =
       notAfter?: string;
       maxPathLength?: number | null;
       keyAlgorithm: CertKeyAlgorithm;
-      enableDirectIssuance: boolean;
     } & Omit<TProjectPermission, "projectId">);
 
 export type TGetCaDTO = {
@@ -73,14 +77,12 @@ export type TUpdateCaDTO =
       caId: string;
       name?: string;
       status?: CaStatus;
-      enableDirectIssuance?: boolean;
     }
   | ({
       isInternal: false;
       caId: string;
       name?: string;
       status?: CaStatus;
-      enableDirectIssuance?: boolean;
     } & Omit<TProjectPermission, "projectId">);
 
 export type TDeleteCaDTO = {
@@ -131,6 +133,12 @@ export type TIssueCertFromCaDTO = {
   notAfter?: string;
   keyUsages?: CertKeyUsage[];
   extendedKeyUsages?: CertExtendedKeyUsage[];
+  signatureAlgorithm?: CertSignatureAlgorithm;
+  keyAlgorithm?: CertKeyAlgorithm;
+  isFromProfile?: boolean;
+  profileId?: string;
+  internal?: boolean;
+  tx?: Knex;
 } & Omit<TProjectPermission, "projectId">;
 
 export type TSignCertFromCaDTO =
@@ -148,6 +156,10 @@ export type TSignCertFromCaDTO =
       notAfter?: string;
       keyUsages?: CertKeyUsage[];
       extendedKeyUsages?: CertExtendedKeyUsage[];
+      signatureAlgorithm?: string;
+      keyAlgorithm?: string;
+      isFromProfile?: boolean;
+      profileId?: string;
     }
   | ({
       isInternal: false;
@@ -163,6 +175,10 @@ export type TSignCertFromCaDTO =
       notAfter?: string;
       keyUsages?: CertKeyUsage[];
       extendedKeyUsages?: CertExtendedKeyUsage[];
+      signatureAlgorithm?: string;
+      keyAlgorithm?: string;
+      isFromProfile?: boolean;
+      profileId?: string;
     } & Omit<TProjectPermission, "projectId">);
 
 export type TGetCaCertificateTemplatesDTO = {
@@ -184,6 +200,7 @@ export type TGetCaCredentialsDTO = {
   certificateAuthoritySecretDAL: Pick<TCertificateAuthoritySecretDALFactory, "findOne">;
   projectDAL: Pick<TProjectDALFactory, "findOne" | "updateById" | "transaction">;
   kmsService: Pick<TKmsServiceFactory, "decryptWithKmsKey" | "generateKmsKey">;
+  signatureAlgorithm?: RsaHashedImportParams | EcKeyImportParams;
 };
 
 export type TGetCaCertChainsDTO = {

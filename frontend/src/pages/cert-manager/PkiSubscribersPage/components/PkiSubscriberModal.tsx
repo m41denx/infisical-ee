@@ -22,7 +22,7 @@ import {
   TabPanel,
   Tabs
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   CaType,
   useCreatePkiSubscriber,
@@ -158,8 +158,8 @@ const schema = z
 export type FormData = z.infer<typeof schema>;
 
 export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace.id;
+  const { currentProject } = useProject();
+  const projectId = currentProject.id;
   const { data: subscribers } = useListWorkspacePkiSubscribers(projectId);
   const { data: cas } = useListCasByProjectId(projectId);
   const [tabValue, setTabValue] = useState<FormTab>(FormTab.Configuration);
@@ -276,117 +276,121 @@ export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
     locality,
     emailAddress
   }: FormData) => {
-    try {
-      if (!projectId) return;
+    if (!projectId) return;
 
-      if (!caId) {
-        createNotification({
-          text: "Please select an Issuing CA",
-          type: "error"
-        });
-        return;
-      }
-
-      // Check if there is already a different subscriber with the same name
-      const existingNames =
-        subscribers?.filter((s) => s.id !== pkiSubscriber?.id).map((s) => s.name) || [];
-
-      if (existingNames.includes(name.trim())) {
-        createNotification({
-          text: "A subscriber with this name already exists.",
-          type: "error"
-        });
-        return;
-      }
-
-      // Validate Azure template for Azure ADCS CA
-      if (selectedCa?.type === CaType.AZURE_AD_CS && !azureTemplateType) {
-        createNotification({
-          text: "Please select an Azure certificate template",
-          type: "error"
-        });
-        return;
-      }
-
-      const keyUsagesList =
-        selectedCa?.type === CaType.AZURE_AD_CS
-          ? []
-          : Object.entries(keyUsages)
-              .filter(([, value]) => value)
-              .map(([key]) => key as CertKeyUsage);
-
-      const extendedKeyUsagesList =
-        selectedCa?.type === CaType.AZURE_AD_CS
-          ? []
-          : Object.entries(extendedKeyUsages)
-              .filter(([, value]) => value)
-              .map(([key]) => key as CertExtendedKeyUsage);
-
-      const subjectAlternativeNamesList = subjectAlternativeNames
-        .split(",")
-        .map((san) => san.trim())
-        .filter(Boolean);
-
-      const autoRenewalPeriodInDays = enableAutoRenewal
-        ? convertTimeUnitValueToDays(renewalUnit, renewalBefore)
-        : undefined;
-
-      // Build properties object
-      const properties = {
-        ...(selectedCa?.type === CaType.AZURE_AD_CS && azureTemplateType && { azureTemplateType }),
-        ...(organization && { organization }),
-        ...(organizationalUnit && { organizationalUnit }),
-        ...(country && { country }),
-        ...(state && { state }),
-        ...(locality && { locality }),
-        ...(emailAddress && { emailAddress })
-      };
-
-      if (pkiSubscriber) {
-        await updateMutateAsync({
-          subscriberName: pkiSubscriber.name,
-          projectId,
-          name,
-          caId,
-          commonName,
-          subjectAlternativeNames: subjectAlternativeNamesList,
-          ttl,
-          keyUsages: keyUsagesList,
-          extendedKeyUsages: extendedKeyUsagesList,
-          enableAutoRenewal,
-          autoRenewalPeriodInDays,
-          properties: Object.keys(properties).length > 0 ? properties : undefined
-        });
-      } else {
-        await createMutateAsync({
-          projectId,
-          name,
-          caId,
-          commonName,
-          subjectAlternativeNames: subjectAlternativeNamesList,
-          ttl,
-          keyUsages: keyUsagesList,
-          extendedKeyUsages: extendedKeyUsagesList,
-          enableAutoRenewal,
-          autoRenewalPeriodInDays,
-          properties: Object.keys(properties).length > 0 ? properties : undefined
-        });
-      }
-
-      reset();
-      handlePopUpToggle("pkiSubscriber", false);
-
+    if (!caId) {
       createNotification({
-        text: `Successfully ${pkiSubscriber ? "updated" : "added"} PKI subscriber`,
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: `Failed to ${pkiSubscriber ? "update" : "add"} PKI subscriber`,
+        text: "Please select an Issuing CA",
         type: "error"
       });
+      return;
     }
+
+    // Check if there is already a different subscriber with the same name
+    const existingNames =
+      subscribers?.filter((s) => s.id !== pkiSubscriber?.id).map((s) => s.name) || [];
+
+    if (existingNames.includes(name.trim())) {
+      createNotification({
+        text: "A subscriber with this name already exists.",
+        type: "error"
+      });
+      return;
+    }
+
+    // Validate Azure template for Azure ADCS CA
+    if (selectedCa?.type === CaType.AZURE_AD_CS && !azureTemplateType) {
+      createNotification({
+        text: "Please select an Azure certificate template",
+        type: "error"
+      });
+      return;
+    }
+
+    const keyUsagesList =
+      selectedCa?.type === CaType.AZURE_AD_CS
+        ? []
+        : Object.entries(keyUsages)
+            .filter(([, value]) => value)
+            .map(([key]) => key as CertKeyUsage);
+
+    const extendedKeyUsagesList =
+      selectedCa?.type === CaType.AZURE_AD_CS
+        ? []
+        : Object.entries(extendedKeyUsages)
+            .filter(([, value]) => value)
+            .map(([key]) => key as CertExtendedKeyUsage);
+
+    const subjectAlternativeNamesList = subjectAlternativeNames
+      .split(",")
+      .map((san) => san.trim())
+      .filter(Boolean);
+
+    const autoRenewalPeriodInDays = enableAutoRenewal
+      ? convertTimeUnitValueToDays(renewalUnit, renewalBefore)
+      : undefined;
+
+    // Build properties object
+    const properties = {
+      ...(selectedCa?.type === CaType.AZURE_AD_CS && azureTemplateType && { azureTemplateType }),
+      ...(organization && { organization }),
+      ...(organizationalUnit && { organizationalUnit }),
+      ...(country && { country }),
+      ...(state && { state }),
+      ...(locality && { locality }),
+      ...(emailAddress && { emailAddress })
+    };
+
+    if (pkiSubscriber) {
+      await updateMutateAsync({
+        subscriberName: pkiSubscriber.name,
+        projectId,
+        name,
+        caId,
+        commonName,
+        subjectAlternativeNames: subjectAlternativeNamesList,
+        ttl,
+        keyUsages: keyUsagesList.map((key) =>
+          key === CertKeyUsage.CRL_SIGN
+            ? "cRLSign"
+            : key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+        ),
+        extendedKeyUsages: extendedKeyUsagesList.map((key) =>
+          key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+        ),
+        enableAutoRenewal,
+        autoRenewalPeriodInDays,
+        properties: Object.keys(properties).length > 0 ? properties : undefined
+      });
+    } else {
+      await createMutateAsync({
+        projectId,
+        name,
+        caId,
+        commonName,
+        subjectAlternativeNames: subjectAlternativeNamesList,
+        ttl,
+        keyUsages: keyUsagesList.map((key) =>
+          key === CertKeyUsage.CRL_SIGN
+            ? "cRLSign"
+            : key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+        ),
+        extendedKeyUsages: extendedKeyUsagesList.map((key) =>
+          key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+        ),
+        enableAutoRenewal,
+        autoRenewalPeriodInDays,
+        properties: Object.keys(properties).length > 0 ? properties : undefined
+      });
+    }
+
+    reset();
+    handlePopUpToggle("pkiSubscriber", false);
+
+    createNotification({
+      text: `Successfully ${pkiSubscriber ? "updated" : "added"} PKI subscriber`,
+      type: "success"
+    });
   };
 
   return (
@@ -655,7 +659,7 @@ export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
                               errorText={error?.message}
                               isError={Boolean(error)}
                             >
-                              <div className="mb-7 mt-2 grid grid-cols-2 gap-2">
+                              <div className="mt-2 mb-7 grid grid-cols-2 gap-2">
                                 {KEY_USAGES_OPTIONS.map(({ label, value: optionValue }) => {
                                   return (
                                     <Checkbox
@@ -688,7 +692,7 @@ export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
                               errorText={error?.message}
                               isError={Boolean(error)}
                             >
-                              <div className="mb-7 mt-2 grid grid-cols-2 gap-2">
+                              <div className="mt-2 mb-7 grid grid-cols-2 gap-2">
                                 {EXTENDED_KEY_USAGES_OPTIONS.map(
                                   ({ label, value: optionValue }) => {
                                     return (

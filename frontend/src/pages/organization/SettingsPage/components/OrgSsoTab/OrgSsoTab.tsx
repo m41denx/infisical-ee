@@ -73,8 +73,8 @@ export const OrgSsoTab = withPermission(
         <>
           <div className="mb-4 space-y-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-6">
             <div>
-              <p className="text-xl font-semibold text-gray-200">Connect an Identity Provider</p>
-              <p className="mb-2 mt-1 text-gray-400">
+              <p className="text-xl font-medium text-gray-200">Connect an Identity Provider</p>
+              <p className="mt-1 mb-2 text-gray-400">
                 Connect your identity provider to simplify user management with options like SAML,
                 OIDC, and LDAP.
               </p>
@@ -93,7 +93,7 @@ export const OrgSsoTab = withPermission(
                   colorSchema="secondary"
                   onClick={() => {
                     if (!subscription?.samlSSO) {
-                      handlePopUpOpen("upgradePlan", { feature: "SAML SSO", plan: "Pro" });
+                      handlePopUpOpen("upgradePlan", { featureName: "SAML SSO" });
                       return;
                     }
 
@@ -116,7 +116,7 @@ export const OrgSsoTab = withPermission(
                   colorSchema="secondary"
                   onClick={() => {
                     if (!subscription?.oidcSSO) {
-                      handlePopUpOpen("upgradePlan", { feature: "OIDC SSO", plan: "Pro" });
+                      handlePopUpOpen("upgradePlan", { featureName: "OIDC SSO" });
                       return;
                     }
 
@@ -134,7 +134,10 @@ export const OrgSsoTab = withPermission(
                   colorSchema="secondary"
                   onClick={() => {
                     if (!subscription?.ldap) {
-                      handlePopUpOpen("upgradePlan", { feature: "LDAP", plan: "Enterprise" });
+                      handlePopUpOpen("upgradePlan", {
+                        featureName: "LDAP",
+                        isEnterpriseFeature: true
+                      });
                       return;
                     }
 
@@ -166,7 +169,7 @@ export const OrgSsoTab = withPermission(
           />
         </>
       ) : (
-        <EmptyState title="" iconSize="2x" className="!pb-10 pt-14">
+        <EmptyState title="" iconSize="2x" className="pt-14 pb-10!">
           <p className="text-center text-lg">Single Sign-On (SSO) has been disabled</p>
           <p className="text-center">Contact your server administrator</p>
         </EmptyState>
@@ -184,6 +187,9 @@ export const OrgSsoTab = withPermission(
               isSamlConfigured={isSamlConfigured}
               isOidcConfigured={isOidcConfigured}
               isGoogleConfigured={isGoogleConfigured}
+              isSamlActive={Boolean(samlConfig?.isActive)}
+              isOidcActive={Boolean(oidcConfig?.isActive)}
+              isLdapActive={Boolean(ldapConfig?.isActive)}
             />
           )}
 
@@ -202,11 +208,8 @@ export const OrgSsoTab = withPermission(
         <UpgradePlanModal
           isOpen={popUp.upgradePlan.isOpen}
           onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-          text={`You can use ${
-            (popUp.upgradePlan.data as { feature: string })?.feature
-          } if you switch to Infisical's ${
-            (popUp.upgradePlan.data as { plan: string })?.plan
-          } plan.`}
+          text={`Your current plan does not include access to ${popUp.upgradePlan.data?.featureName}. To unlock this feature, please upgrade to Infisical ${popUp.upgradePlan.data?.isEnterpriseFeature ? "Enterprise" : "Pro"} plan.`}
+          isEnterpriseFeature={popUp.upgradePlan.data?.isEnterpriseFeature}
         />
       </>
     );

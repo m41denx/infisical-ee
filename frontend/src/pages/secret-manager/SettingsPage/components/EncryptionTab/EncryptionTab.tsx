@@ -21,7 +21,7 @@ import {
   ProjectPermissionActions,
   ProjectPermissionSub,
   useOrganization,
-  useWorkspace
+  useProject
 } from "@app/context";
 import { usePopUp, useToggle } from "@app/hooks";
 import {
@@ -32,7 +32,7 @@ import {
 } from "@app/hooks/api";
 import { fetchProjectKmsBackup } from "@app/hooks/api/kms/queries";
 import { INTERNAL_KMS_KEY_ID, KmsType } from "@app/hooks/api/kms/types";
-import { Organization, Workspace } from "@app/hooks/api/types";
+import { Organization, Project } from "@app/hooks/api/types";
 
 const formSchema = z.object({
   kmsKeyId: z.string()
@@ -44,32 +44,29 @@ const BackupConfirmationModal = ({
   isOpen,
   onOpenChange,
   org,
-  workspace
+  project
 }: {
   isOpen: boolean;
   onOpenChange: (state: boolean) => void;
   org?: Organization;
-  workspace?: Workspace;
+  project?: Project;
 }) => {
   const [isGeneratingBackup, setGeneratingBackup] = useToggle();
   const downloadKmsBackup = async () => {
-    if (!workspace || !org) {
+    if (!project || !org) {
       return;
     }
 
     setGeneratingBackup.on();
 
     try {
-      const { secretManager } = await fetchProjectKmsBackup(workspace.id);
+      const { secretManager } = await fetchProjectKmsBackup(project.id);
 
       const [, , kmsFunction] = secretManager.split(".");
       const file = secretManager;
 
       const blob = new Blob([file], { type: "text/plain;charset=utf-8" });
-      FileSaver.saveAs(
-        blob,
-        `kms-backup-${org.slug}-${workspace.slug}-${kmsFunction}.infisical.txt`
-      );
+      FileSaver.saveAs(blob, `kms-backup-${org.slug}-${project.slug}-${kmsFunction}.infisical.txt`);
 
       onOpenChange(false);
     } catch (err) {
@@ -110,34 +107,30 @@ const LoadBackupModal = ({
   isOpen,
   onOpenChange,
   org,
-  workspace
+  workspace: project
 }: {
   isOpen: boolean;
   onOpenChange: (state: boolean) => void;
   org?: Organization;
-  workspace: Workspace;
+  workspace: Project;
 }) => {
   const fileUploadRef = useRef<HTMLInputElement>(null);
-  const { mutateAsync: loadKmsBackup, isPending } = useLoadProjectKmsBackup(workspace.id);
+  const { mutateAsync: loadKmsBackup, isPending } = useLoadProjectKmsBackup(project.id);
   const [backupContent, setBackupContent] = useState("");
   const [backupFileName, setBackupFileName] = useState("");
 
   const uploadKmsBackup = async () => {
-    if (!workspace || !org) {
+    if (!project || !org) {
       return;
     }
 
-    try {
-      await loadKmsBackup(backupContent);
-      createNotification({
-        text: "Successfully loaded KMS backup",
-        type: "success"
-      });
+    await loadKmsBackup(backupContent);
+    createNotification({
+      text: "Successfully loaded KMS backup",
+      type: "success"
+    });
 
-      onOpenChange(false);
-    } catch (err) {
-      console.error(err);
-    }
+    onOpenChange(false);
   };
 
   const parseFile = (file?: File) => {
@@ -222,13 +215,13 @@ const LoadBackupModal = ({
 
 export const EncryptionTab = () => {
   const { currentOrg } = useOrganization();
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   const { data: externalKmsList } = useGetExternalKmsList(currentOrg.id);
-  const { data: activeKms } = useGetActiveProjectKms(currentWorkspace.id);
+  const { data: activeKms } = useGetActiveProjectKms(currentProject.id);
 
   const { mutateAsync: updateProjectKms, isPending: isUpdatingProjectKms } = useUpdateProjectKms(
-    currentWorkspace.id
+    currentProject.id
   );
   const { popUp, handlePopUpToggle, handlePopUpOpen } = usePopUp([
     "createBackupConfirmation",
@@ -248,26 +241,22 @@ export const EncryptionTab = () => {
   });
 
   const onUpdateProjectKms = async (data: TForm) => {
-    try {
-      await updateProjectKms(
-        data.kmsKeyId === INTERNAL_KMS_KEY_ID
-          ? { type: KmsType.Internal }
-          : { type: KmsType.External, kmsId: data.kmsKeyId }
-      );
+    await updateProjectKms(
+      data.kmsKeyId === INTERNAL_KMS_KEY_ID
+        ? { type: KmsType.Internal }
+        : { type: KmsType.External, kmsId: data.kmsKeyId }
+    );
 
-      createNotification({
-        text: "Successfully updated project KMS",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-    }
+    createNotification({
+      text: "Successfully updated project KMS",
+      type: "success"
+    });
   };
 
   return (
     <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex justify-between">
-        <h2 className="mb-2 flex-1 text-xl font-semibold text-mineshaft-100">Key Management</h2>
+        <h2 className="mb-2 flex-1 text-xl font-medium text-mineshaft-100">Key Management</h2>
         {kmsKeyId !== INTERNAL_KMS_KEY_ID && (
           <div className="space-x-2">
             <Button colorSchema="secondary" onClick={() => handlePopUpOpen("loadBackup")}>
@@ -336,13 +325,13 @@ export const EncryptionTab = () => {
         isOpen={popUp.createBackupConfirmation.isOpen}
         onOpenChange={(state: boolean) => handlePopUpToggle("createBackupConfirmation", state)}
         org={currentOrg}
-        workspace={currentWorkspace}
+        project={currentProject}
       />
       <LoadBackupModal
         isOpen={popUp.loadBackup.isOpen}
         onOpenChange={(state: boolean) => handlePopUpToggle("loadBackup", state)}
         org={currentOrg}
-        workspace={currentWorkspace}
+        workspace={currentProject}
       />
     </div>
   );

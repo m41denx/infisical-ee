@@ -17,6 +17,9 @@ import {
   TAccessApprovalRequestsReviewersInsert,
   TAccessApprovalRequestsReviewersUpdate,
   TAccessApprovalRequestsUpdate,
+  TAdditionalPrivileges,
+  TAdditionalPrivilegesInsert,
+  TAdditionalPrivilegesUpdate,
   TApiKeys,
   TApiKeysInsert,
   TApiKeysUpdate,
@@ -59,6 +62,9 @@ import {
   TCertificateSecretsUpdate,
   TCertificatesInsert,
   TCertificatesUpdate,
+  TCertificateSyncs,
+  TCertificateSyncsInsert,
+  TCertificateSyncsUpdate,
   TCertificateTemplateEstConfigs,
   TCertificateTemplateEstConfigsInsert,
   TCertificateTemplateEstConfigsUpdate,
@@ -101,6 +107,9 @@ import {
   TGateways,
   TGatewaysInsert,
   TGatewaysUpdate,
+  TGatewaysV2,
+  TGatewaysV2Insert,
+  TGatewaysV2Update,
   TGitAppInstallSessions,
   TGitAppInstallSessionsInsert,
   TGitAppInstallSessionsUpdate,
@@ -179,6 +188,9 @@ import {
   TIncidentContacts,
   TIncidentContactsInsert,
   TIncidentContactsUpdate,
+  TInstanceRelayConfig,
+  TInstanceRelayConfigInsert,
+  TInstanceRelayConfigUpdate,
   TIntegrationAuths,
   TIntegrationAuthsInsert,
   TIntegrationAuthsUpdate,
@@ -191,6 +203,9 @@ import {
   TInternalKms,
   TInternalKmsInsert,
   TInternalKmsUpdate,
+  TKeyValueStore,
+  TKeyValueStoreInsert,
+  TKeyValueStoreUpdate,
   TKmipClientCertificates,
   TKmipClientCertificatesInsert,
   TKmipClientCertificatesUpdate,
@@ -218,6 +233,15 @@ import {
   TLdapGroupMaps,
   TLdapGroupMapsInsert,
   TLdapGroupMapsUpdate,
+  TMembershipRoles,
+  TMembershipRolesInsert,
+  TMembershipRolesUpdate,
+  TMemberships,
+  TMembershipsInsert,
+  TMembershipsUpdate,
+  TNamespaces,
+  TNamespacesInsert,
+  TNamespacesUpdate,
   TOidcConfigs,
   TOidcConfigsInsert,
   TOidcConfigsUpdate,
@@ -230,24 +254,75 @@ import {
   TOrgGatewayConfig,
   TOrgGatewayConfigInsert,
   TOrgGatewayConfigUpdate,
+  TOrgGatewayConfigV2,
+  TOrgGatewayConfigV2Insert,
+  TOrgGatewayConfigV2Update,
   TOrgMemberships,
   TOrgMembershipsInsert,
   TOrgMembershipsUpdate,
+  TOrgRelayConfig,
+  TOrgRelayConfigInsert,
+  TOrgRelayConfigUpdate,
   TOrgRoles,
   TOrgRolesInsert,
   TOrgRolesUpdate,
+  TPkiAcmeAccounts,
+  TPkiAcmeAccountsInsert,
+  TPkiAcmeAccountsUpdate,
+  TPkiAcmeAuths,
+  TPkiAcmeAuthsInsert,
+  TPkiAcmeAuthsUpdate,
+  TPkiAcmeChallenges,
+  TPkiAcmeChallengesInsert,
+  TPkiAcmeChallengesUpdate,
+  TPkiAcmeEnrollmentConfigs,
+  TPkiAcmeEnrollmentConfigsInsert,
+  TPkiAcmeEnrollmentConfigsUpdate,
+  TPkiAcmeOrderAuths,
+  TPkiAcmeOrderAuthsInsert,
+  TPkiAcmeOrderAuthsUpdate,
+  TPkiAcmeOrders,
+  TPkiAcmeOrdersInsert,
+  TPkiAcmeOrdersUpdate,
+  TPkiAlertChannels,
+  TPkiAlertChannelsInsert,
+  TPkiAlertChannelsUpdate,
+  TPkiAlertHistory,
+  TPkiAlertHistoryCertificate,
+  TPkiAlertHistoryCertificateInsert,
+  TPkiAlertHistoryCertificateUpdate,
+  TPkiAlertHistoryInsert,
+  TPkiAlertHistoryUpdate,
   TPkiAlerts,
   TPkiAlertsInsert,
   TPkiAlertsUpdate,
+  TPkiAlertsV2,
+  TPkiAlertsV2Insert,
+  TPkiAlertsV2Update,
+  TPkiApiEnrollmentConfigs,
+  TPkiApiEnrollmentConfigsInsert,
+  TPkiApiEnrollmentConfigsUpdate,
+  TPkiCertificateProfiles,
+  TPkiCertificateProfilesInsert,
+  TPkiCertificateProfilesUpdate,
+  TPkiCertificateTemplatesV2,
+  TPkiCertificateTemplatesV2Insert,
+  TPkiCertificateTemplatesV2Update,
   TPkiCollectionItems,
   TPkiCollectionItemsInsert,
   TPkiCollectionItemsUpdate,
   TPkiCollections,
   TPkiCollectionsInsert,
   TPkiCollectionsUpdate,
+  TPkiEstEnrollmentConfigs,
+  TPkiEstEnrollmentConfigsInsert,
+  TPkiEstEnrollmentConfigsUpdate,
   TPkiSubscribers,
   TPkiSubscribersInsert,
   TPkiSubscribersUpdate,
+  TPkiSyncs,
+  TPkiSyncsInsert,
+  TPkiSyncsUpdate,
   TProjectBots,
   TProjectBotsInsert,
   TProjectBotsUpdate,
@@ -290,9 +365,15 @@ import {
   TRateLimit,
   TRateLimitInsert,
   TRateLimitUpdate,
+  TRelays,
+  TRelaysInsert,
+  TRelaysUpdate,
   TResourceMetadata,
   TResourceMetadataInsert,
   TResourceMetadataUpdate,
+  TRoles,
+  TRolesInsert,
+  TRolesUpdate,
   TSamlConfigs,
   TSamlConfigsInsert,
   TSamlConfigsUpdate,
@@ -482,6 +563,9 @@ import {
   TUsers,
   TUsersInsert,
   TUsersUpdate,
+  TVaultExternalMigrationConfigs,
+  TVaultExternalMigrationConfigsInsert,
+  TVaultExternalMigrationConfigsUpdate,
   TWebhooks,
   TWebhooksInsert,
   TWebhooksUpdate,
@@ -509,6 +593,10 @@ import {
   TMicrosoftTeamsIntegrationsInsert,
   TMicrosoftTeamsIntegrationsUpdate
 } from "@app/db/schemas/microsoft-teams-integrations";
+import { TPamAccounts, TPamAccountsInsert, TPamAccountsUpdate } from "@app/db/schemas/pam-accounts";
+import { TPamFolders, TPamFoldersInsert, TPamFoldersUpdate } from "@app/db/schemas/pam-folders";
+import { TPamResources, TPamResourcesInsert, TPamResourcesUpdate } from "@app/db/schemas/pam-resources";
+import { TPamSessions, TPamSessionsInsert, TPamSessionsUpdate } from "@app/db/schemas/pam-sessions";
 import {
   TProjectMicrosoftTeamsConfigs,
   TProjectMicrosoftTeamsConfigsInsert,
@@ -530,6 +618,11 @@ import {
   TSecretReminderRecipientsInsert,
   TSecretReminderRecipientsUpdate
 } from "@app/db/schemas/secret-reminder-recipients";
+import {
+  TUserNotifications,
+  TUserNotificationsInsert,
+  TUserNotificationsUpdate
+} from "@app/db/schemas/user-notifications";
 
 declare module "knex" {
   namespace Knex {
@@ -626,6 +719,52 @@ declare module "knex/types/tables" {
       TCertificateTemplatesInsert,
       TCertificateTemplatesUpdate
     >;
+    [TableName.PkiCertificateTemplateV2]: KnexOriginal.CompositeTableType<
+      TPkiCertificateTemplatesV2,
+      TPkiCertificateTemplatesV2Insert,
+      TPkiCertificateTemplatesV2Update
+    >;
+    [TableName.PkiCertificateProfile]: KnexOriginal.CompositeTableType<
+      TPkiCertificateProfiles,
+      TPkiCertificateProfilesInsert,
+      TPkiCertificateProfilesUpdate
+    >;
+    [TableName.PkiEstEnrollmentConfig]: KnexOriginal.CompositeTableType<
+      TPkiEstEnrollmentConfigs,
+      TPkiEstEnrollmentConfigsInsert,
+      TPkiEstEnrollmentConfigsUpdate
+    >;
+    [TableName.PkiApiEnrollmentConfig]: KnexOriginal.CompositeTableType<
+      TPkiApiEnrollmentConfigs,
+      TPkiApiEnrollmentConfigsInsert,
+      TPkiApiEnrollmentConfigsUpdate
+    >;
+    [TableName.PkiAcmeEnrollmentConfig]: KnexOriginal.CompositeTableType<
+      TPkiAcmeEnrollmentConfigs,
+      TPkiAcmeEnrollmentConfigsInsert,
+      TPkiAcmeEnrollmentConfigsUpdate
+    >;
+    [TableName.PkiAcmeAccount]: KnexOriginal.CompositeTableType<
+      TPkiAcmeAccounts,
+      TPkiAcmeAccountsInsert,
+      TPkiAcmeAccountsUpdate
+    >;
+    [TableName.PkiAcmeOrder]: KnexOriginal.CompositeTableType<
+      TPkiAcmeOrders,
+      TPkiAcmeOrdersInsert,
+      TPkiAcmeOrdersUpdate
+    >;
+    [TableName.PkiAcmeAuth]: KnexOriginal.CompositeTableType<TPkiAcmeAuths, TPkiAcmeAuthsInsert, TPkiAcmeAuthsUpdate>;
+    [TableName.PkiAcmeOrderAuth]: KnexOriginal.CompositeTableType<
+      TPkiAcmeOrderAuths,
+      TPkiAcmeOrderAuthsInsert,
+      TPkiAcmeOrderAuthsUpdate
+    >;
+    [TableName.PkiAcmeChallenge]: KnexOriginal.CompositeTableType<
+      TPkiAcmeChallenges,
+      TPkiAcmeChallengesInsert,
+      TPkiAcmeChallengesUpdate
+    >;
     [TableName.CertificateTemplateEstConfig]: KnexOriginal.CompositeTableType<
       TCertificateTemplateEstConfigs,
       TCertificateTemplateEstConfigsInsert,
@@ -642,6 +781,22 @@ declare module "knex/types/tables" {
       TCertificateSecretsUpdate
     >;
     [TableName.PkiAlert]: KnexOriginal.CompositeTableType<TPkiAlerts, TPkiAlertsInsert, TPkiAlertsUpdate>;
+    [TableName.PkiAlertsV2]: KnexOriginal.CompositeTableType<TPkiAlertsV2, TPkiAlertsV2Insert, TPkiAlertsV2Update>;
+    [TableName.PkiAlertChannels]: KnexOriginal.CompositeTableType<
+      TPkiAlertChannels,
+      TPkiAlertChannelsInsert,
+      TPkiAlertChannelsUpdate
+    >;
+    [TableName.PkiAlertHistory]: KnexOriginal.CompositeTableType<
+      TPkiAlertHistory,
+      TPkiAlertHistoryInsert,
+      TPkiAlertHistoryUpdate
+    >;
+    [TableName.PkiAlertHistoryCertificate]: KnexOriginal.CompositeTableType<
+      TPkiAlertHistoryCertificate,
+      TPkiAlertHistoryCertificateInsert,
+      TPkiAlertHistoryCertificateUpdate
+    >;
     [TableName.PkiCollection]: KnexOriginal.CompositeTableType<
       TPkiCollections,
       TPkiCollectionsInsert,
@@ -656,6 +811,12 @@ declare module "knex/types/tables" {
       TPkiSubscribers,
       TPkiSubscribersInsert,
       TPkiSubscribersUpdate
+    >;
+    [TableName.PkiSync]: KnexOriginal.CompositeTableType<TPkiSyncs, TPkiSyncsInsert, TPkiSyncsUpdate>;
+    [TableName.CertificateSync]: KnexOriginal.CompositeTableType<
+      TCertificateSyncs,
+      TCertificateSyncsInsert,
+      TCertificateSyncsUpdate
     >;
     [TableName.UserGroupMembership]: KnexOriginal.CompositeTableType<
       TUserGroupMembership,
@@ -1233,6 +1394,17 @@ declare module "knex/types/tables" {
       TSecretScanningResourcesInsert,
       TSecretScanningResourcesUpdate
     >;
+    [TableName.InstanceRelayConfig]: KnexOriginal.CompositeTableType<
+      TInstanceRelayConfig,
+      TInstanceRelayConfigInsert,
+      TInstanceRelayConfigUpdate
+    >;
+    [TableName.OrgRelayConfig]: KnexOriginal.CompositeTableType<
+      TOrgRelayConfig,
+      TOrgRelayConfigInsert,
+      TOrgRelayConfigUpdate
+    >;
+    [TableName.Relay]: KnexOriginal.CompositeTableType<TRelays, TRelaysInsert, TRelaysUpdate>;
     [TableName.SecretScanningScan]: KnexOriginal.CompositeTableType<
       TSecretScanningScans,
       TSecretScanningScansInsert,
@@ -1253,6 +1425,45 @@ declare module "knex/types/tables" {
       TRemindersRecipients,
       TRemindersRecipientsInsert,
       TRemindersRecipientsUpdate
+    >;
+    [TableName.OrgGatewayConfigV2]: KnexOriginal.CompositeTableType<
+      TOrgGatewayConfigV2,
+      TOrgGatewayConfigV2Insert,
+      TOrgGatewayConfigV2Update
+    >;
+    [TableName.GatewayV2]: KnexOriginal.CompositeTableType<TGatewaysV2, TGatewaysV2Insert, TGatewaysV2Update>;
+    [TableName.UserNotifications]: KnexOriginal.CompositeTableType<
+      TUserNotifications,
+      TUserNotificationsInsert,
+      TUserNotificationsUpdate
+    >;
+    [TableName.KeyValueStore]: KnexOriginal.CompositeTableType<
+      TKeyValueStore,
+      TKeyValueStoreInsert,
+      TKeyValueStoreUpdate
+    >;
+    [TableName.PamFolder]: KnexOriginal.CompositeTableType<TPamFolders, TPamFoldersInsert, TPamFoldersUpdate>;
+    [TableName.PamResource]: KnexOriginal.CompositeTableType<TPamResources, TPamResourcesInsert, TPamResourcesUpdate>;
+    [TableName.PamAccount]: KnexOriginal.CompositeTableType<TPamAccounts, TPamAccountsInsert, TPamAccountsUpdate>;
+    [TableName.PamSession]: KnexOriginal.CompositeTableType<TPamSessions, TPamSessionsInsert, TPamSessionsUpdate>;
+
+    [TableName.Namespace]: KnexOriginal.CompositeTableType<TNamespaces, TNamespacesInsert, TNamespacesUpdate>;
+    [TableName.Membership]: KnexOriginal.CompositeTableType<TMemberships, TMembershipsInsert, TMembershipsUpdate>;
+    [TableName.MembershipRole]: KnexOriginal.CompositeTableType<
+      TMembershipRoles,
+      TMembershipRolesInsert,
+      TMembershipRolesUpdate
+    >;
+    [TableName.Role]: KnexOriginal.CompositeTableType<TRoles, TRolesInsert, TRolesUpdate>;
+    [TableName.AdditionalPrivilege]: KnexOriginal.CompositeTableType<
+      TAdditionalPrivileges,
+      TAdditionalPrivilegesInsert,
+      TAdditionalPrivilegesUpdate
+    >;
+    [TableName.VaultExternalMigrationConfig]: KnexOriginal.CompositeTableType<
+      TVaultExternalMigrationConfigs,
+      TVaultExternalMigrationConfigsInsert,
+      TVaultExternalMigrationConfigsUpdate
     >;
   }
 }

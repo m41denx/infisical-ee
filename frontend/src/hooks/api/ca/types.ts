@@ -66,17 +66,19 @@ export type TUnifiedCertificateAuthority =
   | TAzureAdCsCertificateAuthority
   | TInternalCertificateAuthority;
 
-export type TCreateCertificateAuthorityDTO = Omit<TUnifiedCertificateAuthority, "id">;
+export type TCreateCertificateAuthorityDTO = Omit<
+  TUnifiedCertificateAuthority,
+  "id" | "enableDirectIssuance"
+>;
 export type TUpdateCertificateAuthorityDTO = Partial<TUnifiedCertificateAuthority> & {
-  caName: string;
-  projectId: string;
+  id: string;
   type: CaType;
 };
 
 export type TDeleteCertificateAuthorityDTO = {
-  caName: string;
-  type: CaType;
+  id: string;
   projectId: string;
+  type: CaType;
 };
 
 export type TCertificateAuthority = {
@@ -155,12 +157,12 @@ export type TCreateCertificateDTO = {
   pkiCollectionId?: string;
   friendlyName?: string;
   commonName: string;
-  altNames: string; // sans
+  subjectAltNames: string; // sans
   ttl: string; // string compatible with ms
   notBefore?: string;
   notAfter?: string;
-  keyUsages: CertKeyUsage[];
-  extendedKeyUsages: CertExtendedKeyUsage[];
+  keyUsages: string[];
+  extendedKeyUsages: string[];
 };
 
 export type TCreateCertificateResponse = {
@@ -169,6 +171,84 @@ export type TCreateCertificateResponse = {
   certificateChain: string;
   privateKey: string;
   serialNumber: string;
+};
+
+export type TCreateCertificateV3DTO = {
+  projectSlug: string;
+  profileId: string;
+  pkiCollectionId?: string;
+  friendlyName?: string;
+  commonName?: string;
+  organization?: string;
+  organizationUnit?: string;
+  locality?: string;
+  state?: string;
+  country?: string;
+  email?: string;
+  streetAddress?: string;
+  postalCode?: string;
+  subjectAltNames: string;
+  ttl: string;
+  notBefore?: string;
+  notAfter?: string;
+  keyUsages: CertKeyUsage[];
+  extendedKeyUsages: CertExtendedKeyUsage[];
+  signatureAlgorithm?: string;
+  keyAlgorithm?: string;
+};
+
+export type TCreateCertificateV3Response = TCreateCertificateResponse & {
+  projectId: string;
+  profileName: string;
+  certificateId: string;
+};
+
+export type TOrderCertificateDTO = {
+  projectSlug: string;
+  profileId: string;
+  subjectAlternativeNames: Array<{
+    type: "dns" | "ip";
+    value: string;
+  }>;
+  ttl: string;
+  keyUsages?: CertKeyUsage[];
+  extendedKeyUsages?: CertExtendedKeyUsage[];
+  notBefore?: string;
+  notAfter?: string;
+  commonName?: string;
+  signatureAlgorithm?: string;
+  keyAlgorithm?: string;
+};
+
+export type TOrderCertificateResponse = {
+  orderId: string;
+  status: "pending" | "processing" | "valid" | "invalid";
+  subjectAlternativeNames: Array<{
+    type: "dns" | "ip";
+    value: string;
+    status: "pending" | "processing" | "valid" | "invalid";
+  }>;
+  authorizations: Array<{
+    identifier: {
+      type: "dns" | "ip";
+      value: string;
+    };
+    status: "pending" | "processing" | "valid" | "invalid";
+    expires?: string;
+    challenges: Array<{
+      type: string;
+      status: "pending" | "processing" | "valid" | "invalid";
+      url: string;
+      token: string;
+      validated?: string;
+      error?: string | Error;
+    }>;
+  }>;
+  certificate?: string;
+  privateKey?: string;
+  expires: string;
+  notBefore: string;
+  notAfter: string;
 };
 
 export type TRenewCaDTO = {
@@ -182,4 +262,5 @@ export type TRenewCaResponse = {
   certificate: string;
   certificateChain: string;
   serialNumber: string;
+  projectId: string;
 };

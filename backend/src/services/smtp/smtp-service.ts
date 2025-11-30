@@ -9,13 +9,16 @@ import { logger } from "@app/lib/logger";
 import {
   AccessApprovalRequestTemplate,
   AccessApprovalRequestUpdatedTemplate,
+  AccountDeletionConfirmationTemplate,
   EmailMfaTemplate,
   EmailVerificationTemplate,
   ExternalImportFailedTemplate,
   ExternalImportStartedTemplate,
   ExternalImportSucceededTemplate,
+  HealthAlertTemplate,
   IntegrationSyncFailedTemplate,
   NewDeviceLoginTemplate,
+  OAuthPasswordResetTemplate,
   OrgAdminBreakglassAccessTemplate,
   OrgAdminProjectGrantAccessTemplate,
   OrganizationAssignmentTemplate,
@@ -25,6 +28,7 @@ import {
   PkiExpirationAlertTemplate,
   ProjectAccessRequestTemplate,
   ProjectInvitationTemplate,
+  ScimTokenExpiryNoticeTemplate,
   ScimUserProvisionedTemplate,
   SecretApprovalRequestBypassedTemplate,
   SecretApprovalRequestNeedsReviewTemplate,
@@ -37,8 +41,10 @@ import {
   SecretSyncFailedTemplate,
   ServiceTokenExpiryNoticeTemplate,
   SignupEmailVerificationTemplate,
+  SubOrganizationInvitationTemplate,
   UnlockAccountTemplate
 } from "./emails";
+import DynamicSecretLeaseRevocationFailedTemplate from "./emails/DynamicSecretLeaseRevocationFailedTemplate";
 
 export type TSmtpConfig = SMTPTransport.Options;
 export type TSmtpSendMail = {
@@ -62,12 +68,15 @@ export enum SmtpTemplates {
   // HistoricalSecretList = "historicalSecretLeakIncident", not used anymore?
   NewDeviceJoin = "newDevice",
   OrgInvite = "organizationInvitation",
+  SubOrgInvite = "subOrganizationInvitation",
   OrgAssignment = "organizationAssignment",
+  OAuthPasswordReset = "oAuthPasswordReset",
   ResetPassword = "passwordReset",
   SetupPassword = "passwordSetup",
   SecretLeakIncident = "secretLeakIncident",
   WorkspaceInvite = "workspaceInvitation",
   ScimUserProvisioned = "scimUserProvisioned",
+  ScimTokenExpired = "scimTokenExpired",
   PkiExpirationAlert = "pkiExpirationAlert",
   IntegrationSyncFailed = "integrationSyncFailed",
   SecretSyncFailed = "secretSyncFailed",
@@ -81,7 +90,10 @@ export enum SmtpTemplates {
   OrgAdminBreakglassAccess = "orgAdminBreakglassAccess",
   ServiceTokenExpired = "serviceTokenExpired",
   SecretScanningV2ScanFailed = "secretScanningV2ScanFailed",
-  SecretScanningV2SecretsDetected = "secretScanningV2SecretsDetected"
+  SecretScanningV2SecretsDetected = "secretScanningV2SecretsDetected",
+  AccountDeletionConfirmation = "accountDeletionConfirmation",
+  HealthAlert = "healthAlert",
+  DynamicSecretLeaseRevocationFailed = "dynamicSecretLeaseRevocationFailed"
 }
 
 export enum SmtpHost {
@@ -96,6 +108,7 @@ export enum SmtpHost {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const EmailTemplateMap: Record<SmtpTemplates, React.FC<any>> = {
   [SmtpTemplates.OrgInvite]: OrganizationInvitationTemplate,
+  [SmtpTemplates.SubOrgInvite]: SubOrganizationInvitationTemplate,
   [SmtpTemplates.OrgAssignment]: OrganizationAssignmentTemplate,
   [SmtpTemplates.NewDeviceJoin]: NewDeviceLoginTemplate,
   [SmtpTemplates.SignupEmailVerification]: SignupEmailVerificationTemplate,
@@ -112,6 +125,7 @@ const EmailTemplateMap: Record<SmtpTemplates, React.FC<any>> = {
   [SmtpTemplates.SecretLeakIncident]: SecretLeakIncidentTemplate,
   [SmtpTemplates.WorkspaceInvite]: ProjectInvitationTemplate,
   [SmtpTemplates.ScimUserProvisioned]: ScimUserProvisionedTemplate,
+  [SmtpTemplates.ScimTokenExpired]: ScimTokenExpiryNoticeTemplate,
   [SmtpTemplates.SecretRequestCompleted]: SecretRequestCompletedTemplate,
   [SmtpTemplates.UnlockAccount]: UnlockAccountTemplate,
   [SmtpTemplates.ServiceTokenExpired]: ServiceTokenExpiryNoticeTemplate,
@@ -121,11 +135,15 @@ const EmailTemplateMap: Record<SmtpTemplates, React.FC<any>> = {
   [SmtpTemplates.OrgAdminProjectDirectAccess]: OrgAdminProjectGrantAccessTemplate,
   [SmtpTemplates.ProjectAccessRequest]: ProjectAccessRequestTemplate,
   [SmtpTemplates.SecretApprovalRequestNeedsReview]: SecretApprovalRequestNeedsReviewTemplate,
+  [SmtpTemplates.OAuthPasswordReset]: OAuthPasswordResetTemplate,
   [SmtpTemplates.ResetPassword]: PasswordResetTemplate,
   [SmtpTemplates.SetupPassword]: PasswordSetupTemplate,
   [SmtpTemplates.PkiExpirationAlert]: PkiExpirationAlertTemplate,
   [SmtpTemplates.SecretScanningV2ScanFailed]: SecretScanningScanFailedTemplate,
-  [SmtpTemplates.SecretScanningV2SecretsDetected]: SecretScanningSecretsDetectedTemplate
+  [SmtpTemplates.SecretScanningV2SecretsDetected]: SecretScanningSecretsDetectedTemplate,
+  [SmtpTemplates.AccountDeletionConfirmation]: AccountDeletionConfirmationTemplate,
+  [SmtpTemplates.HealthAlert]: HealthAlertTemplate,
+  [SmtpTemplates.DynamicSecretLeaseRevocationFailed]: DynamicSecretLeaseRevocationFailedTemplate
 };
 
 export const smtpServiceFactory = (cfg: TSmtpConfig) => {

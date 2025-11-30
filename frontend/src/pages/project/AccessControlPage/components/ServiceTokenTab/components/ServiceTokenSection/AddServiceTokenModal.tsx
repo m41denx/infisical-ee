@@ -6,7 +6,6 @@ import { useTranslation } from "react-i18next";
 import { faCheck, faCopy, faPlus, faTrashCan } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AxiosError } from "axios";
 import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
@@ -22,7 +21,7 @@ import {
   Select,
   SelectItem
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import { useToggle } from "@app/hooks";
 import { useCreateServiceToken } from "@app/hooks/api";
 import { UsePopUpState } from "@app/hooks/usePopUp";
@@ -70,7 +69,7 @@ type Props = {
 const ServiceTokenForm = () => {
   const { t } = useTranslation();
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const {
     control,
     handleSubmit,
@@ -81,7 +80,7 @@ const ServiceTokenForm = () => {
       scopes: [
         {
           secretPath: "/",
-          environment: currentWorkspace?.environments?.[0]?.slug
+          environment: currentProject?.environments?.[0]?.slug
         }
       ]
     }
@@ -110,45 +109,29 @@ const ServiceTokenForm = () => {
   };
 
   const onFormSubmit = async ({ name, scopes, expiresIn, permissions }: FormData) => {
-    try {
-      if (!currentWorkspace?.id) return;
+    if (!currentProject?.id) return;
 
-      const randomBytes = crypto.randomBytes(16).toString("hex");
+    const randomBytes = crypto.randomBytes(16).toString("hex");
 
-      const { serviceToken } = await createServiceToken.mutateAsync({
-        encryptedKey: "",
-        iv: "",
-        tag: "",
-        scopes,
-        expiresIn: Number(expiresIn),
-        name,
-        workspaceId: currentWorkspace.id,
-        randomBytes,
-        permissions: Object.entries(permissions)
-          .filter(([, permissionsValue]) => permissionsValue)
-          .map(([permissionsKey]) => permissionsKey)
-      });
+    const { serviceToken } = await createServiceToken.mutateAsync({
+      encryptedKey: "",
+      iv: "",
+      tag: "",
+      scopes,
+      expiresIn: Number(expiresIn),
+      name,
+      workspaceId: currentProject.id,
+      randomBytes,
+      permissions: Object.entries(permissions)
+        .filter(([, permissionsValue]) => permissionsValue)
+        .map(([permissionsKey]) => permissionsKey)
+    });
 
-      setToken(serviceToken);
-      createNotification({
-        text: "Successfully created a service token",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      const axiosError = err as AxiosError;
-      if (axiosError?.response?.status === 401) {
-        createNotification({
-          text: "You do not have access to the selected environment/path",
-          type: "error"
-        });
-      } else {
-        createNotification({
-          text: "Failed to create a service token",
-          type: "error"
-        });
-      }
-    }
+    setToken(serviceToken);
+    createNotification({
+      text: "Successfully created a service token",
+      type: "success"
+    });
   };
 
   return !hasServiceToken ? (
@@ -172,7 +155,7 @@ const ServiceTokenForm = () => {
           <Controller
             control={control}
             name={`scopes.${index}.environment`}
-            defaultValue={currentWorkspace?.environments?.[0]?.slug}
+            defaultValue={currentProject?.environments?.[0]?.slug}
             render={({ field: { onChange, ...field }, fieldState: { error } }) => (
               <FormControl
                 className="mb-0"
@@ -186,7 +169,7 @@ const ServiceTokenForm = () => {
                   onValueChange={(e) => onChange(e)}
                   className="w-full"
                 >
-                  {currentWorkspace?.environments.map(({ name, slug }) => (
+                  {currentProject?.environments.map(({ name, slug }) => (
                     <SelectItem value={slug} key={slug}>
                       {name}
                     </SelectItem>
@@ -201,7 +184,7 @@ const ServiceTokenForm = () => {
             defaultValue="/"
             render={({ field, fieldState: { error } }) => (
               <FormControl
-                className="mb-0 flex-grow"
+                className="mb-0 grow"
                 label={index === 0 ? "Secrets Path" : undefined}
                 isError={Boolean(error)}
                 errorText={error?.message}
@@ -225,7 +208,7 @@ const ServiceTokenForm = () => {
           variant="outline_bg"
           onClick={() =>
             append({
-              environment: currentWorkspace?.environments?.[0]?.slug || "",
+              environment: currentProject?.environments?.[0]?.slug || "",
               secretPath: ""
             })
           }
@@ -314,7 +297,7 @@ const ServiceTokenForm = () => {
       </div>
     </form>
   ) : (
-    <div className="mb-3 mr-2 mt-2 flex items-center justify-end rounded-md bg-white/[0.07] p-2 text-base text-gray-400">
+    <div className="mt-2 mr-2 mb-3 flex items-center justify-end rounded-md bg-white/[0.07] p-2 text-base text-gray-400">
       <p className="mr-4 break-all">{newToken}</p>
       <IconButton
         ariaLabel="copy icon"
@@ -323,7 +306,7 @@ const ServiceTokenForm = () => {
         onClick={copyTokenToClipboard}
       >
         <FontAwesomeIcon icon={isTokenCopied ? faCheck : faCopy} />
-        <span className="absolute -left-8 -top-20 hidden w-28 translate-y-full rounded-md bg-bunker-800 py-2 pl-3 text-center text-sm text-gray-400 group-hover:flex group-hover:animate-fadeIn">
+        <span className="group-hover:animate-fade-in absolute -top-20 -left-8 hidden w-28 translate-y-full rounded-md bg-bunker-800 py-2 pl-3 text-center text-sm text-gray-400 group-hover:flex">
           {t("common.click-to-copy")}
         </span>
       </IconButton>
@@ -334,7 +317,7 @@ const ServiceTokenForm = () => {
 export const AddServiceTokenModal = ({ popUp, handlePopUpToggle }: Props) => {
   const { t } = useTranslation();
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   return (
     <Modal
@@ -346,7 +329,7 @@ export const AddServiceTokenModal = ({ popUp, handlePopUpToggle }: Props) => {
       <ModalContent
         title={
           t("section.token.add-dialog.title", {
-            target: currentWorkspace?.name
+            target: currentProject?.name
           }) as string
         }
         subTitle={t("section.token.add-dialog.description") as string}

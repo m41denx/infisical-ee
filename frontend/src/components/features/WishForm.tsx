@@ -35,23 +35,16 @@ export const WishForm = () => {
   const [isOpen, setIsOpen] = useToggle(false);
 
   const createWish = async (data: TFormData) => {
-    try {
-      await mutateAsync({
-        text: data.text
-      });
+    await mutateAsync({
+      text: data.text
+    });
 
-      createNotification({
-        text: "Your wish has been sent to the Infisical team!",
-        type: "success"
-      });
+    createNotification({
+      text: "Your wish has been sent to the Infisical team!",
+      type: "success"
+    });
 
-      setIsOpen.off();
-    } catch {
-      createNotification({
-        text: "An error occured while sending your wish to the Infisical team.",
-        type: "error"
-      });
-    }
+    setIsOpen.off();
   };
 
   return (
@@ -63,14 +56,14 @@ export const WishForm = () => {
       open={isOpen}
     >
       <PopoverTrigger asChild>
-        <div className="text-md mb-3 w-full pl-5 duration-200 hover:text-mineshaft-200">
+        <div className="mb-3 w-full cursor-pointer pl-5 text-sm whitespace-nowrap text-mineshaft-400 duration-200 hover:text-mineshaft-200">
           <FontAwesomeIcon icon={faRocketchat} className="mr-2" />
           Request a feature
         </div>
       </PopoverTrigger>
       <PopoverContent
         hideCloseBtn
-        align="start"
+        align="end"
         alignOffset={20}
         className="mb-1 w-auto border border-mineshaft-600 bg-mineshaft-900 p-4 drop-shadow-2xl"
         sticky="always"

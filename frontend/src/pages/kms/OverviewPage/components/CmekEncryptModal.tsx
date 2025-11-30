@@ -53,19 +53,11 @@ const EncryptForm = ({ cmek }: FormProps) => {
   });
 
   const handleEncryptData = async (formData: FormData) => {
-    try {
-      await cmekEncrypt.mutateAsync({ ...formData, keyId: cmek.id });
-      createNotification({
-        text: "Successfully encrypted data",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to encrypt data",
-        type: "error"
-      });
-    }
+    await cmekEncrypt.mutateAsync({ ...formData, keyId: cmek.id });
+    createNotification({
+      text: "Successfully encrypted data",
+      type: "success"
+    });
   };
 
   const ciphertext = cmekEncrypt.data?.ciphertext;
@@ -81,7 +73,7 @@ const EncryptForm = ({ cmek }: FormProps) => {
       {ciphertext ? (
         <FormControl label="Encrypted Data (Ciphertext)">
           <TextArea
-            className="max-h-[20rem] min-h-[10rem] min-w-full max-w-full"
+            className="max-h-80 min-h-40 max-w-full min-w-full"
             isDisabled
             value={cmekEncrypt.data?.ciphertext}
           />
@@ -95,7 +87,7 @@ const EncryptForm = ({ cmek }: FormProps) => {
           >
             <TextArea
               {...register("plaintext")}
-              className="max-h-[20rem] min-h-[10rem] min-w-full max-w-full"
+              className="max-h-80 min-h-40 max-w-full min-w-full"
             />
           </FormControl>
           <Controller

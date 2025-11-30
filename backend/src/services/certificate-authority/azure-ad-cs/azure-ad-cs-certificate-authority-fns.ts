@@ -26,6 +26,9 @@ import {
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { TPkiSubscriberDALFactory } from "@app/services/pki-subscriber/pki-subscriber-dal";
 import { TPkiSubscriberProperties } from "@app/services/pki-subscriber/pki-subscriber-types";
+import { TPkiSyncDALFactory } from "@app/services/pki-sync/pki-sync-dal";
+import { TPkiSyncQueueFactory } from "@app/services/pki-sync/pki-sync-queue";
+import { triggerAutoSyncForSubscriber } from "@app/services/pki-sync/pki-sync-utils";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 import { getProjectKmsCertificateKeyId } from "@app/services/project/project-fns";
 
@@ -41,10 +44,10 @@ import {
 
 type TAzureAdCsCertificateAuthorityFnsDeps = {
   appConnectionDAL: Pick<TAppConnectionDALFactory, "findById" | "updateById">;
-  appConnectionService: Pick<TAppConnectionServiceFactory, "connectAppConnectionById">;
+  appConnectionService: Pick<TAppConnectionServiceFactory, "validateAppConnectionUsageById">;
   certificateAuthorityDAL: Pick<
     TCertificateAuthorityDALFactory,
-    "create" | "transaction" | "findByIdWithAssociatedCa" | "updateById" | "findWithAssociatedCa"
+    "create" | "transaction" | "findByIdWithAssociatedCa" | "updateById" | "findWithAssociatedCa" | "findById"
   >;
   externalCertificateAuthorityDAL: Pick<TExternalCertificateAuthorityDALFactory, "create" | "update">;
   certificateDAL: Pick<TCertificateDALFactory, "create" | "transaction">;
@@ -55,6 +58,8 @@ type TAzureAdCsCertificateAuthorityFnsDeps = {
     "encryptWithKmsKey" | "generateKmsKey" | "createCipherPairWithDataKey" | "decryptWithKmsKey"
   >;
   pkiSubscriberDAL: Pick<TPkiSubscriberDALFactory, "findById">;
+  pkiSyncDAL: Pick<TPkiSyncDALFactory, "find">;
+  pkiSyncQueue: Pick<TPkiSyncQueueFactory, "queuePkiSyncSyncCertificatesById">;
   projectDAL: Pick<TProjectDALFactory, "findById" | "findOne" | "updateById" | "transaction">;
 };
 
@@ -187,7 +192,7 @@ export const castDbEntryToAzureAdCsCertificateAuthority = (
   ca: Awaited<ReturnType<TCertificateAuthorityDALFactory["findByIdWithAssociatedCa"]>>
 ): TAzureAdCsCertificateAuthority & { credentials: unknown } => {
   if (!ca.externalCa?.id) {
-    throw new BadRequestError({ message: "Malformed Azure AD Certificate Service certificate authority" });
+    throw new BadRequestError({ message: "Malformed Active Directory Certificate Service certificate authority" });
   }
 
   if (!ca.externalCa.dnsAppConnectionId) {
@@ -584,13 +589,14 @@ export const AzureAdCsCertificateAuthorityFns = ({
   certificateSecretDAL,
   kmsService,
   projectDAL,
-  pkiSubscriberDAL
+  pkiSubscriberDAL,
+  pkiSyncDAL,
+  pkiSyncQueue
 }: TAzureAdCsCertificateAuthorityFnsDeps) => {
   const createCertificateAuthority = async ({
     name,
     projectId,
     configuration,
-    enableDirectIssuance,
     actor,
     status
   }: {
@@ -598,16 +604,8 @@ export const AzureAdCsCertificateAuthorityFns = ({
     name: string;
     projectId: string;
     configuration: TCreateAzureAdCsCertificateAuthorityDTO["configuration"];
-    enableDirectIssuance: boolean;
     actor: OrgServiceActor;
   }) => {
-    // Azure ADCS does not support direct issuance - enforce this restriction
-    if (enableDirectIssuance) {
-      throw new BadRequestError({
-        message: "Azure ADCS Certificate Authorities do not support direct issuance"
-      });
-    }
-
     const { azureAdcsConnectionId } = configuration;
     const appConnection = await appConnectionDAL.findById(azureAdcsConnectionId);
 
@@ -621,9 +619,9 @@ export const AzureAdCsCertificateAuthorityFns = ({
       });
     }
 
-    await appConnectionService.connectAppConnectionById(
+    await appConnectionService.validateAppConnectionUsageById(
       appConnection.app as AppConnection,
-      azureAdcsConnectionId,
+      { connectionId: azureAdcsConnectionId, projectId },
       actor
     );
 
@@ -672,24 +670,15 @@ export const AzureAdCsCertificateAuthorityFns = ({
     id,
     status,
     configuration,
-    enableDirectIssuance,
     actor,
     name
   }: {
     id: string;
     status?: CaStatus;
     configuration: TUpdateAzureAdCsCertificateAuthorityDTO["configuration"];
-    enableDirectIssuance?: boolean;
     actor: OrgServiceActor;
     name?: string;
   }) => {
-    // Azure ADCS does not support direct issuance - enforce this restriction
-    if (enableDirectIssuance) {
-      throw new BadRequestError({
-        message: "Azure ADCS Certificate Authorities do not support direct issuance"
-      });
-    }
-
     const updatedCa = await certificateAuthorityDAL.transaction(async (tx) => {
       if (configuration) {
         const { azureAdcsConnectionId } = configuration;
@@ -705,9 +694,15 @@ export const AzureAdCsCertificateAuthorityFns = ({
           });
         }
 
-        await appConnectionService.connectAppConnectionById(
+        const ca = await certificateAuthorityDAL.findById(id);
+
+        if (!ca) {
+          throw new NotFoundError({ message: `Could not find Certificate Authority with ID "${id}"` });
+        }
+
+        await appConnectionService.validateAppConnectionUsageById(
           appConnection.app as AppConnection,
-          azureAdcsConnectionId,
+          { connectionId: azureAdcsConnectionId, projectId: ca.projectId },
           actor
         );
 
@@ -724,13 +719,12 @@ export const AzureAdCsCertificateAuthorityFns = ({
         );
       }
 
-      if (name || status || enableDirectIssuance !== undefined) {
+      if (name || status) {
         await certificateAuthorityDAL.updateById(
           id,
           {
             name,
-            status,
-            enableDirectIssuance: false // Always false for Azure ADCS CAs
+            status
           },
           tx
         );
@@ -763,7 +757,7 @@ export const AzureAdCsCertificateAuthorityFns = ({
 
     const ca = await certificateAuthorityDAL.findByIdWithAssociatedCa(subscriber.caId);
     if (!ca.externalCa || ca.externalCa.type !== CaType.AZURE_AD_CS) {
-      throw new BadRequestError({ message: "CA is not an Azure AD Certificate Service CA" });
+      throw new BadRequestError({ message: "CA is not an Active Directory Certificate Service CA" });
     }
 
     const azureCa = castDbEntryToAzureAdCsCertificateAuthority(ca);
@@ -1017,6 +1011,8 @@ export const AzureAdCsCertificateAuthorityFns = ({
         tx
       );
     });
+
+    await triggerAutoSyncForSubscriber(subscriber.id, { pkiSyncDAL, pkiSyncQueue });
 
     return {
       certificate: certificatePem,

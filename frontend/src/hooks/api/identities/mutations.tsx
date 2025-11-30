@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiRequest } from "@app/config/request";
+import { projectIdentityQuery, projectKeys } from "@app/hooks/api";
 
 import { organizationKeys } from "../organization/queries";
-import { subscriptionQueryKeys } from "../subscriptions/queries";
 import { identitiesKeys } from "./queries";
 import {
   AddIdentityAliCloudAuthDTO,
@@ -18,9 +18,9 @@ import {
   AddIdentityTlsCertAuthDTO,
   AddIdentityTokenAuthDTO,
   AddIdentityUniversalAuthDTO,
+  ClearIdentityLdapAuthLockoutsDTO,
   ClearIdentityUniversalAuthLockoutsDTO,
   ClientSecretData,
-  CreateIdentityDTO,
   CreateIdentityUniversalAuthClientSecretDTO,
   CreateIdentityUniversalAuthClientSecretRes,
   CreateTokenIdentityTokenAuthDTO,
@@ -28,7 +28,6 @@ import {
   DeleteIdentityAliCloudAuthDTO,
   DeleteIdentityAwsAuthDTO,
   DeleteIdentityAzureAuthDTO,
-  DeleteIdentityDTO,
   DeleteIdentityGcpAuthDTO,
   DeleteIdentityJwtAuthDTO,
   DeleteIdentityKubernetesAuthDTO,
@@ -39,7 +38,6 @@ import {
   DeleteIdentityTokenAuthDTO,
   DeleteIdentityUniversalAuthClientSecretDTO,
   DeleteIdentityUniversalAuthDTO,
-  Identity,
   IdentityAccessToken,
   IdentityAliCloudAuth,
   IdentityAwsAuth,
@@ -58,7 +56,6 @@ import {
   UpdateIdentityAliCloudAuthDTO,
   UpdateIdentityAwsAuthDTO,
   UpdateIdentityAzureAuthDTO,
-  UpdateIdentityDTO,
   UpdateIdentityGcpAuthDTO,
   UpdateIdentityJwtAuthDTO,
   UpdateIdentityKubernetesAuthDTO,
@@ -70,73 +67,6 @@ import {
   UpdateIdentityUniversalAuthDTO,
   UpdateTokenIdentityTokenAuthDTO
 } from "./types";
-
-export const useCreateIdentity = () => {
-  const queryClient = useQueryClient();
-  return useMutation<Identity, object, CreateIdentityDTO>({
-    mutationFn: async (body) => {
-      const {
-        data: { identity }
-      } = await apiRequest.post("/api/v1/identities/", body);
-      return identity;
-    },
-    onSuccess: (_, { organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
-      queryClient.invalidateQueries({
-        queryKey: subscriptionQueryKeys.getOrgSubsription(organizationId)
-      });
-      queryClient.invalidateQueries({ queryKey: identitiesKeys.searchIdentitiesRoot });
-    }
-  });
-};
-
-export const useUpdateIdentity = () => {
-  const queryClient = useQueryClient();
-  return useMutation<Identity, object, UpdateIdentityDTO>({
-    mutationFn: async ({ identityId, name, role, hasDeleteProtection, metadata }) => {
-      const {
-        data: { identity }
-      } = await apiRequest.patch(`/api/v1/identities/${identityId}`, {
-        name,
-        role,
-        hasDeleteProtection,
-        metadata
-      });
-
-      return identity;
-    },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
-      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
-      queryClient.invalidateQueries({ queryKey: identitiesKeys.searchIdentitiesRoot });
-    }
-  });
-};
-
-export const useDeleteIdentity = () => {
-  const queryClient = useQueryClient();
-  return useMutation<Identity, object, DeleteIdentityDTO>({
-    mutationFn: async ({ identityId }) => {
-      const {
-        data: { identity }
-      } = await apiRequest.delete(`/api/v1/identities/${identityId}`);
-      return identity;
-    },
-    onSuccess: (_, { organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
-      queryClient.invalidateQueries({
-        queryKey: subscriptionQueryKeys.getOrgSubsription(organizationId)
-      });
-      queryClient.invalidateQueries({ queryKey: identitiesKeys.searchIdentitiesRoot });
-    }
-  });
-};
 
 // TODO: move these to /auth
 
@@ -170,10 +100,20 @@ export const useAddIdentityUniversalAuth = () => {
       });
       return identityUniversalAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityUniversalAuth(identityId)
@@ -214,10 +154,20 @@ export const useUpdateIdentityUniversalAuth = () => {
       });
       return identityUniversalAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityUniversalAuth(identityId)
@@ -235,10 +185,20 @@ export const useDeleteIdentityUniversalAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/universal-auth/identities/${identityId}`);
       return identityUniversalAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityUniversalAuth(identityId)
@@ -343,10 +303,20 @@ export const useAddIdentityGcpAuth = () => {
 
       return identityGcpAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityGcpAuth(identityId) });
     }
@@ -385,10 +355,20 @@ export const useUpdateIdentityGcpAuth = () => {
 
       return identityGcpAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityGcpAuth(identityId) });
     }
@@ -404,10 +384,20 @@ export const useDeleteIdentityGcpAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/gcp-auth/identities/${identityId}`);
       return identityGcpAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityGcpAuth(identityId) });
     }
@@ -444,10 +434,20 @@ export const useAddIdentityAwsAuth = () => {
 
       return identityAwsAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityAwsAuth(identityId) });
     }
@@ -484,10 +484,20 @@ export const useUpdateIdentityAwsAuth = () => {
 
       return identityAwsAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityAwsAuth(identityId) });
     }
@@ -503,10 +513,20 @@ export const useDeleteIdentityAwsAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/aws-auth/identities/${identityId}`);
       return identityAwsAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityAwsAuth(identityId) });
     }
@@ -541,10 +561,20 @@ export const useAddIdentityOciAuth = () => {
 
       return identityOciAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityOciAuth(identityId) });
     }
@@ -579,10 +609,20 @@ export const useUpdateIdentityOciAuth = () => {
 
       return identityOciAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityOciAuth(identityId) });
     }
@@ -598,10 +638,20 @@ export const useDeleteIdentityOciAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/oci-auth/identities/${identityId}`);
       return identityOciAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityOciAuth(identityId) });
     }
@@ -634,10 +684,20 @@ export const useAddIdentityAliCloudAuth = () => {
 
       return identityAliCloudAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityAliCloudAuth(identityId)
@@ -672,10 +732,20 @@ export const useUpdateIdentityAliCloudAuth = () => {
 
       return identityAliCloudAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityAliCloudAuth(identityId)
@@ -693,10 +763,20 @@ export const useDeleteIdentityAliCloudAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/alicloud-auth/identities/${identityId}`);
       return identityAliCloudAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityAliCloudAuth(identityId)
@@ -733,10 +813,20 @@ export const useAddIdentityTlsCertAuth = () => {
 
       return identityTlsCertAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityTlsCertAuth(identityId)
@@ -773,10 +863,20 @@ export const useUpdateIdentityTlsCertAuth = () => {
 
       return identityTlsCertAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityTlsCertAuth(identityId)
@@ -794,10 +894,20 @@ export const useDeleteIdentityTlsCertAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/tls-cert-auth/identities/${identityId}`);
       return identityTlsCertAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityTlsCertAuth(identityId)
@@ -844,10 +954,20 @@ export const useUpdateIdentityOidcAuth = () => {
 
       return identityOidcAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityOidcAuth(identityId) });
     }
@@ -892,10 +1012,20 @@ export const useAddIdentityOidcAuth = () => {
 
       return identityOidcAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityOidcAuth(identityId) });
     }
@@ -911,10 +1041,20 @@ export const useDeleteIdentityOidcAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/oidc-auth/identities/${identityId}`);
       return identityOidcAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityOidcAuth(identityId) });
     }
@@ -960,10 +1100,20 @@ export const useUpdateIdentityJwtAuth = () => {
 
       return identityJwtAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityJwtAuth(identityId) });
     }
@@ -1010,10 +1160,20 @@ export const useAddIdentityJwtAuth = () => {
 
       return identityJwtAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityJwtAuth(identityId) });
     }
@@ -1029,10 +1189,20 @@ export const useDeleteIdentityJwtAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/jwt-auth/identities/${identityId}`);
       return identityJwtAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityJwtAuth(identityId) });
     }
@@ -1069,10 +1239,20 @@ export const useAddIdentityAzureAuth = () => {
 
       return identityAzureAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityKubernetesAuth(identityId)
@@ -1121,10 +1301,20 @@ export const useAddIdentityKubernetesAuth = () => {
 
       return identityKubernetesAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityAzureAuth(identityId) });
     }
@@ -1161,10 +1351,20 @@ export const useUpdateIdentityAzureAuth = () => {
 
       return identityAzureAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityAzureAuth(identityId) });
     }
@@ -1180,10 +1380,20 @@ export const useDeleteIdentityAzureAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/azure-auth/identities/${identityId}`);
       return identityAzureAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityAzureAuth(identityId) });
     }
@@ -1230,10 +1440,20 @@ export const useUpdateIdentityKubernetesAuth = () => {
 
       return identityKubernetesAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityKubernetesAuth(identityId)
@@ -1251,10 +1471,20 @@ export const useDeleteIdentityKubernetesAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/kubernetes-auth/identities/${identityId}`);
       return identityKubernetesAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityKubernetesAuth(identityId)
@@ -1287,10 +1517,20 @@ export const useAddIdentityTokenAuth = () => {
 
       return identityTokenAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityTokenAuth(identityId)
@@ -1323,10 +1563,20 @@ export const useUpdateIdentityTokenAuth = () => {
 
       return identityTokenAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityTokenAuth(identityId)
@@ -1344,10 +1594,20 @@ export const useDeleteIdentityTokenAuth = () => {
       } = await apiRequest.delete(`/api/v1/auth/token-auth/identities/${identityId}`);
       return identityTokenAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityTokenAuth(identityId) });
     }
@@ -1432,7 +1692,11 @@ export const useAddIdentityLdapAuth = () => {
       accessTokenTTL,
       accessTokenMaxTTL,
       accessTokenNumUsesLimit,
-      accessTokenTrustedIps
+      accessTokenTrustedIps,
+      lockoutEnabled,
+      lockoutThreshold,
+      lockoutDurationSeconds,
+      lockoutCounterResetSeconds
     }) => {
       const { data } = await apiRequest.post<{ identityLdapAuth: IdentityLdapAuth }>(
         `/api/v1/auth/ldap-auth/identities/${identityId}`,
@@ -1448,15 +1712,29 @@ export const useAddIdentityLdapAuth = () => {
           accessTokenTTL,
           accessTokenMaxTTL,
           accessTokenNumUsesLimit,
-          accessTokenTrustedIps
+          accessTokenTrustedIps,
+          lockoutEnabled,
+          lockoutThreshold,
+          lockoutDurationSeconds,
+          lockoutCounterResetSeconds
         }
       );
       return data.identityLdapAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityLdapAuth(identityId)
@@ -1481,7 +1759,11 @@ export const useUpdateIdentityLdapAuth = () => {
       accessTokenTTL,
       accessTokenMaxTTL,
       accessTokenNumUsesLimit,
-      accessTokenTrustedIps
+      accessTokenTrustedIps,
+      lockoutEnabled,
+      lockoutThreshold,
+      lockoutDurationSeconds,
+      lockoutCounterResetSeconds
     }) => {
       const { data } = await apiRequest.patch<{ identityLdapAuth: IdentityLdapAuth }>(
         `/api/v1/auth/ldap-auth/identities/${identityId}`,
@@ -1497,15 +1779,29 @@ export const useUpdateIdentityLdapAuth = () => {
           accessTokenTTL,
           accessTokenMaxTTL,
           accessTokenNumUsesLimit,
-          accessTokenTrustedIps
+          accessTokenTrustedIps,
+          lockoutEnabled,
+          lockoutThreshold,
+          lockoutDurationSeconds,
+          lockoutCounterResetSeconds
         }
       );
       return data.identityLdapAuth;
     },
-    onSuccess: (_, { identityId, organizationId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityLdapAuth(identityId)
@@ -1521,11 +1817,40 @@ export const useDeleteIdentityLdapAuth = () => {
       const { data } = await apiRequest.delete(`/api/v1/auth/ldap-auth/identities/${identityId}`);
       return data.identityLdapAuth;
     },
-    onSuccess: (_, { organizationId, identityId }) => {
-      queryClient.invalidateQueries({
-        queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
-      });
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
+      queryClient.invalidateQueries({
+        queryKey: identitiesKeys.getIdentityLdapAuth(identityId)
+      });
+    }
+  });
+};
+
+export const useClearIdentityLdapAuthLockouts = () => {
+  const queryClient = useQueryClient();
+  return useMutation<number, object, ClearIdentityLdapAuthLockoutsDTO>({
+    mutationFn: async ({ identityId }) => {
+      const {
+        data: { deleted }
+      } = await apiRequest.post<{ deleted: number }>(
+        `/api/v1/auth/ldap-auth/identities/${identityId}/clear-lockouts`
+      );
+      return deleted;
+    },
+    onSuccess: (_, { identityId }) => {
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityLdapAuth(identityId)
       });

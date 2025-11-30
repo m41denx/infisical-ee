@@ -23,7 +23,9 @@ import { OrgPermissionGroupRow } from "./OrgPermissionGroupRow";
 import { OrgPermissionIdentityRow } from "./OrgPermissionIdentityRow";
 import { OrgPermissionKmipRow } from "./OrgPermissionKmipRow";
 import { OrgPermissionMachineIdentityAuthTemplateRow } from "./OrgPermissionMachineIdentityAuthTemplateRow";
+import { OrgRelayPermissionRow } from "./OrgPermissionRelayRow";
 import { OrgPermissionSecretShareRow } from "./OrgPermissionSecretShareRow";
+import { OrgPermissionSubOrgRow } from "./OrgPermissionSubOrgRow";
 import { OrgRoleWorkspaceRow } from "./OrgRoleWorkspaceRow";
 import { RolePermissionRow } from "./RolePermissionRow";
 
@@ -75,8 +77,18 @@ type Props = {
   roleId: string;
 };
 
+const INVALID_SUBORG_PERMISSIONS = [
+  OrgPermissionSubjects.Sso,
+  OrgPermissionSubjects.Ldap,
+  OrgPermissionSubjects.Scim,
+  OrgPermissionSubjects.GithubOrgSync,
+  OrgPermissionSubjects.GithubOrgSyncManual,
+  OrgPermissionSubjects.Billing,
+  OrgPermissionSubjects.SubOrganization
+];
+
 export const RolePermissionsSection = ({ roleId }: Props) => {
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isRootOrganization } = useOrganization();
   const orgId = currentOrg?.id || "";
 
   const { data: role } = useGetOrgRole(orgId, roleId);
@@ -95,18 +107,13 @@ export const RolePermissionsSection = ({ roleId }: Props) => {
   const { mutateAsync: updateRole } = useUpdateOrgRole();
 
   const onSubmit = async (el: TFormSchema) => {
-    try {
-      await updateRole({
-        orgId,
-        id: roleId,
-        ...el,
-        permissions: formRolePermission2API(el.permissions)
-      });
-      createNotification({ type: "success", text: "Successfully updated role" });
-    } catch (err) {
-      console.log(err);
-      createNotification({ type: "error", text: "Failed to update role" });
-    }
+    await updateRole({
+      orgId,
+      id: roleId,
+      ...el,
+      permissions: formRolePermission2API(el.permissions)
+    });
+    createNotification({ type: "success", text: "Successfully updated role" });
   };
 
   const isCustomRole = !["admin", "member", "no-access"].includes(role?.slug ?? "");
@@ -118,7 +125,7 @@ export const RolePermissionsSection = ({ roleId }: Props) => {
     >
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
         <div>
-          <h3 className="text-lg font-semibold text-mineshaft-100">Policies</h3>
+          <h3 className="text-lg font-medium text-mineshaft-100">Policies</h3>
           <p className="text-sm leading-3 text-mineshaft-400">Configure granular access policies</p>
         </div>
         {isCustomRole && (
@@ -151,7 +158,11 @@ export const RolePermissionsSection = ({ roleId }: Props) => {
         <TableContainer>
           <Table>
             <TBody>
-              {SIMPLE_PERMISSION_OPTIONS.map((permission) => {
+              {SIMPLE_PERMISSION_OPTIONS.filter((el) =>
+                isRootOrganization
+                  ? true
+                  : !INVALID_SUBORG_PERMISSIONS.includes(el.formName as OrgPermissionSubjects)
+              ).map((permission) => {
                 return (
                   <RolePermissionRow
                     title={permission.title}
@@ -188,11 +199,18 @@ export const RolePermissionsSection = ({ roleId }: Props) => {
                 setValue={setValue}
                 isEditable={isCustomRole}
               />
-              <OrgPermissionBillingRow
+              <OrgRelayPermissionRow
                 control={control}
                 setValue={setValue}
                 isEditable={isCustomRole}
               />
+              {isRootOrganization && (
+                <OrgPermissionBillingRow
+                  control={control}
+                  setValue={setValue}
+                  isEditable={isCustomRole}
+                />
+              )}
               <OrgPermissionSecretShareRow
                 control={control}
                 setValue={setValue}
@@ -218,6 +236,13 @@ export const RolePermissionsSection = ({ roleId }: Props) => {
                 setValue={setValue}
                 isEditable={isCustomRole}
               />
+              {isRootOrganization && (
+                <OrgPermissionSubOrgRow
+                  control={control}
+                  setValue={setValue}
+                  isEditable={isCustomRole}
+                />
+              )}
             </TBody>
           </Table>
         </TableContainer>

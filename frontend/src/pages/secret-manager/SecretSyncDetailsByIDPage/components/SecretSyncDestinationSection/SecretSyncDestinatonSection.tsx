@@ -20,6 +20,7 @@ import { AzureKeyVaultSyncDestinationSection } from "./AzureKeyVaultSyncDestinat
 import { BitbucketSyncDestinationSection } from "./BitbucketSyncDestinationSection";
 import { CamundaSyncDestinationSection } from "./CamundaSyncDestinationSection";
 import { ChecklySyncDestinationSection } from "./ChecklySyncDestinationSection";
+import { ChefSyncDestinationSection } from "./ChefSyncDestinationSection";
 import { CloudflarePagesSyncDestinationSection } from "./CloudflarePagesSyncDestinationSection";
 import { CloudflareWorkersSyncDestinationSection } from "./CloudflareWorkersSyncDestinationSection";
 import { DatabricksSyncDestinationSection } from "./DatabricksSyncDestinationSection";
@@ -31,7 +32,9 @@ import { GitLabSyncDestinationSection } from "./GitLabSyncDestinationSection";
 import { HCVaultSyncDestinationSection } from "./HCVaultSyncDestinationSection";
 import { HerokuSyncDestinationSection } from "./HerokuSyncDestinationSection";
 import { HumanitecSyncDestinationSection } from "./HumanitecSyncDestinationSection";
+import { LaravelForgeSyncDestinationSection } from "./LaravelForgeSyncDestinationSection";
 import { NetlifySyncDestinationSection } from "./NetlifySyncDestinationSection";
+import { NorthflankSyncDestinationSection } from "./NorthflankSyncDestinationSection";
 import { OCIVaultSyncDestinationSection } from "./OCIVaultSyncDestinationSection";
 import { RailwaySyncDestinationSection } from "./RailwaySyncDestinationSection";
 import { RenderSyncDestinationSection } from "./RenderSyncDestinationSection";
@@ -145,8 +148,17 @@ export const SecretSyncDestinationSection = ({ secretSync, onEditDestination }: 
     case SecretSync.Netlify:
       DestinationComponents = <NetlifySyncDestinationSection secretSync={secretSync} />;
       break;
+    case SecretSync.Northflank:
+      DestinationComponents = <NorthflankSyncDestinationSection secretSync={secretSync} />;
+      break;
     case SecretSync.Bitbucket:
       DestinationComponents = <BitbucketSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.LaravelForge:
+      DestinationComponents = <LaravelForgeSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.Chef:
+      DestinationComponents = <ChefSyncDestinationSection secretSync={secretSync} />;
       break;
     default:
       throw new Error(`Unhandled Destination Section components: ${destination}`);
@@ -163,7 +175,7 @@ export const SecretSyncDestinationSection = ({ secretSync, onEditDestination }: 
   return (
     <div className="flex w-full flex-col gap-3 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-4 py-3">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
-        <h3 className="font-semibold text-mineshaft-100">Destination Configuration</h3>
+        <h3 className="font-medium text-mineshaft-100">Destination Configuration</h3>
         <ProjectPermissionCan I={ProjectPermissionSecretSyncActions.Edit} a={permissionSubject}>
           {(isAllowed) => (
             <IconButton

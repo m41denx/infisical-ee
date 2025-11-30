@@ -13,7 +13,7 @@ type Props = {
 
 export const QuickSearchSecretRotationItem = ({ secretRotationGroup, onClose }: Props) => {
   const navigate = useNavigate({
-    from: "/projects/secret-management/$projectId/overview"
+    from: "/organizations/$orgId/projects/secret-management/$projectId/overview"
   });
 
   const [groupSecretRotation] = secretRotationGroup;
@@ -42,7 +42,7 @@ export const QuickSearchSecretRotationItem = ({ secretRotationGroup, onClose }: 
           </span>
           <span className="text-xs text-mineshaft-400">
             <FontAwesomeIcon size="xs" className="mr-0.5 text-yellow-700" icon={faFolder} />{" "}
-            <Tooltip className="max-w-7xl" content={groupSecretRotation.folder.path}>
+            <Tooltip className="max-w-8xl" content={groupSecretRotation.folder.path}>
               <span>{reverseTruncate(groupSecretRotation.folder.path)}</span>
             </Tooltip>
           </span>

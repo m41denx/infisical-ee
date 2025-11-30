@@ -2,20 +2,21 @@ import { faInfoCircle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { Button } from "@app/components/v2";
-import { useProjectPermission, useWorkspace } from "@app/context";
+import { useOrganization, useProject, useProjectPermission } from "@app/context";
 import { getProjectHomePage } from "@app/helpers/project";
 import { useRemoveAssumeProjectPrivilege } from "@app/hooks/api";
 import { ActorType } from "@app/hooks/api/auditLogs/enums";
 
 export const AssumePrivilegeModeBanner = () => {
-  const { currentWorkspace } = useWorkspace();
+  const { isSubOrganization, currentOrg } = useOrganization();
+  const { currentProject } = useProject();
   const exitAssumePrivilegeMode = useRemoveAssumeProjectPrivilege();
   const { assumedPrivilegeDetails } = useProjectPermission();
 
   if (!assumedPrivilegeDetails) return null;
 
   return (
-    <div className="z-10 -mx-4 flex items-center justify-center gap-2 rounded border border-mineshaft-600 bg-primary-400 p-2 text-mineshaft-800 shadow">
+    <div className="flex w-full items-center border-b border-yellow/50 bg-yellow/30 px-4 py-2 text-sm text-yellow-200">
       <div>
         <FontAwesomeIcon icon={faInfoCircle} className="mr-2" />
         You are currently viewing the project with privileges of{" "}
@@ -24,7 +25,7 @@ export const AssumePrivilegeModeBanner = () => {
           {assumedPrivilegeDetails?.actorName}
         </b>
       </div>
-      <div>
+      <div className="ml-auto">
         <Button
           size="xs"
           variant="outline_bg"
@@ -32,15 +33,14 @@ export const AssumePrivilegeModeBanner = () => {
           onClick={() => {
             exitAssumePrivilegeMode.mutate(
               {
-                projectId: currentWorkspace.id
+                projectId: currentProject.id
               },
               {
                 onSuccess: () => {
-                  const url = getProjectHomePage(
-                    currentWorkspace.type,
-                    currentWorkspace.environments
+                  const url = `${getProjectHomePage(currentProject.type, currentProject.environments)}${isSubOrganization ? `?subOrganization=${currentOrg.slug}` : ""}`;
+                  window.location.assign(
+                    url.replace("$orgId", currentOrg.id).replace("$projectId", currentProject.id)
                   );
-                  window.location.href = url.replace("$projectId", currentWorkspace.id);
                 }
               }
             );

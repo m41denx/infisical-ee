@@ -6,6 +6,8 @@ import { TAuditLogStream } from "@app/hooks/api/types";
 import { DiscriminativePick } from "@app/types";
 
 import { AuditLogStreamHeader } from "../components/AuditLogStreamHeader";
+import { AzureProviderAuditLogStreamForm } from "./AzureProviderAuditLogStreamForm";
+import { CriblProviderAuditLogStreamForm } from "./CriblProviderAuditLogStreamForm";
 import { CustomProviderAuditLogStreamForm } from "./CustomProviderAuditLogStreamForm";
 import { DatadogProviderAuditLogStreamForm } from "./DatadogProviderAuditLogStreamForm";
 import { SplunkProviderAuditLogStreamForm } from "./SplunkProviderAuditLogStreamForm";
@@ -26,24 +28,19 @@ const CreateForm = ({ provider, onComplete }: CreateFormProps) => {
   const onSubmit = async (
     formData: DiscriminativePick<TAuditLogStream, "provider" | "credentials">
   ) => {
-    try {
-      const logStream = await createAuditLogStream.mutateAsync(formData);
-      createNotification({
-        text: `Successfully created ${providerName} Log Stream`,
-        type: "success"
-      });
-      onComplete(logStream);
-    } catch (err: any) {
-      console.error(err);
-      createNotification({
-        title: `Failed to create ${providerName} Log Stream`,
-        text: err.message,
-        type: "error"
-      });
-    }
+    const logStream = await createAuditLogStream.mutateAsync(formData);
+    createNotification({
+      text: `Successfully created ${providerName} Log Stream`,
+      type: "success"
+    });
+    onComplete(logStream);
   };
 
   switch (provider) {
+    case LogProvider.Azure:
+      return <AzureProviderAuditLogStreamForm onSubmit={onSubmit} />;
+    case LogProvider.Cribl:
+      return <CriblProviderAuditLogStreamForm onSubmit={onSubmit} />;
     case LogProvider.Custom:
       return <CustomProviderAuditLogStreamForm onSubmit={onSubmit} />;
     case LogProvider.Datadog:
@@ -62,27 +59,26 @@ const UpdateForm = ({ auditLogStream, onComplete }: UpdateFormProps) => {
   const onSubmit = async (
     formData: DiscriminativePick<TAuditLogStream, "provider" | "credentials">
   ) => {
-    try {
-      const connection = await updateAuditLogStream.mutateAsync({
-        auditLogStreamId: auditLogStream.id,
-        ...formData
-      });
-      createNotification({
-        text: `Successfully updated ${providerName} Log Stream`,
-        type: "success"
-      });
-      onComplete(connection);
-    } catch (err: any) {
-      console.error(err);
-      createNotification({
-        title: `Failed to update ${providerName} Log Stream`,
-        text: err.message,
-        type: "error"
-      });
-    }
+    const connection = await updateAuditLogStream.mutateAsync({
+      auditLogStreamId: auditLogStream.id,
+      ...formData
+    });
+    createNotification({
+      text: `Successfully updated ${providerName} Log Stream`,
+      type: "success"
+    });
+    onComplete(connection);
   };
 
   switch (auditLogStream.provider) {
+    case LogProvider.Azure:
+      return (
+        <AzureProviderAuditLogStreamForm onSubmit={onSubmit} auditLogStream={auditLogStream} />
+      );
+    case LogProvider.Cribl:
+      return (
+        <CriblProviderAuditLogStreamForm onSubmit={onSubmit} auditLogStream={auditLogStream} />
+      );
     case LogProvider.Custom:
       return (
         <CustomProviderAuditLogStreamForm onSubmit={onSubmit} auditLogStream={auditLogStream} />

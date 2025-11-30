@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
-import { faArrowUpRightFromSquare, faBookOpen } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import ms from "ms";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
+import { DocumentationLinkBadge } from "@app/components/v3";
 import {
   OrgPermissionAuditLogsActions,
   OrgPermissionSubjects,
@@ -13,7 +12,7 @@ import {
 } from "@app/context";
 import { Timezone } from "@app/helpers/datetime";
 import { withPermission, withProjectPermission } from "@app/hoc";
-import { Workspace } from "@app/hooks/api/workspace/types";
+import { Project } from "@app/hooks/api/projects/types";
 import { usePopUp } from "@app/hooks/usePopUp";
 
 import { LogsDateFilter } from "./LogsDateFilter";
@@ -31,7 +30,7 @@ type Props = {
   refetchInterval?: number;
   showFilters?: boolean;
   pageView?: boolean;
-  project?: Workspace;
+  project?: Project;
 };
 
 const LogsSectionComponent = ({
@@ -76,22 +75,9 @@ const LogsSectionComponent = ({
       <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-y-2">
           <div>
-            <div className="flex items-center gap-1 whitespace-nowrap">
-              <p className="text-xl font-semibold text-mineshaft-100">Audit History</p>
-              <a
-                href="https://infisical.com/docs/documentation/platform/audit-logs"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <div className="ml-1 mt-[0.1rem] inline-block rounded-md bg-yellow/20 px-1.5 text-sm text-yellow opacity-80 hover:opacity-100">
-                  <FontAwesomeIcon icon={faBookOpen} className="mr-1.5" />
-                  <span>Docs</span>
-                  <FontAwesomeIcon
-                    icon={faArrowUpRightFromSquare}
-                    className="mb-[0.07rem] ml-1.5 text-[10px]"
-                  />
-                </div>
-              </a>
+            <div className="flex items-center gap-x-2 whitespace-nowrap">
+              <p className="text-xl font-medium text-mineshaft-100">Audit History</p>
+              <DocumentationLinkBadge href="https://infisical.com/docs/documentation/platform/audit-logs" />
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -137,7 +123,7 @@ const LogsSectionComponent = ({
             onOpenChange={(isOpen) => {
               handlePopUpToggle("upgradePlan", isOpen);
             }}
-            text="You can use audit logs if you switch to a paid Infisical plan."
+            text="Your current plan does not include access to audit logs. To unlock this feature, please upgrade to Infisical Pro plan."
           />
         </div>
       </div>
@@ -181,7 +167,7 @@ const LogsSectionComponent = ({
         onOpenChange={(isOpen) => {
           handlePopUpToggle("upgradePlan", isOpen);
         }}
-        text="You can use audit logs if you switch to a paid Infisical plan."
+        text="Your current plan does not include access to audit logs. To unlock this feature, please upgrade to Infisical Pro plan."
       />
     </div>
   );

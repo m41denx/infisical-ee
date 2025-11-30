@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { Button, FormControl, Input, Modal, ModalContent } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import { useAddTrustedIp, useGetMyIp, useUpdateTrustedIp } from "@app/hooks/api";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
@@ -27,7 +27,7 @@ type Props = {
 export const IPAllowlistModal = ({ popUp, handlePopUpClose, handlePopUpToggle }: Props) => {
   const { data, isPending } = useGetMyIp();
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const addTrustedIp = useAddTrustedIp();
   const updateTrustedIp = useUpdateTrustedIp();
 
@@ -64,39 +64,32 @@ export const IPAllowlistModal = ({ popUp, handlePopUpClose, handlePopUpToggle }:
   }, [popUp?.trustedIp?.data]);
 
   const onIPAllowlistModalSubmit = async ({ ipAddress, comment }: FormData) => {
-    try {
-      if (!currentWorkspace?.id) return;
+    if (!currentProject?.id) return;
 
-      if (popUp?.trustedIp?.data) {
-        await updateTrustedIp.mutateAsync({
-          workspaceId: currentWorkspace.id,
-          trustedIpId: (popUp?.trustedIp?.data as { trustedIpId: string })?.trustedIpId,
-          ipAddress,
-          comment,
-          isActive: true
-        });
-      } else {
-        await addTrustedIp.mutateAsync({
-          workspaceId: currentWorkspace.id,
-          ipAddress,
-          comment,
-          isActive: true
-        });
-      }
-
-      createNotification({
-        text: `Successfully ${popUp?.trustedIp?.data ? "updated" : "added"} trusted IP`,
-        type: "success"
+    if (popUp?.trustedIp?.data) {
+      await updateTrustedIp.mutateAsync({
+        projectId: currentProject.id,
+        trustedIpId: (popUp?.trustedIp?.data as { trustedIpId: string })?.trustedIpId,
+        ipAddress,
+        comment,
+        isActive: true
       });
-
-      reset();
-      handlePopUpClose("trustedIp");
-    } catch {
-      createNotification({
-        text: `Failed to ${popUp?.trustedIp?.data ? "update" : "add"} trusted IP`,
-        type: "error"
+    } else {
+      await addTrustedIp.mutateAsync({
+        projectId: currentProject.id,
+        ipAddress,
+        comment,
+        isActive: true
       });
     }
+
+    createNotification({
+      text: `Successfully ${popUp?.trustedIp?.data ? "updated" : "added"} trusted IP`,
+      type: "success"
+    });
+
+    reset();
+    handlePopUpClose("trustedIp");
   };
 
   return (

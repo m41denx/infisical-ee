@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { faArrowUpRightFromSquare, faBookOpen } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useEffect, useState } from "react";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 
+import { TSecretScanningDataSourceForm } from "@app/components/secret-scanning/forms/schemas";
 import { Modal, ModalContent } from "@app/components/v2";
+import { DocumentationLinkBadge } from "@app/components/v3";
 import {
   SecretScanningDataSource,
   TSecretScanningDataSource
@@ -21,16 +22,19 @@ type ContentProps = {
   onComplete: (dataSource: TSecretScanningDataSource) => void;
   selectedDataSource: SecretScanningDataSource | null;
   setSelectedDataSource: (selectedDataSource: SecretScanningDataSource | null) => void;
+  initialFormData?: Partial<TSecretScanningDataSourceForm>;
+  onCancel: () => void;
 };
 
-const Content = ({ setSelectedDataSource, selectedDataSource, ...props }: ContentProps) => {
+const Content = ({
+  setSelectedDataSource,
+  selectedDataSource,
+  onCancel,
+  ...props
+}: ContentProps) => {
   if (selectedDataSource) {
     return (
-      <SecretScanningDataSourceForm
-        onCancel={() => setSelectedDataSource(null)}
-        type={selectedDataSource}
-        {...props}
-      />
+      <SecretScanningDataSourceForm onCancel={onCancel} type={selectedDataSource} {...props} />
     );
   }
 
@@ -41,12 +45,60 @@ export const CreateSecretScanningDataSourceModal = ({ onOpenChange, isOpen, ...p
   const [selectedDataSource, setSelectedDataSource] = useState<SecretScanningDataSource | null>(
     null
   );
+  const [initialFormData, setInitialFormData] = useState<Partial<TSecretScanningDataSourceForm>>();
+
+  const {
+    location: {
+      search: { connectionId, connectionName, ...search },
+      pathname
+    }
+  } = useRouterState();
+
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (connectionId && connectionName) {
+      const storedFormData = localStorage.getItem("secretScanningDataSourceFormData");
+
+      if (!storedFormData) return;
+
+      let form: Partial<TSecretScanningDataSourceForm> = {};
+      try {
+        form = JSON.parse(storedFormData) as TSecretScanningDataSourceForm;
+      } catch {
+        return;
+      } finally {
+        localStorage.removeItem("secretScanningDataSourceFormData");
+      }
+
+      onOpenChange(true);
+
+      setSelectedDataSource(form.type ?? null);
+
+      setInitialFormData({
+        ...form,
+        connection: { id: connectionId, name: connectionName }
+      });
+
+      navigate({
+        to: pathname,
+        search
+      });
+    }
+  }, [connectionId, connectionName]);
+
+  const resetModal = () => {
+    setSelectedDataSource(null);
+    setInitialFormData(undefined);
+  };
 
   return (
     <Modal
       isOpen={isOpen}
       onOpenChange={(open) => {
-        if (!open) setSelectedDataSource(null);
+        if (!open) {
+          resetModal();
+        }
         onOpenChange(open);
       }}
     >
@@ -55,23 +107,9 @@ export const CreateSecretScanningDataSourceModal = ({ onOpenChange, isOpen, ...p
           selectedDataSource ? (
             <SecretScanningDataSourceModalHeader isConfigured={false} type={selectedDataSource} />
           ) : (
-            <div className="flex items-center text-mineshaft-300">
+            <div className="flex items-center gap-x-2 text-mineshaft-300">
               Add Data Source
-              <a
-                target="_blank"
-                href="https://infisical.com/docs/documentation/platform/secret-scanning/overview"
-                className="mb-1 ml-1"
-                rel="noopener noreferrer"
-              >
-                <div className="inline-block rounded-md bg-yellow/20 px-1.5 text-sm text-yellow opacity-80 hover:opacity-100">
-                  <FontAwesomeIcon icon={faBookOpen} className="mb-[0.03rem] mr-1 text-[12px]" />
-                  <span>Docs</span>
-                  <FontAwesomeIcon
-                    icon={faArrowUpRightFromSquare}
-                    className="mb-[0.07rem] ml-1 text-[10px]"
-                  />
-                </div>
-              </a>
+              <DocumentationLinkBadge href="https://infisical.com/docs/documentation/platform/secret-scanning/overview" />
             </div>
           )
         }
@@ -83,11 +121,13 @@ export const CreateSecretScanningDataSourceModal = ({ onOpenChange, isOpen, ...p
       >
         <Content
           onComplete={() => {
-            setSelectedDataSource(null);
+            resetModal();
             onOpenChange(false);
           }}
+          onCancel={resetModal}
           selectedDataSource={selectedDataSource}
           setSelectedDataSource={setSelectedDataSource}
+          initialFormData={initialFormData}
           {...props}
         />
       </ModalContent>

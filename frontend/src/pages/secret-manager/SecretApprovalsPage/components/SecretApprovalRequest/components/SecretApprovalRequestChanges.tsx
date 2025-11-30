@@ -33,7 +33,7 @@ import {
   TextArea,
   Tooltip
 } from "@app/components/v2";
-import { useUser, useWorkspace } from "@app/context";
+import { useProject, useUser } from "@app/context";
 import { usePopUp } from "@app/hooks";
 import {
   useGetSecretApprovalRequestDetails,
@@ -92,7 +92,6 @@ const getReviewedStatusSymbol = (status?: ApprovalStatus) => {
 };
 
 type Props = {
-  workspaceId: string;
   approvalRequestId: string;
   onGoBack: () => void;
 };
@@ -104,13 +103,9 @@ const reviewFormSchema = z.object({
 
 type TReviewFormSchema = z.infer<typeof reviewFormSchema>;
 
-export const SecretApprovalRequestChanges = ({
-  approvalRequestId,
-  onGoBack,
-  workspaceId
-}: Props) => {
+export const SecretApprovalRequestChanges = ({ approvalRequestId, onGoBack }: Props) => {
   const { user: userSession } = useUser();
-  const { currentWorkspace } = useWorkspace();
+  const { projectId } = useProject();
   const {
     data: secretApprovalRequestDetails,
     isSuccess: isSecretApprovalRequestSuccess,
@@ -123,7 +118,7 @@ export const SecretApprovalRequestChanges = ({
   );
   const { data: secretImports } = useGetSecretImports({
     environment: secretApprovalRequestDetails?.environment || "",
-    projectId: currentWorkspace.id,
+    projectId,
     path: approvalSecretPath
   });
 
@@ -165,37 +160,33 @@ export const SecretApprovalRequestChanges = ({
     secretApprovalRequestDetails.policy.bypassers.some(({ userId }) => userId === userSession.id);
 
   const reviewedUsers = secretApprovalRequestDetails?.reviewers?.reduce<
-    Record<string, { status: ApprovalStatus; comment: string; isOrgMembershipActive: boolean }>
+    Record<
+      string,
+      { status: ApprovalStatus; comment: string; isOrgMembershipActive: boolean; createdAt: Date }
+    >
   >(
     (prev, curr) => ({
       ...prev,
       [curr.userId]: {
         status: curr.status,
         comment: curr.comment,
-        isOrgMembershipActive: curr.isOrgMembershipActive
+        isOrgMembershipActive: curr.isOrgMembershipActive,
+        createdAt: curr.createdAt
       }
     }),
     {}
   );
 
   const handleSecretApprovalStatusUpdate = async (status: ApprovalStatus, comment: string) => {
-    try {
-      await updateSecretApprovalRequestStatus({
-        id: approvalRequestId,
-        status,
-        comment
-      });
-      createNotification({
-        type: "success",
-        text: `Successfully ${status} the request`
-      });
-    } catch (err) {
-      console.log(err);
-      createNotification({
-        type: "error",
-        text: "Failed to update the request status"
-      });
-    }
+    await updateSecretApprovalRequestStatus({
+      id: approvalRequestId,
+      status,
+      comment
+    });
+    createNotification({
+      type: "success",
+      text: `Successfully ${status} the request`
+    });
 
     handlePopUpToggle("reviewChanges", false);
     reset({
@@ -233,7 +224,7 @@ export const SecretApprovalRequestChanges = ({
   return (
     <div className="flex flex-col space-x-6 lg:flex-row">
       <div className="flex-1 lg:max-w-[calc(100%-17rem)]">
-        <div className="sticky -top-8 z-20 flex items-center space-x-4 bg-bunker-800 pb-6 pt-2">
+        <div className="sticky -top-10 z-20 flex items-center space-x-4 bg-bunker-800 pt-2 pb-6">
           <IconButton variant="outline_bg" ariaLabel="go-back" onClick={onGoBack}>
             <FontAwesomeIcon icon={faArrowLeft} />
           </IconButton>
@@ -250,14 +241,14 @@ export const SecretApprovalRequestChanges = ({
                 : secretApprovalRequestDetails.status}
             </span>
           </div>
-          <div className="-mt-0.5 flex-grow flex-col">
+          <div className="-mt-0.5 w-[calc(100%-20rem)] grow flex-col">
             <div className="text-xl">
               {generateCommitText(
                 secretApprovalRequestDetails.commits,
                 secretApprovalRequestDetails.isReplicated
               )}
             </div>
-            <p className="-mt-1 text-xs text-gray-400">
+            <p className="-mt-1 truncate text-sm text-gray-400">
               By{" "}
               {secretApprovalRequestDetails?.committerUser ? (
                 <>
@@ -394,12 +385,12 @@ export const SecretApprovalRequestChanges = ({
               <div className="text-sm text-bunker-300">
                 A secret import in
                 <p
-                  className="mx-1 inline rounded bg-mineshaft-600/80 text-mineshaft-300"
+                  className="mx-1 inline rounded-sm bg-mineshaft-600/80 text-mineshaft-300"
                   style={{ padding: "2px 4px" }}
                 >
                   {secretApprovalRequestDetails?.environment}
                 </p>
-                <div className="mr-1 inline-flex w-min items-center rounded border border-mineshaft-500 pl-1.5 pr-2">
+                <div className="mr-1 inline-flex w-min items-center rounded-sm border border-mineshaft-500 pr-2 pl-1.5">
                   <p className="cursor-default border-r border-mineshaft-500 pr-1.5">
                     <FontAwesomeIcon icon={faFolder} className="text-yellow" size="sm" />
                   </p>
@@ -414,12 +405,12 @@ export const SecretApprovalRequestChanges = ({
                 </div>
                 has pending changes to be accepted from its source at{" "}
                 <p
-                  className="mx-1 inline rounded bg-mineshaft-600/80 text-mineshaft-300"
+                  className="mx-1 inline rounded-sm bg-mineshaft-600/80 text-mineshaft-300"
                   style={{ padding: "2px 4px" }}
                 >
                   {replicatedImport?.importEnv?.slug}
                 </p>
-                <div className="mr-1 inline-flex w-min items-center rounded border border-mineshaft-500 pl-1.5 pr-2">
+                <div className="mr-1 inline-flex w-min items-center rounded-sm border border-mineshaft-500 pr-2 pl-1.5">
                   <p className="cursor-default border-r border-mineshaft-500 pr-1.5">
                     <FontAwesomeIcon icon={faFolder} className="text-yellow" size="sm" />
                   </p>
@@ -438,12 +429,12 @@ export const SecretApprovalRequestChanges = ({
               <div className="text-sm text-bunker-300">
                 <p className="inline">Secret(s) in</p>
                 <p
-                  className="mx-1 inline rounded bg-mineshaft-600/80 text-mineshaft-300"
+                  className="mx-1 inline rounded-sm bg-mineshaft-600/80 text-mineshaft-300"
                   style={{ padding: "2px 4px" }}
                 >
                   {secretApprovalRequestDetails?.environment}
                 </p>
-                <div className="mr-1 inline-flex w-min items-center rounded border border-mineshaft-500 pl-1.5 pr-2">
+                <div className="mr-1 inline-flex w-min items-center rounded-sm border border-mineshaft-500 pr-2 pl-1.5">
                   <p className="cursor-default border-r border-mineshaft-500 pr-1.5">
                     <FontAwesomeIcon icon={faFolder} className="text-yellow" size="sm" />
                   </p>
@@ -501,7 +492,7 @@ export const SecretApprovalRequestChanges = ({
                     </span>{" "}
                     the request on{" "}
                     {format(
-                      new Date(secretApprovalRequestDetails.createdAt),
+                      new Date(reviewer ? reviewer.createdAt : new Date()),
                       "MM/dd/yyyy h:mm:ss aa"
                     )}
                     .
@@ -526,11 +517,10 @@ export const SecretApprovalRequestChanges = ({
             isMergable={isMergable}
             statusChangeByEmail={secretApprovalRequestDetails.statusChangedByUser?.email}
             enforcementLevel={secretApprovalRequestDetails.policy.enforcementLevel}
-            workspaceId={workspaceId}
           />
         </div>
       </div>
-      <div className="sticky top-0 z-[51] w-1/5 cursor-default pt-2" style={{ minWidth: "240px" }}>
+      <div className="sticky top-0 z-51 w-1/5 cursor-default pt-2" style={{ minWidth: "240px" }}>
         <div className="text-sm text-bunker-300">Reviewers</div>
         <div className="mt-2 flex flex-col space-y-2 text-sm">
           {secretApprovalRequestDetails?.policy?.approvers
@@ -544,7 +534,7 @@ export const SecretApprovalRequestChanges = ({
 
               return (
                 <div
-                  className="flex flex-nowrap items-center justify-between space-x-2 rounded border border-mineshaft-600 bg-mineshaft-800 px-2 py-1"
+                  className="flex flex-nowrap items-center justify-between space-x-2 rounded-sm border border-mineshaft-600 bg-mineshaft-800 px-2 py-1"
                   key={`required-approver-${requiredApprover.userId}`}
                 >
                   <div
@@ -565,7 +555,7 @@ export const SecretApprovalRequestChanges = ({
                       sideOffset={10}
                     >
                       <div className="flex items-center">
-                        <div>{requiredApprover?.email}</div>
+                        <div className="max-w-[200px] truncate">{requiredApprover?.email}</div>
                         <span className="text-red">*</span>
                         {!isOrgMembershipActive && (
                           <FontAwesomeIcon
@@ -589,7 +579,7 @@ export const SecretApprovalRequestChanges = ({
                     )}
                     <div className="flex gap-2">
                       <Tooltip
-                        className="relative !z-[500]"
+                        className="relative z-500!"
                         content={
                           <span className="text-sm">
                             Status:{" "}
@@ -618,7 +608,7 @@ export const SecretApprovalRequestChanges = ({
               const { isOrgMembershipActive } = reviewer;
               return (
                 <div
-                  className="flex flex-nowrap items-center justify-between space-x-2 rounded bg-mineshaft-800 px-2 py-1"
+                  className="flex flex-nowrap items-center justify-between space-x-2 rounded-sm bg-mineshaft-800 px-2 py-1"
                   key={`required-approver-${reviewer.userId}`}
                 >
                   <div
@@ -628,7 +618,7 @@ export const SecretApprovalRequestChanges = ({
                     )}
                   >
                     <Tooltip
-                      className="relative !z-[500]"
+                      className="relative z-500!"
                       content={
                         !isOrgMembershipActive
                           ? "This user has been deactivated and no longer has an active organization membership."
@@ -636,7 +626,7 @@ export const SecretApprovalRequestChanges = ({
                       }
                     >
                       <div className="flex items-center">
-                        <span>{reviewer?.email} </span>
+                        <span className="max-w-[200px] truncate">{reviewer?.email}</span>
                         {!isOrgMembershipActive && (
                           <FontAwesomeIcon
                             icon={faUserSlash}
@@ -650,7 +640,7 @@ export const SecretApprovalRequestChanges = ({
 
                   <div>
                     {reviewer.comment && (
-                      <Tooltip className="relative !z-[500]" content={reviewer.comment}>
+                      <Tooltip className="relative z-500!" content={reviewer.comment}>
                         <FontAwesomeIcon
                           icon={faComment}
                           size="xs"
@@ -659,7 +649,7 @@ export const SecretApprovalRequestChanges = ({
                       </Tooltip>
                     )}
                     <Tooltip
-                      className="relative !z-[500]"
+                      className="relative z-500!"
                       content={
                         <span className="text-sm">
                           Status:{" "}

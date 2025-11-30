@@ -5,7 +5,8 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { GenericFieldLabel } from "@app/components/secret-syncs";
-import { Badge, IconButton } from "@app/components/v2";
+import { IconButton } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { ProjectPermissionSub } from "@app/context";
 import { ProjectPermissionSecretSyncActions } from "@app/context/ProjectPermissionContext/types";
 import { SECRET_SYNC_INITIAL_SYNC_BEHAVIOR_MAP } from "@app/helpers/secretSyncs";
@@ -70,7 +71,10 @@ export const SecretSyncOptionsSection = ({ secretSync, onEditOptions }: Props) =
     case SecretSync.Checkly:
     case SecretSync.DigitalOceanAppPlatform:
     case SecretSync.Netlify:
+    case SecretSync.Northflank:
     case SecretSync.Bitbucket:
+    case SecretSync.LaravelForge:
+    case SecretSync.Chef:
       AdditionalSyncOptionsComponent = null;
       break;
     default:
@@ -89,7 +93,7 @@ export const SecretSyncOptionsSection = ({ secretSync, onEditOptions }: Props) =
     <div>
       <div className="flex w-full flex-col gap-3 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-4 py-3">
         <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
-          <h3 className="font-semibold text-mineshaft-100">Sync Options</h3>
+          <h3 className="font-medium text-mineshaft-100">Sync Options</h3>
           <ProjectPermissionCan I={ProjectPermissionSecretSyncActions.Edit} a={permissionSubject}>
             {(isAllowed) => (
               <IconButton
@@ -113,7 +117,7 @@ export const SecretSyncOptionsSection = ({ secretSync, onEditOptions }: Props) =
             {AdditionalSyncOptionsComponent}
             {disableSecretDeletion && (
               <GenericFieldLabel label="Secret Deletion">
-                <Badge variant="primary">Disabled</Badge>
+                <Badge variant="neutral">Disabled</Badge>
               </GenericFieldLabel>
             )}
           </div>

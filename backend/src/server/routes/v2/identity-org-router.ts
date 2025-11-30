@@ -60,7 +60,7 @@ export const registerIdentityOrgRouter = async (server: FastifyZodProvider) => {
                 permissions: true,
                 description: true
               }).optional(),
-              identity: IdentitiesSchema.pick({ name: true, id: true }).extend({
+              identity: IdentitiesSchema.pick({ name: true, id: true, orgId: true }).extend({
                 authMethods: z.array(z.string())
               })
             })
@@ -70,7 +70,7 @@ export const registerIdentityOrgRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      const { identityMemberships, totalCount } = await server.services.identity.listOrgIdentities({
+      const { identityMemberships, totalCount } = await server.services.identityV1.listOrgIdentities({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,

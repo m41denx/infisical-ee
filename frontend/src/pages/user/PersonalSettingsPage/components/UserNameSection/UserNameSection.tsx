@@ -27,22 +27,14 @@ export const UserNameSection = (): JSX.Element => {
   }, [user]);
 
   const onFormSubmit = async ({ name }: FormData) => {
-    try {
-      if (!user?.id) return;
-      if (name === "") return;
+    if (!user?.id) return;
+    if (name === "") return;
 
-      await mutateAsync({ newName: name });
-      createNotification({
-        text: "Successfully renamed user",
-        type: "success"
-      });
-    } catch (error) {
-      console.error(error);
-      createNotification({
-        text: "Failed to rename user",
-        type: "error"
-      });
-    }
+    await mutateAsync({ newName: name });
+    createNotification({
+      text: "Successfully renamed user",
+      type: "success"
+    });
   };
 
   return (
@@ -50,7 +42,7 @@ export const UserNameSection = (): JSX.Element => {
       onSubmit={handleSubmit(onFormSubmit)}
       className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4"
     >
-      <p className="mb-4 text-xl font-semibold text-mineshaft-100">Name</p>
+      <p className="mb-4 text-xl font-medium text-mineshaft-100">Name</p>
       <div className="mb-2 max-w-md">
         <Controller
           defaultValue=""

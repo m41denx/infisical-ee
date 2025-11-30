@@ -5,6 +5,7 @@ import {
   faCertificate,
   faCog,
   faEllipsis,
+  faFileContract,
   faPencil,
   faPlus,
   faTrash
@@ -40,35 +41,40 @@ import {
   Tr
 } from "@app/components/v2";
 import {
+  ProjectPermissionCertificateActions,
   ProjectPermissionPkiTemplateActions,
   ProjectPermissionSub,
-  useSubscription,
-  useWorkspace
+  useProject,
+  useSubscription
 } from "@app/context";
 import { usePopUp } from "@app/hooks";
 import { useDeleteCertTemplateV2 } from "@app/hooks/api";
 import { useListCertificateTemplates } from "@app/hooks/api/certificateTemplates/queries";
+import { ProjectType } from "@app/hooks/api/projects/types";
 
+import { CertificateModal } from "../CertificatesPage/components/CertificateModal";
 import { CertificateTemplateEnrollmentModal } from "../CertificatesPage/components/CertificateTemplateEnrollmentModal";
 import { PkiTemplateForm } from "./components/PkiTemplateForm";
 
 const PER_PAGE_INIT = 25;
 export const PkiTemplateListPage = () => {
   const { t } = useTranslation();
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(PER_PAGE_INIT);
+
   const { handlePopUpToggle, popUp, handlePopUpOpen, handlePopUpClose } = usePopUp([
     "certificateTemplate",
     "deleteTemplate",
     "enrollmentOptions",
-    "estUpgradePlan"
+    "estUpgradePlan",
+    "certificateFromTemplate"
   ] as const);
 
   const { subscription } = useSubscription();
 
   const { data, isPending } = useListCertificateTemplates({
-    projectId: currentWorkspace.id,
+    projectId: currentProject.id,
     offset: (page - 1) * perPage,
     limit: perPage
   });
@@ -76,25 +82,17 @@ export const PkiTemplateListPage = () => {
   const deleteCertTemplate = useDeleteCertTemplateV2();
 
   const onRemovePkiSubscriberSubmit = async () => {
-    try {
-      const pkiTemplate = await deleteCertTemplate.mutateAsync({
-        projectId: currentWorkspace.id,
-        templateName: popUp?.deleteTemplate?.data?.name
-      });
+    const pkiTemplate = await deleteCertTemplate.mutateAsync({
+      projectId: currentProject.id,
+      templateName: popUp?.deleteTemplate?.data?.name
+    });
 
-      createNotification({
-        text: `Successfully deleted PKI template: ${pkiTemplate.name}`,
-        type: "success"
-      });
+    createNotification({
+      text: `Successfully deleted PKI template: ${pkiTemplate.name}`,
+      type: "success"
+    });
 
-      handlePopUpClose("deleteTemplate");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to delete PKI subscriber",
-        type: "error"
-      });
-    }
+    handlePopUpClose("deleteTemplate");
   };
 
   return (
@@ -103,16 +101,18 @@ export const PkiTemplateListPage = () => {
         <title>{t("common.head-title", { title: "PKI Templates" })}</title>
       </Helmet>
       <div className="h-full bg-bunker-800">
-        <div className="container mx-auto flex flex-col justify-between text-white">
-          <div className="mx-auto mb-6 w-full max-w-7xl">
+        <div className="mx-auto flex flex-col justify-between text-white">
+          <div className="mx-auto mb-6 w-full max-w-8xl">
             <PageHeader
+              scope={ProjectType.CertificateManager}
               title="Certificate Templates"
               description="Manage certificate template to request and issue dynamic certificates following a strict format."
             />
           </div>
-          <div className="container mx-auto mb-6 max-w-7xl rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
+          <div className="container mx-auto mb-6 max-w-8xl rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
+            {/* TODO: Use subscription.pkiLegacyTemplates to block legacy templates creation */}
             <div className="mb-4 flex justify-between">
-              <p className="text-xl font-semibold text-mineshaft-100">Templates</p>
+              <p className="text-xl font-medium text-mineshaft-100">Templates</p>
               <div className="flex w-full justify-end">
                 <ProjectPermissionCan
                   I={ProjectPermissionPkiTemplateActions.Create}
@@ -165,6 +165,27 @@ export const PkiTemplateListPage = () => {
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="start" className="p-1">
                                 <ProjectPermissionCan
+                                  I={ProjectPermissionCertificateActions.Create}
+                                  a={ProjectPermissionSub.Certificates}
+                                >
+                                  {(isAllowed) => (
+                                    <DropdownMenuItem
+                                      className={twMerge(
+                                        !isAllowed &&
+                                          "pointer-events-none cursor-not-allowed opacity-50"
+                                      )}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handlePopUpOpen("certificateFromTemplate", template);
+                                      }}
+                                      disabled={!isAllowed}
+                                      icon={<FontAwesomeIcon icon={faFileContract} />}
+                                    >
+                                      Issue Certificate
+                                    </DropdownMenuItem>
+                                  )}
+                                </ProjectPermissionCan>
+                                <ProjectPermissionCan
                                   I={ProjectPermissionPkiTemplateActions.Edit}
                                   a={ProjectPermissionSub.CertificateTemplates}
                                 >
@@ -198,7 +219,9 @@ export const PkiTemplateListPage = () => {
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         if (!subscription.pkiEst) {
-                                          handlePopUpOpen("estUpgradePlan");
+                                          handlePopUpOpen("estUpgradePlan", {
+                                            isEnterpriseFeature: true
+                                          });
                                           return;
                                         }
                                         handlePopUpOpen("enrollmentOptions", {
@@ -266,7 +289,7 @@ export const PkiTemplateListPage = () => {
               onDeleteApproved={() => onRemovePkiSubscriberSubmit()}
             />
           </div>
-          <div className="container mx-auto max-w-7xl" />
+          <div className="container mx-auto max-w-8xl" />
         </div>
         <Modal
           isOpen={popUp?.certificateTemplate?.isOpen}
@@ -286,11 +309,22 @@ export const PkiTemplateListPage = () => {
           </ModalContent>
         </Modal>
         <CertificateTemplateEnrollmentModal popUp={popUp} handlePopUpToggle={handlePopUpToggle} />
+        <CertificateModal
+          popUp={{
+            certificate: {
+              isOpen: popUp.certificateFromTemplate.isOpen,
+              data: popUp.certificateFromTemplate.data
+            }
+          }}
+          handlePopUpToggle={(_, state) => handlePopUpToggle("certificateFromTemplate", state)}
+          preselectedTemplate={popUp.certificateFromTemplate.data}
+        />
       </div>
       <UpgradePlanModal
         isOpen={popUp.estUpgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("estUpgradePlan", isOpen)}
-        text="You can only configure template enrollment methods if you switch to Infisical's Enterprise plan."
+        text="Your current plan does not include access to configuring template enrollment methods. To unlock this feature, please upgrade to Infisical Enterprise plan."
+        isEnterpriseFeature={popUp.estUpgradePlan.data?.isEnterpriseFeature}
       />
     </>
   );

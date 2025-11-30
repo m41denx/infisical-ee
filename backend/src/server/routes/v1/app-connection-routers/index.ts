@@ -1,3 +1,4 @@
+import { registerChefConnectionRouter } from "@app/ee/routes/v1/app-connection-routers/chef-connection-router";
 import { registerOCIConnectionRouter } from "@app/ee/routes/v1/app-connection-routers/oci-connection-router";
 import { registerOracleDBConnectionRouter } from "@app/ee/routes/v1/app-connection-routers/oracledb-connection-router";
 import { AppConnection } from "@app/services/app-connection/app-connection-enums";
@@ -15,6 +16,7 @@ import { registerCamundaConnectionRouter } from "./camunda-connection-router";
 import { registerChecklyConnectionRouter } from "./checkly-connection-router";
 import { registerCloudflareConnectionRouter } from "./cloudflare-connection-router";
 import { registerDatabricksConnectionRouter } from "./databricks-connection-router";
+import { registerDNSMadeEasyConnectionRouter } from "./dns-made-easy-connection-router";
 import { registerDigitalOceanConnectionRouter } from "./digital-ocean-connection-router";
 import { registerFlyioConnectionRouter } from "./flyio-connection-router";
 import { registerGcpConnectionRouter } from "./gcp-connection-router";
@@ -24,13 +26,16 @@ import { registerGitLabConnectionRouter } from "./gitlab-connection-router";
 import { registerHCVaultConnectionRouter } from "./hc-vault-connection-router";
 import { registerHerokuConnectionRouter } from "./heroku-connection-router";
 import { registerHumanitecConnectionRouter } from "./humanitec-connection-router";
+import { registerLaravelForgeConnectionRouter } from "./laravel-forge-connection-router";
 import { registerLdapConnectionRouter } from "./ldap-connection-router";
 import { registerMsSqlConnectionRouter } from "./mssql-connection-router";
 import { registerMySqlConnectionRouter } from "./mysql-connection-router";
 import { registerNetlifyConnectionRouter } from "./netlify-connection-router";
+import { registerNorthflankConnectionRouter } from "./northflank-connection-router";
 import { registerOktaConnectionRouter } from "./okta-connection-router";
 import { registerPostgresConnectionRouter } from "./postgres-connection-router";
 import { registerRailwayConnectionRouter } from "./railway-connection-router";
+import { registerRedisConnectionRouter } from "./redis-connection-router";
 import { registerRenderConnectionRouter } from "./render-connection-router";
 import { registerSupabaseConnectionRouter } from "./supabase-connection-router";
 import { registerTeamCityConnectionRouter } from "./teamcity-connection-router";
@@ -70,9 +75,11 @@ export const APP_CONNECTION_REGISTER_ROUTER_MAP: Record<AppConnection, (server: 
     [AppConnection.OnePass]: registerOnePassConnectionRouter,
     [AppConnection.Heroku]: registerHerokuConnectionRouter,
     [AppConnection.Render]: registerRenderConnectionRouter,
+    [AppConnection.LaravelForge]: registerLaravelForgeConnectionRouter,
     [AppConnection.Flyio]: registerFlyioConnectionRouter,
     [AppConnection.GitLab]: registerGitLabConnectionRouter,
     [AppConnection.Cloudflare]: registerCloudflareConnectionRouter,
+    [AppConnection.DNSMadeEasy]: registerDNSMadeEasyConnectionRouter,
     [AppConnection.Bitbucket]: registerBitbucketConnectionRouter,
     [AppConnection.Zabbix]: registerZabbixConnectionRouter,
     [AppConnection.Railway]: registerRailwayConnectionRouter,
@@ -80,5 +87,8 @@ export const APP_CONNECTION_REGISTER_ROUTER_MAP: Record<AppConnection, (server: 
     [AppConnection.Supabase]: registerSupabaseConnectionRouter,
     [AppConnection.DigitalOcean]: registerDigitalOceanConnectionRouter,
     [AppConnection.Netlify]: registerNetlifyConnectionRouter,
-    [AppConnection.Okta]: registerOktaConnectionRouter
+    [AppConnection.Northflank]: registerNorthflankConnectionRouter,
+    [AppConnection.Okta]: registerOktaConnectionRouter,
+    [AppConnection.Redis]: registerRedisConnectionRouter,
+    [AppConnection.Chef]: registerChefConnectionRouter
   };

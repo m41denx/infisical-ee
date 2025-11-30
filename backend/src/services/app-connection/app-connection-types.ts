@@ -1,4 +1,10 @@
 import {
+  TChefConnection,
+  TChefConnectionConfig,
+  TChefConnectionInput,
+  TValidateChefConnectionCredentialsSchema
+} from "@app/ee/services/app-connections/chef";
+import {
   TOCIConnection,
   TOCIConnectionConfig,
   TOCIConnectionInput,
@@ -9,6 +15,7 @@ import {
   TOracleDBConnectionInput,
   TValidateOracleDBConnectionCredentialsSchema
 } from "@app/ee/services/app-connections/oracledb";
+import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
 import { TGatewayServiceFactory } from "@app/ee/services/gateway/gateway-service";
 import { TAppConnectionDALFactory } from "@app/services/app-connection/app-connection-dal";
 import { TSqlConnectionConfig } from "@app/services/app-connection/shared/sql/sql-connection-types";
@@ -100,6 +107,12 @@ import {
   TValidateDigitalOceanCredentialsSchema
 } from "./digital-ocean";
 import {
+  TDNSMadeEasyConnection,
+  TDNSMadeEasyConnectionConfig,
+  TDNSMadeEasyConnectionInput,
+  TValidateDNSMadeEasyConnectionCredentialsSchema
+} from "./dns-made-easy/dns-made-easy-connection-types";
+import {
   TFlyioConnection,
   TFlyioConnectionConfig,
   TFlyioConnectionInput,
@@ -148,6 +161,12 @@ import {
   TValidateHumanitecConnectionCredentialsSchema
 } from "./humanitec";
 import {
+  TLaravelForgeConnection,
+  TLaravelForgeConnectionConfig,
+  TLaravelForgeConnectionInput,
+  TValidateLaravelForgeConnectionCredentialsSchema
+} from "./laravel-forge";
+import {
   TLdapConnection,
   TLdapConnectionConfig,
   TLdapConnectionInput,
@@ -161,6 +180,12 @@ import {
   TNetlifyConnectionInput,
   TValidateNetlifyConnectionCredentialsSchema
 } from "./netlify";
+import {
+  TNorthflankConnection,
+  TNorthflankConnectionConfig,
+  TNorthflankConnectionInput,
+  TValidateNorthflankConnectionCredentialsSchema
+} from "./northflank";
 import {
   TOktaConnection,
   TOktaConnectionConfig,
@@ -178,6 +203,12 @@ import {
   TRailwayConnectionInput,
   TValidateRailwayConnectionCredentialsSchema
 } from "./railway";
+import {
+  TRedisConnection,
+  TRedisConnectionConfig,
+  TRedisConnectionInput,
+  TValidateRedisConnectionCredentialsSchema
+} from "./redis";
 import {
   TRenderConnection,
   TRenderConnectionConfig,
@@ -249,17 +280,22 @@ export type TAppConnection = { id: string } & (
   | TOnePassConnection
   | THerokuConnection
   | TRenderConnection
+  | TLaravelForgeConnection
   | TFlyioConnection
   | TGitLabConnection
   | TCloudflareConnection
   | TBitbucketConnection
+  | TDNSMadeEasyConnection
   | TZabbixConnection
   | TRailwayConnection
   | TChecklyConnection
   | TSupabaseConnection
   | TDigitalOceanConnection
   | TNetlifyConnection
+  | TNorthflankConnection
   | TOktaConnection
+  | TRedisConnection
+  | TChefConnection
 );
 
 export type TAppConnectionRaw = NonNullable<Awaited<ReturnType<TAppConnectionDALFactory["findById"]>>>;
@@ -294,17 +330,22 @@ export type TAppConnectionInput = { id: string } & (
   | TOnePassConnectionInput
   | THerokuConnectionInput
   | TRenderConnectionInput
+  | TLaravelForgeConnectionInput
   | TFlyioConnectionInput
   | TGitLabConnectionInput
   | TCloudflareConnectionInput
   | TBitbucketConnectionInput
+  | TDNSMadeEasyConnectionInput
   | TZabbixConnectionInput
   | TRailwayConnectionInput
   | TChecklyConnectionInput
   | TSupabaseConnectionInput
   | TDigitalOceanConnectionInput
   | TNetlifyConnectionInput
+  | TNorthflankConnectionInput
   | TOktaConnectionInput
+  | TRedisConnectionInput
+  | TChefConnectionInput
 );
 
 export type TSqlConnectionInput =
@@ -315,11 +356,21 @@ export type TSqlConnectionInput =
 
 export type TCreateAppConnectionDTO = Pick<
   TAppConnectionInput,
-  "credentials" | "method" | "name" | "app" | "description" | "isPlatformManagedCredentials" | "gatewayId"
+  "credentials" | "method" | "name" | "app" | "description" | "isPlatformManagedCredentials" | "gatewayId" | "projectId"
 >;
 
-export type TUpdateAppConnectionDTO = Partial<Omit<TCreateAppConnectionDTO, "method" | "app">> & {
+export type TUpdateAppConnectionDTO = Partial<Omit<TCreateAppConnectionDTO, "method" | "app" | "projectId">> & {
   connectionId: string;
+};
+
+export type TGetAppConnectionByNameDTO = {
+  connectionName: string;
+  projectId?: string;
+};
+
+export type TValidateAppConnectionUsageByIdDTO = {
+  connectionId: string;
+  projectId: string;
 };
 
 export type TAppConnectionConfig =
@@ -347,17 +398,22 @@ export type TAppConnectionConfig =
   | TOnePassConnectionConfig
   | THerokuConnectionConfig
   | TRenderConnectionConfig
+  | TLaravelForgeConnectionConfig
   | TFlyioConnectionConfig
   | TGitLabConnectionConfig
   | TCloudflareConnectionConfig
   | TBitbucketConnectionConfig
+  | TDNSMadeEasyConnectionConfig
   | TZabbixConnectionConfig
   | TRailwayConnectionConfig
   | TChecklyConnectionConfig
   | TSupabaseConnectionConfig
   | TDigitalOceanConnectionConfig
   | TNetlifyConnectionConfig
-  | TOktaConnectionConfig;
+  | TNorthflankConnectionConfig
+  | TOktaConnectionConfig
+  | TRedisConnectionConfig
+  | TChefConnectionConfig;
 
 export type TValidateAppConnectionCredentialsSchema =
   | TValidateAwsConnectionCredentialsSchema
@@ -387,17 +443,22 @@ export type TValidateAppConnectionCredentialsSchema =
   | TValidateOnePassConnectionCredentialsSchema
   | TValidateHerokuConnectionCredentialsSchema
   | TValidateRenderConnectionCredentialsSchema
+  | TValidateLaravelForgeConnectionCredentialsSchema
   | TValidateFlyioConnectionCredentialsSchema
   | TValidateGitLabConnectionCredentialsSchema
   | TValidateCloudflareConnectionCredentialsSchema
   | TValidateBitbucketConnectionCredentialsSchema
+  | TValidateDNSMadeEasyConnectionCredentialsSchema
   | TValidateZabbixConnectionCredentialsSchema
   | TValidateRailwayConnectionCredentialsSchema
   | TValidateChecklyConnectionCredentialsSchema
   | TValidateSupabaseConnectionCredentialsSchema
   | TValidateDigitalOceanCredentialsSchema
   | TValidateNetlifyConnectionCredentialsSchema
-  | TValidateOktaConnectionCredentialsSchema;
+  | TValidateNorthflankConnectionCredentialsSchema
+  | TValidateOktaConnectionCredentialsSchema
+  | TValidateRedisConnectionCredentialsSchema
+  | TValidateChefConnectionCredentialsSchema;
 
 export type TListAwsConnectionKmsKeys = {
   connectionId: string;
@@ -411,13 +472,15 @@ export type TListAwsConnectionIamUsers = {
 
 export type TAppConnectionCredentialsValidator = (
   appConnection: TAppConnectionConfig,
-  gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">
+  gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">,
+  gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">
 ) => Promise<TAppConnection["credentials"]>;
 
 export type TAppConnectionTransitionCredentialsToPlatform = (
   appConnection: TAppConnectionConfig,
   callback: (credentials: TAppConnection["credentials"]) => Promise<TAppConnectionRaw>,
-  gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">
+  gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">,
+  gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">
 ) => Promise<TAppConnectionRaw>;
 
 export type TAppConnectionBaseConfig = {

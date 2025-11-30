@@ -2,17 +2,17 @@ import { useEffect } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useAuthorizeIntegration } from "@app/hooks/api";
 
 export const GcpSecretManagerOauthCallbackPage = () => {
   const navigate = useNavigate();
   const { mutateAsync } = useAuthorizeIntegration();
-
+  const { currentOrg } = useOrganization();
   const { code, state } = useSearch({
     from: ROUTE_PATHS.SecretManager.Integratons.GcpSecretManagerOauthCallbackPage.id
   });
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   useEffect(() => {
     (async () => {
@@ -22,15 +22,16 @@ export const GcpSecretManagerOauthCallbackPage = () => {
         if (state !== localStorage.getItem("latestCSRFToken")) return;
         localStorage.removeItem("latestCSRFToken");
         const integrationAuth = await mutateAsync({
-          workspaceId: currentWorkspace.id,
+          workspaceId: currentProject.id,
           code: code as string,
           integration: "gcp-secret-manager"
         });
 
         navigate({
-          to: "/projects/secret-management/$projectId/integrations/gcp-secret-manager/create",
+          to: "/organizations/$orgId/projects/secret-management/$projectId/integrations/gcp-secret-manager/create",
           params: {
-            projectId: currentWorkspace.id
+            orgId: currentOrg.id,
+            projectId: currentProject.id
           },
           search: {
             integrationAuthId: integrationAuth.id

@@ -13,7 +13,7 @@ import {
   Select,
   SelectItem
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   CaRenewalType,
   useRenewCa
@@ -45,8 +45,8 @@ type Props = {
 };
 
 export const CaRenewalModal = ({ popUp, handlePopUpToggle }: Props) => {
-  const { currentWorkspace } = useWorkspace();
-  const projectSlug = currentWorkspace?.slug || "";
+  const { currentProject } = useProject();
+  const projectSlug = currentProject?.slug || "";
 
   const popUpData = popUp?.renewCa?.data as {
     caId: string;
@@ -84,27 +84,23 @@ export const CaRenewalModal = ({ popUp, handlePopUpToggle }: Props) => {
   //   }, [ca, parentCa]);
 
   const onFormSubmit = async ({ type, notAfter }: FormData) => {
-    try {
-      if (!projectSlug || !popUpData.caId) return;
+    if (!projectSlug || !popUpData.caId) return;
 
-      await renewCa({
-        projectSlug,
-        caId: popUpData.caId,
-        notAfter,
-        type
-      });
+    await renewCa({
+      projectSlug,
+      caId: popUpData.caId,
+      notAfter,
+      type
+    });
 
-      handlePopUpToggle("renewCa", false);
+    handlePopUpToggle("renewCa", false);
 
-      createNotification({
-        text: "Successfully renewed CA",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully renewed CA",
+      type: "success"
+    });
 
-      reset();
-    } catch (err) {
-      console.error(err);
-    }
+    reset();
   };
 
   return (

@@ -22,12 +22,12 @@ import {
   SelectItem,
   Tooltip
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   CaStatus,
   useCreateCertTemplate,
-  useGetCaById,
   useGetCertTemplate,
+  useGetInternalCaById,
   useListWorkspaceCas,
   useListWorkspacePkiCollections,
   useUpdateCertTemplate
@@ -82,21 +82,21 @@ type Props = {
 };
 
 export const CertificateTemplateModal = ({ popUp, handlePopUpToggle, caId }: Props) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
-  const { data: ca } = useGetCaById(caId);
+  const { data: ca } = useGetInternalCaById(caId);
 
   const { data: certTemplate } = useGetCertTemplate(
     (popUp?.certificateTemplate?.data as { id: string })?.id || ""
   );
 
   const { data: cas } = useListWorkspaceCas({
-    projectSlug: currentWorkspace?.slug ?? "",
+    projectId: currentProject?.id,
     status: CaStatus.ACTIVE
   });
 
   const { data: collectionsData } = useListWorkspacePkiCollections({
-    workspaceId: currentWorkspace?.id || ""
+    projectId: currentProject?.id || ""
   });
 
   const { mutateAsync: createCertTemplate } = useCreateCertTemplate();
@@ -155,65 +155,65 @@ export const CertificateTemplateModal = ({ popUp, handlePopUpToggle, caId }: Pro
     keyUsages,
     extendedKeyUsages
   }: FormData) => {
-    if (!currentWorkspace?.id) {
+    if (!currentProject?.id) {
       return;
     }
 
-    try {
-      if (certTemplate) {
-        await updateCertTemplate({
-          id: certTemplate.id,
-          projectId: currentWorkspace.id,
-          pkiCollectionId: collectionId,
-          caId,
-          name,
-          commonName,
-          subjectAlternativeName,
-          ttl,
-          keyUsages: Object.entries(keyUsages)
-            .filter(([, value]) => value)
-            .map(([key]) => key as CertKeyUsage),
-          extendedKeyUsages: Object.entries(extendedKeyUsages)
-            .filter(([, value]) => value)
-            .map(([key]) => key as CertExtendedKeyUsage)
-        });
+    if (certTemplate) {
+      await updateCertTemplate({
+        id: certTemplate.id,
+        projectId: currentProject.id,
+        pkiCollectionId: collectionId,
+        caId,
+        name,
+        commonName,
+        subjectAlternativeName,
+        ttl,
+        keyUsages: Object.entries(keyUsages)
+          .filter(([, value]) => value)
+          .map(([key]) =>
+            key === CertKeyUsage.CRL_SIGN
+              ? "cRLSign"
+              : key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+          ),
+        extendedKeyUsages: Object.entries(extendedKeyUsages)
+          .filter(([, value]) => value)
+          .map(([key]) => key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()))
+      });
 
-        createNotification({
-          text: "Successfully updated certificate template",
-          type: "success"
-        });
-      } else {
-        await createCertTemplate({
-          projectId: currentWorkspace.id,
-          pkiCollectionId: collectionId,
-          caId,
-          name,
-          commonName,
-          subjectAlternativeName,
-          ttl,
-          keyUsages: Object.entries(keyUsages)
-            .filter(([, value]) => value)
-            .map(([key]) => key as CertKeyUsage),
-          extendedKeyUsages: Object.entries(extendedKeyUsages)
-            .filter(([, value]) => value)
-            .map(([key]) => key as CertExtendedKeyUsage)
-        });
-
-        createNotification({
-          text: "Successfully created certificate template",
-          type: "success"
-        });
-      }
-
-      reset();
-      handlePopUpToggle("certificateTemplate", false);
-    } catch (err) {
-      console.error(err);
       createNotification({
-        text: "Failed to save changes",
-        type: "error"
+        text: "Successfully updated certificate template",
+        type: "success"
+      });
+    } else {
+      await createCertTemplate({
+        projectId: currentProject.id,
+        pkiCollectionId: collectionId,
+        caId,
+        name,
+        commonName,
+        subjectAlternativeName,
+        ttl,
+        keyUsages: Object.entries(keyUsages)
+          .filter(([, value]) => value)
+          .map(([key]) =>
+            key === CertKeyUsage.CRL_SIGN
+              ? "cRLSign"
+              : key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+          ),
+        extendedKeyUsages: Object.entries(extendedKeyUsages)
+          .filter(([, value]) => value)
+          .map(([key]) => key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()))
+      });
+
+      createNotification({
+        text: "Successfully created certificate template",
+        type: "success"
       });
     }
+
+    reset();
+    handlePopUpToggle("certificateTemplate", false);
   };
 
   return (
@@ -399,7 +399,7 @@ export const CertificateTemplateModal = ({ popUp, handlePopUpToggle, caId }: Pro
                         errorText={error?.message}
                         isError={Boolean(error)}
                       >
-                        <div className="mb-7 mt-2 grid grid-cols-2 gap-2">
+                        <div className="mt-2 mb-7 grid grid-cols-2 gap-2">
                           {KEY_USAGES_OPTIONS.map(({ label, value: optionValue }) => {
                             return (
                               <Checkbox
@@ -432,7 +432,7 @@ export const CertificateTemplateModal = ({ popUp, handlePopUpToggle, caId }: Pro
                         errorText={error?.message}
                         isError={Boolean(error)}
                       >
-                        <div className="mb-7 mt-2 grid grid-cols-2 gap-2">
+                        <div className="mt-2 mb-7 grid grid-cols-2 gap-2">
                           {EXTENDED_KEY_USAGES_OPTIONS.map(({ label, value: optionValue }) => {
                             return (
                               <Checkbox

@@ -1,9 +1,10 @@
 import { useMemo } from "react";
-import { faBan, faEye } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faBan } from "@fortawesome/free-solid-svg-icons";
 import { useQuery } from "@tanstack/react-query";
+import { EyeIcon } from "lucide-react";
 
-import { Badge, EmptyState, Spinner, Tooltip } from "@app/components/v2";
+import { EmptyState, Spinner, Tooltip } from "@app/components/v2";
+import { Badge } from "@app/components/v3";
 import { gatewaysQueryKeys, useGetIdentityKubernetesAuth } from "@app/hooks/api";
 import { IdentityKubernetesAuthForm } from "@app/pages/organization/AccessManagementPage/components/OrgIdentityTab/components/IdentitySection/IdentityKubernetesAuthForm";
 
@@ -58,6 +59,7 @@ export const ViewIdentityKubernetesAuthContent = ({
     <ViewIdentityContentWrapper
       onEdit={() => handlePopUpOpen("identityAuthMethod")}
       onDelete={onDelete}
+      identityId={identityId}
     >
       <IdentityAuthFieldDisplay label="Access Token TTL (seconds)">
         {data.accessTokenTTL}
@@ -84,20 +86,18 @@ export const ViewIdentityKubernetesAuthContent = ({
             side="right"
             className="max-w-xl p-2"
             content={
-              <p className="break-words rounded bg-mineshaft-600 p-2">
+              <p className="rounded-sm bg-mineshaft-600 p-2 break-words">
                 {data.tokenReviewerJwt || "Not provided"}
               </p>
             }
           >
-            <div className="w-min">
-              <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                <FontAwesomeIcon icon={faEye} />
-                <span>Reveal</span>
-              </Badge>
-            </div>
+            <Badge variant="neutral">
+              <EyeIcon />
+              Reveal
+            </Badge>
           </Tooltip>
         ) : (
-          <p className="text-base italic leading-4 text-bunker-400">Not set</p>
+          <p className="text-base leading-4 text-bunker-400 italic">Not set</p>
         )}
       </IdentityAuthFieldDisplay>
       <IdentityAuthFieldDisplay className="col-span-2" label="Allowed Service Account Names">
@@ -120,14 +120,12 @@ export const ViewIdentityKubernetesAuthContent = ({
           <Tooltip
             side="right"
             className="max-w-xl p-2"
-            content={<p className="break-words rounded bg-mineshaft-600 p-2">{data.caCert}</p>}
+            content={<p className="rounded-sm bg-mineshaft-600 p-2 break-words">{data.caCert}</p>}
           >
-            <div className="w-min">
-              <Badge className="flex h-5 w-min items-center gap-1.5 whitespace-nowrap bg-mineshaft-400/50 text-bunker-300">
-                <FontAwesomeIcon icon={faEye} />
-                <span>Reveal</span>
-              </Badge>
-            </div>
+            <Badge variant="neutral">
+              <EyeIcon />
+              Reveal
+            </Badge>
           </Tooltip>
         )}
       </IdentityAuthFieldDisplay>

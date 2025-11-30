@@ -26,17 +26,18 @@ import {
   ProjectPermissionActions,
   ProjectPermissionIdentityActions,
   ProjectPermissionSub,
+  useProject,
   useProjectPermission
 } from "@app/context";
 import { usePopUp } from "@app/hooks";
 import { useDeleteIdentityProjectAdditionalPrivilege } from "@app/hooks/api";
-import { IdentityMembership } from "@app/hooks/api/identities/types";
+import { IdentityProjectMembershipV1 } from "@app/hooks/api/identities/types";
 import { useListIdentityProjectPrivileges } from "@app/hooks/api/identityProjectAdditionalPrivilege/queries";
 
 import { IdentityProjectAdditionalPrivilegeModifySection } from "./IdentityProjectAdditionalPrivilegeModifySection";
 
 type Props = {
-  identityMembershipDetails: IdentityMembership;
+  identityMembershipDetails: IdentityProjectMembershipV1;
 };
 
 export const IdentityProjectAdditionalPrivilegeSection = ({ identityMembershipDetails }: Props) => {
@@ -46,29 +47,24 @@ export const IdentityProjectAdditionalPrivilegeSection = ({ identityMembershipDe
   ] as const);
   const { permission } = useProjectPermission();
   const identityId = identityMembershipDetails?.identity?.id;
-  const projectId = identityMembershipDetails?.project?.id;
+  const { projectId } = useProject();
 
   const { mutateAsync: deletePrivilege } = useDeleteIdentityProjectAdditionalPrivilege();
 
   const { data: identityProjectPrivileges, isPending } = useListIdentityProjectPrivileges({
     identityId: identityMembershipDetails?.identity?.id,
-    projectId: identityMembershipDetails?.project?.id
+    projectId
   });
 
   const handlePrivilegeDelete = async () => {
     const { id } = popUp?.deletePrivilege?.data as { id: string };
-    try {
-      await deletePrivilege({
-        privilegeId: id,
-        projectId,
-        identityId
-      });
-      createNotification({ type: "success", text: "Successfully removed the privilege" });
-      handlePopUpClose("deletePrivilege");
-    } catch (err) {
-      console.log(err);
-      createNotification({ type: "error", text: "Failed to delete privilege" });
-    }
+    await deletePrivilege({
+      privilegeId: id,
+      projectId,
+      identityId
+    });
+    createNotification({ type: "success", text: "Successfully removed the privilege" });
+    handlePopUpClose("deletePrivilege");
   };
 
   return (
@@ -81,7 +77,7 @@ export const IdentityProjectAdditionalPrivilegeSection = ({ identityMembershipDe
             initial={{ opacity: 0, translateX: 30 }}
             animate={{ opacity: 1, translateX: 0 }}
             exit={{ opacity: 0, translateX: 30 }}
-            className="absolute min-h-[10rem] w-full"
+            className="absolute min-h-40 w-full"
           >
             <IdentityProjectAdditionalPrivilegeModifySection
               onGoBack={() => handlePopUpClose("modifyPrivilege")}
@@ -105,7 +101,7 @@ export const IdentityProjectAdditionalPrivilegeSection = ({ identityMembershipDe
             className="absolute w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4"
           >
             <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-              <h3 className="text-lg font-semibold text-mineshaft-100">
+              <h3 className="text-lg font-medium text-mineshaft-100">
                 Project Additional Privileges
               </h3>
 
@@ -239,7 +235,10 @@ export const IdentityProjectAdditionalPrivilegeSection = ({ identityMembershipDe
                   </TBody>
                 </Table>
                 {!isPending && !identityProjectPrivileges?.length && (
-                  <EmptyState title="This identity has no additional privileges" icon={faFolder} />
+                  <EmptyState
+                    title="This machine identity has no additional privileges"
+                    icon={faFolder}
+                  />
                 )}
               </TableContainer>
             </div>

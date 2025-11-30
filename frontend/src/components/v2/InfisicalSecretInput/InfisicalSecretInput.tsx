@@ -1,11 +1,16 @@
 import { forwardRef, TextareaHTMLAttributes, useCallback, useMemo, useRef, useState } from "react";
-import { faFolder, faKey, faLayerGroup } from "@fortawesome/free-solid-svg-icons";
+import { faFolder, faKey, faLayerGroup, faSearch } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import * as Popover from "@radix-ui/react-popover";
+import { useNavigate } from "@tanstack/react-router";
 
-import { useWorkspace } from "@app/context";
+import { createNotification } from "@app/components/notifications";
+import { ROUTE_PATHS } from "@app/const/routes";
+import { useProject, useProjectPermission } from "@app/context";
+import { ProjectPermissionSecretActions } from "@app/context/ProjectPermissionContext/types";
 import { useDebounce, useToggle } from "@app/hooks";
 import { useGetProjectFolders, useGetProjectSecrets } from "@app/hooks/api";
+import { hasSecretReadValueOrDescribePermission } from "@app/lib/fn/permission";
 
 import { SecretInput } from "../SecretInput";
 
@@ -55,6 +60,8 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
   secretPath?: string;
   environment?: string;
   containerClassName?: string;
+  isLoadingValue?: boolean;
+  isErrorLoadingValue?: boolean;
 };
 
 type ReferenceItem = {
@@ -76,8 +83,10 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
     },
     ref
   ) => {
-    const { currentWorkspace } = useWorkspace();
-    const workspaceId = currentWorkspace?.id || "";
+    const { currentProject } = useProject();
+    const projectId = currentProject?.id || "";
+    const navigate = useNavigate({ from: ROUTE_PATHS.SecretManager.SecretDashboardPage.path });
+    const { permission } = useProjectPermission();
 
     const [debouncedValue] = useDebounce(value, 100);
 
@@ -101,7 +110,7 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
       let predicate = suggestionSourceValue;
       if (isDeep) {
         const [envSlug, ...folderPaths] = suggestionSourceValue.split(".");
-        const isValidEnvSlug = currentWorkspace?.environments.find((e) => e.slug === envSlug);
+        const isValidEnvSlug = currentProject?.environments.find((e) => e.slug === envSlug);
         suggestionSourceEnv = isValidEnvSlug ? envSlug : undefined;
         suggestionSourceSecretPath = `/${folderPaths.slice(0, -1)?.join("/")}`;
         predicate = folderPaths[folderPaths.length - 1];
@@ -125,7 +134,7 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
       viewSecretValue: false,
       environment: suggestionSource.environment || "",
       secretPath: suggestionSource.secretPath || "",
-      workspaceId,
+      projectId,
       options: {
         enabled: isPopupOpen
       }
@@ -133,7 +142,7 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
     const { data: folders } = useGetProjectFolders({
       environment: suggestionSource.environment || "",
       path: suggestionSource.secretPath || "",
-      projectId: workspaceId,
+      projectId,
       options: {
         enabled: isPopupOpen
       }
@@ -148,7 +157,7 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
 
       if (!suggestionSource.isDeep) {
         // At first level only environments and secrets
-        (currentWorkspace?.environments || []).forEach(({ name, slug }) => {
+        (currentProject?.environments || []).forEach(({ name, slug }) => {
           if (name.toLowerCase().startsWith(predicate))
             suggestionsArr.push({
               label: name,
@@ -175,13 +184,29 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
             type: ReferenceType.SECRET
           });
       });
+
+      if (suggestionsArr.length === 0 && suggestionSource.predicate.trim()) {
+        suggestionsArr.push({
+          label: "No matches found",
+          slug: "__no_match__",
+          type: ReferenceType.SECRET
+        });
+      }
+
       return suggestionsArr;
-    }, [secrets, folders, currentWorkspace?.environments, isPopupOpen, suggestionSource.value]);
+    }, [
+      secrets,
+      folders,
+      currentProject?.environments,
+      isPopupOpen,
+      suggestionSource.value,
+      suggestionSource.predicate
+    ]);
 
     const handleSuggestionSelect = (selectIndex?: number) => {
       const selectedSuggestion =
         suggestions[typeof selectIndex !== "undefined" ? selectIndex : highlightedIndex];
-      if (!selectedSuggestion) {
+      if (!selectedSuggestion || selectedSuggestion.slug === "__no_match__") {
         return;
       }
 
@@ -226,21 +251,40 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
       if (isPopupOpen) {
         if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
           setHighlightedIndex((prevIndex) => {
-            const pos = mod(prevIndex + 1, suggestions.length);
-            popoverContentRef.current?.children?.[pos]?.scrollIntoView({
+            let nextIndex = mod(prevIndex + 1, suggestions.length);
+            // Skip "no match" messages
+            while (
+              nextIndex < suggestions.length &&
+              suggestions[nextIndex].slug === "__no_match__"
+            ) {
+              nextIndex = mod(nextIndex + 1, suggestions.length);
+            }
+            // If we only have no-match messages, don't highlight anything
+            if (suggestions[nextIndex]?.slug === "__no_match__") {
+              return -1;
+            }
+            popoverContentRef.current?.children?.[nextIndex]?.scrollIntoView({
               block: "nearest",
               behavior: "smooth"
             });
-            return pos;
+            return nextIndex;
           });
         } else if (e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey)) {
           setHighlightedIndex((prevIndex) => {
-            const pos = mod(prevIndex - 1, suggestions.length);
-            popoverContentRef.current?.children?.[pos]?.scrollIntoView({
+            let prevIdx = mod(prevIndex - 1, suggestions.length);
+            // Skip "no match" messages
+            while (prevIdx >= 0 && suggestions[prevIdx].slug === "__no_match__") {
+              prevIdx = mod(prevIdx - 1, suggestions.length);
+            }
+            // If we only have no-match messages, don't highlight anything
+            if (suggestions[prevIdx]?.slug === "__no_match__") {
+              return -1;
+            }
+            popoverContentRef.current?.children?.[prevIdx]?.scrollIntoView({
               block: "nearest",
               behavior: "smooth"
             });
-            return pos;
+            return prevIdx;
           });
         } else if (e.key === "Enter" && highlightedIndex >= 0) {
           e.preventDefault();
@@ -270,6 +314,120 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
       }
     }, []);
 
+    const handleClickSegment = useCallback(
+      (segment: string, allSegments: string[]) => {
+        if (!projectId) {
+          createNotification({
+            text: "Project ID is not set",
+            type: "error"
+          });
+          return;
+        }
+
+        if (allSegments.length === 0) {
+          createNotification({
+            text: "Invalid secret reference",
+            type: "error"
+          });
+          return;
+        }
+
+        if (allSegments.length === 1) {
+          const canReadSecretValue = hasSecretReadValueOrDescribePermission(
+            permission,
+            ProjectPermissionSecretActions.ReadValue,
+            {
+              environment: propEnvironment ?? "*",
+              secretPath: propSecretPath ?? "/",
+              secretName: segment,
+              secretTags: ["*"]
+            }
+          );
+
+          if (!canReadSecretValue) {
+            createNotification({
+              text: "You do not have permission to access this secret",
+              type: "error"
+            });
+            return;
+          }
+
+          navigate({
+            search: (prev) => ({
+              ...prev,
+              search: segment,
+              filterBy: "secret",
+              tags: ""
+            })
+          });
+          return;
+        }
+
+        const environmentSlug = allSegments[0];
+        const secretName = allSegments[allSegments.length - 1];
+        let folderPath = "/";
+
+        if (allSegments.length > 2) {
+          const pathSegments = allSegments.slice(1, -1);
+          for (let i = 0; i < pathSegments.length; i += 1) {
+            if (!pathSegments[i]) {
+              createNotification({
+                text: "Invalid secret reference",
+                type: "error"
+              });
+              return;
+            }
+
+            const pathSegment = pathSegments[i];
+            folderPath += `${pathSegment}`;
+            if (pathSegment === segment) {
+              folderPath += "/";
+              break;
+            }
+            folderPath += "/";
+          }
+        }
+
+        // Only validate secret permission, users can always view environments and folders
+        if (segment === secretName) {
+          const canReadSecretValue = hasSecretReadValueOrDescribePermission(
+            permission,
+            ProjectPermissionSecretActions.ReadValue,
+            {
+              environment: environmentSlug,
+              secretPath: folderPath,
+              secretName,
+              secretTags: ["*"]
+            }
+          );
+
+          if (!canReadSecretValue) {
+            createNotification({
+              text: "You do not have permission to access this secret",
+              type: "error"
+            });
+            return;
+          }
+        }
+
+        navigate({
+          to: ROUTE_PATHS.SecretManager.SecretDashboardPage.path,
+          params: {
+            projectId,
+            envSlug: environmentSlug
+          },
+          search: (prev) => ({
+            ...prev,
+            secretPath: segment === environmentSlug ? "/" : folderPath,
+            search: segment === secretName ? secretName : prev.search,
+            filterBy: segment === secretName ? "secret" : prev.filterBy,
+            tags: ""
+          })
+        });
+      },
+      [navigate, projectId, permission, propEnvironment, propSecretPath]
+    );
+
     return (
       <Popover.Root open={isPopupOpen} onOpenChange={handlePopUpOpen}>
         <Popover.Trigger asChild>
@@ -279,20 +437,26 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
             ref={handleRef}
             onKeyDown={handleKeyDown}
             value={value}
-            onFocus={() => setIsFocused.on()}
+            onFocus={(evt) => {
+              if (props.onFocus) props.onFocus(evt);
+              setIsFocused.on();
+            }}
             onBlur={(evt) => {
               // should not on blur when its mouse down selecting a item from suggestion
               if (!(evt.relatedTarget?.getAttribute("aria-label") === "suggestion-item"))
                 setIsFocused.off();
+
+              if (props.onBlur) props.onBlur(evt);
             }}
             onChange={(e) => onChange?.(e.target.value)}
             containerClassName={containerClassName}
+            onClickSegment={handleClickSegment}
           />
         </Popover.Trigger>
         <Popover.Content
           align="start"
           onOpenAutoFocus={(e) => e.preventDefault()}
-          className="relative top-2 z-[100] max-h-64 overflow-auto rounded-md border border-mineshaft-600 bg-mineshaft-900 font-inter text-bunker-100 shadow-md"
+          className="relative top-2 z-100 max-h-64 overflow-auto rounded-md border border-mineshaft-600 bg-mineshaft-900 font-inter text-bunker-100 shadow-md"
           style={{
             width: "var(--radix-popover-trigger-width)"
           }}
@@ -304,7 +468,12 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
             {suggestions.map((item, i) => {
               let entryIcon;
               let subText;
-              if (item.type === ReferenceType.SECRET) {
+              const isNoMatchMessage = item.slug === "__no_match__";
+
+              if (isNoMatchMessage) {
+                entryIcon = <FontAwesomeIcon icon={faSearch} className="text-gray-400" />;
+                subText = "No results";
+              } else if (item.type === ReferenceType.SECRET) {
                 entryIcon = <FontAwesomeIcon icon={faKey} className="text-bunker-300" />;
                 subText = "Secret";
               } else if (item.type === ReferenceType.ENVIRONMENT) {
@@ -315,10 +484,28 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
                 subText = "Folder";
               }
 
-              return (
+              return isNoMatchMessage ? (
                 <div
-                  tabIndex={0}
-                  role="button"
+                  role="status"
+                  aria-label="no-match-message"
+                  className="flex w-full items-center justify-between border-mineshaft-600 text-left"
+                  key={`secret-reference-secret-${i + 1}`}
+                >
+                  <div className="text-md relative flex w-full cursor-default items-center justify-between px-2 py-2 opacity-75 outline-hidden transition-all select-none">
+                    <div className="flex w-full items-start gap-2">
+                      <div className="mt-1 flex items-center">{entryIcon}</div>
+                      <div className="text-md w-10/12 truncate text-left">
+                        <span className="text-gray-400">{item.label}</span>
+                        <div className="mb-[0.1rem] text-xs leading-3 text-bunker-400">
+                          {subText}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleSuggestionSelect(i);
                   }}
@@ -330,26 +517,25 @@ export const InfisicalSecretInput = forwardRef<HTMLTextAreaElement, Props>(
                     handleSuggestionSelect(i);
                   }}
                   onMouseEnter={() => setHighlightedIndex(i)}
-                  style={{ pointerEvents: "auto" }}
-                  className="flex w-full items-center justify-between border-mineshaft-600 text-left"
+                  className="flex w-full items-center justify-between border-none border-mineshaft-600 bg-transparent p-0 text-left"
                   key={`secret-reference-secret-${i + 1}`}
                 >
                   <div
                     className={`${
                       highlightedIndex === i ? "bg-mineshaft-500" : ""
-                    } text-md relative flex w-full cursor-pointer select-none items-center justify-between px-2 py-2 outline-none transition-all hover:bg-mineshaft-700 data-[highlighted]:bg-mineshaft-700`}
+                    } text-md relative flex w-full cursor-pointer items-center justify-between px-2 py-2 outline-hidden transition-all select-none hover:bg-mineshaft-700 data-highlighted:bg-mineshaft-700`}
                   >
                     <div className="flex w-full items-start gap-2">
                       <div className="mt-1 flex items-center">{entryIcon}</div>
                       <div className="text-md w-10/12 truncate text-left">
-                        {item.label}
+                        <span>{item.label}</span>
                         <div className="mb-[0.1rem] text-xs leading-3 text-bunker-400">
                           {subText}
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

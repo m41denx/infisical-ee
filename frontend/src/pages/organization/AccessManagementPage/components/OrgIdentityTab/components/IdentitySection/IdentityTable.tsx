@@ -45,6 +45,7 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
+import { Badge, OrgIcon, SubOrgIcon } from "@app/components/v3";
 import { OrgPermissionIdentityActions, OrgPermissionSubjects, useOrganization } from "@app/context";
 import {
   getUserTablePreference,
@@ -55,8 +56,8 @@ import { usePagination, useResetPageHelper } from "@app/hooks";
 import {
   identityAuthToNameMap,
   useGetOrgRoles,
-  useSearchIdentities,
-  useUpdateIdentity
+  useSearchOrgIdentityMemberships,
+  useUpdateOrgIdentity
 } from "@app/hooks/api";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
 import { OrgIdentityOrderBy } from "@app/hooks/api/organization/types";
@@ -78,7 +79,7 @@ type Filter = {
 
 export const IdentityTable = ({ handlePopUpOpen }: Props) => {
   const navigate = useNavigate();
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isSubOrganization } = useOrganization();
 
   const {
     offset,
@@ -109,9 +110,9 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
 
   const organizationId = currentOrg?.id || "";
 
-  const { mutateAsync: updateMutateAsync } = useUpdateIdentity();
+  const { mutateAsync: updateMutateAsync } = useUpdateOrgIdentity();
 
-  const { data, isPending, isFetching } = useSearchIdentities({
+  const { data, isPending, isFetching } = useSearchOrgIdentityMemberships({
     offset,
     limit,
     orderDirection,
@@ -144,27 +145,16 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
   };
 
   const handleChangeRole = async ({ identityId, role }: { identityId: string; role: string }) => {
-    try {
-      await updateMutateAsync({
-        identityId,
-        role,
-        organizationId
-      });
+    await updateMutateAsync({
+      identityId,
+      role,
+      organizationId
+    });
 
-      createNotification({
-        text: "Successfully updated identity role",
-        type: "success"
-      });
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to update identity role";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    createNotification({
+      text: "Successfully updated machine identity role",
+      type: "success"
+    });
   };
 
   const handleRoleToggle = useCallback(
@@ -188,11 +178,11 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <IconButton
-              ariaLabel="Filter Identities"
+              ariaLabel="Filter Machine Identities"
               variant="plain"
               size="sm"
               className={twMerge(
-                "flex h-[2.375rem] w-[2.6rem] items-center justify-center overflow-hidden border border-mineshaft-600 bg-mineshaft-800 p-0 transition-all hover:border-primary/60 hover:bg-primary/10",
+                "flex h-9.5 w-[2.6rem] items-center justify-center overflow-hidden border border-mineshaft-600 bg-mineshaft-800 p-0 transition-all hover:border-primary/60 hover:bg-primary/10",
                 isTableFiltered && "border-primary/50 text-primary"
               )}
             >
@@ -208,9 +198,9 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
               >
                 Roles
               </DropdownSubMenuTrigger>
-              <DropdownSubMenuContent className="thin-scrollbar max-h-[20rem] overflow-y-auto rounded-l-none">
+              <DropdownSubMenuContent className="max-h-80 thin-scrollbar overflow-y-auto rounded-l-none">
                 <DropdownMenuLabel className="sticky top-0 bg-mineshaft-900">
-                  Apply Roles to Filter Identities
+                  Filter Organization Machine Identities by Role
                 </DropdownMenuLabel>
                 {roles?.map(({ id, slug, name }) => (
                   <DropdownMenuItem
@@ -239,7 +229,7 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
-          placeholder="Search identities by name..."
+          placeholder="Search machine identities by name..."
         />
       </div>
       <TableContainer>
@@ -268,7 +258,7 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
               </Th>
               <Th>
                 <div className="flex items-center">
-                  Role
+                  Organization Role
                   <IconButton
                     variant="plain"
                     className={`ml-2 ${orderBy === OrgIdentityOrderBy.Role ? "" : "opacity-30"}`}
@@ -286,29 +276,35 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
                   </IconButton>
                 </div>
               </Th>
+              {isSubOrganization && <Th>Managed By</Th>}
               <Th className="w-16">{isFetching ? <Spinner size="xs" /> : null}</Th>
             </Tr>
           </THead>
           <TBody>
-            {isPending && <TableSkeleton columns={3} innerKey="org-identities" />}
+            {isPending && (
+              <TableSkeleton columns={isSubOrganization ? 4 : 3} innerKey="org-identities" />
+            )}
             {!isPending &&
               data?.identities?.map(
                 ({
-                  identity: { id, name },
+                  identity: { id, name, orgId },
                   role,
                   customRole,
                   lastLoginAuthMethod,
                   lastLoginTime
                 }) => {
+                  const isSubOrgIdentity = currentOrg.id === orgId;
+
                   return (
                     <Tr
                       className="h-10 cursor-pointer transition-colors duration-100 hover:bg-mineshaft-700"
                       key={`identity-${id}`}
                       onClick={() =>
                         navigate({
-                          to: "/organization/identities/$identityId",
+                          to: "/organizations/$orgId/identities/$identityId",
                           params: {
-                            identityId: id
+                            identityId: id,
+                            orgId
                           }
                         })
                       }
@@ -317,7 +313,7 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
                         {name}
                         {lastLoginAuthMethod && lastLoginTime && (
                           <Tooltip
-                            className="min-w-52 max-w-96 px-3"
+                            className="max-w-96 min-w-52 px-3"
                             content={
                               <LastLoginSection
                                 lastLoginAuthMethod={identityAuthToNameMap[lastLoginAuthMethod]}
@@ -362,6 +358,23 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
                           }}
                         </OrgPermissionCan>
                       </Td>
+                      {isSubOrganization && (
+                        <Td>
+                          <Badge variant={isSubOrgIdentity ? "sub-org" : "org"}>
+                            {isSubOrgIdentity ? (
+                              <>
+                                <SubOrgIcon />
+                                Sub-Organization
+                              </>
+                            ) : (
+                              <>
+                                <OrgIcon />
+                                Root Organization
+                              </>
+                            )}
+                          </Badge>
+                        </Td>
+                      )}
                       <Td>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -385,15 +398,16 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     navigate({
-                                      to: "/organization/identities/$identityId",
+                                      to: "/organizations/$orgId/identities/$identityId",
                                       params: {
-                                        identityId: id
+                                        identityId: id,
+                                        orgId
                                       }
                                     });
                                   }}
                                   isDisabled={!isAllowed}
                                 >
-                                  Edit Identity
+                                  Edit Machine Identity {isSubOrgIdentity ? "" : "Membership"}
                                 </DropdownMenuItem>
                               )}
                             </OrgPermissionCan>
@@ -413,7 +427,9 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
                                   isDisabled={!isAllowed}
                                   icon={<FontAwesomeIcon icon={faTrash} />}
                                 >
-                                  Delete Identity
+                                  {isSubOrgIdentity
+                                    ? "Delete Machine Identity"
+                                    : "Remove From Sub-Organization"}
                                 </DropdownMenuItem>
                               )}
                             </OrgPermissionCan>
@@ -439,8 +455,8 @@ export const IdentityTable = ({ handlePopUpOpen }: Props) => {
           <EmptyState
             title={
               debouncedSearch.trim().length > 0 || filter.roles?.length > 0
-                ? "No identities match search filter"
-                : "No identities have been created in this organization"
+                ? "No machine identities match search filter"
+                : "No machine identities have been created in this organization"
             }
             icon={faServer}
           />

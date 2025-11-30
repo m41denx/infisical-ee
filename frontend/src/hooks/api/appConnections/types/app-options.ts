@@ -148,6 +148,10 @@ export type TChecklyConnectionOption = TAppConnectionOptionBase & {
   app: AppConnection.Checkly;
 };
 
+export type TChefConnectionOption = TAppConnectionOptionBase & {
+  app: AppConnection.Chef;
+};
+
 export type TSupabaseConnectionOption = TAppConnectionOptionBase & {
   app: AppConnection.Supabase;
 };
@@ -164,8 +168,24 @@ export type TOktaConnectionOption = TAppConnectionOptionBase & {
   app: AppConnection.Okta;
 };
 
+export type TLaravelForgeConnectionOption = TAppConnectionOptionBase & {
+  app: AppConnection.LaravelForge;
+};
+
+export type TNorthflankConnectionOption = TAppConnectionOptionBase & {
+  app: AppConnection.Northflank;
+};
+
 export type TAzureAdCsConnectionOption = TAppConnectionOptionBase & {
   app: AppConnection.AzureADCS;
+};
+
+export type TRedisConnectionOption = TAppConnectionOptionBase & {
+  app: AppConnection.Redis;
+};
+
+export type TDNSMadeEasyConnectionOption = TAppConnectionOptionBase & {
+  app: AppConnection.DNSMadeEasy;
 };
 
 export type TAppConnectionOption =
@@ -205,8 +225,12 @@ export type TAppConnectionOption =
   | TSupabaseConnectionOption
   | TDigitalOceanConnectionOption
   | TNetlifyConnectionOption
+  | TNorthflankConnectionOption
   | TOktaConnectionOption
-  | TAzureAdCsConnectionOption;
+  | TAzureAdCsConnectionOption
+  | TLaravelForgeConnectionOption
+  | TChefConnectionOption
+  | TDNSMadeEasyConnectionOption;
 
 export type TAppConnectionOptionMap = {
   [AppConnection.AWS]: TAwsConnectionOption;
@@ -238,6 +262,7 @@ export type TAppConnectionOptionMap = {
   [AppConnection.Flyio]: TFlyioConnectionOption;
   [AppConnection.GitLab]: TGitlabConnectionOption;
   [AppConnection.Cloudflare]: TCloudflareConnectionOption;
+  [AppConnection.DNSMadeEasy]: TDNSMadeEasyConnectionOption;
   [AppConnection.Bitbucket]: TBitbucketConnectionOption;
   [AppConnection.Zabbix]: TZabbixConnectionOption;
   [AppConnection.Railway]: TRailwayConnectionOption;
@@ -245,6 +270,10 @@ export type TAppConnectionOptionMap = {
   [AppConnection.Supabase]: TSupabaseConnectionOption;
   [AppConnection.DigitalOcean]: TDigitalOceanConnectionOption;
   [AppConnection.Netlify]: TNetlifyConnectionOption;
+  [AppConnection.Northflank]: TNorthflankConnectionOption;
   [AppConnection.Okta]: TOktaConnectionOption;
   [AppConnection.AzureADCS]: TAzureAdCsConnectionOption;
+  [AppConnection.Redis]: TRedisConnectionOption;
+  [AppConnection.LaravelForge]: TLaravelForgeConnectionOption;
+  [AppConnection.Chef]: TChefConnectionOption;
 };

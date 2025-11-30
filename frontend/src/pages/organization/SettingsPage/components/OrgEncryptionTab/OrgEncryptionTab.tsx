@@ -51,30 +51,28 @@ export const OrgEncryptionTab = withPermission(
         kmsId: string;
       };
 
-      try {
-        await removeExternalKms(kmsId);
+      await removeExternalKms(kmsId);
 
-        createNotification({
-          text: "Successfully deleted external KMS",
-          type: "success"
-        });
+      createNotification({
+        text: "Successfully deleted external KMS",
+        type: "success"
+      });
 
-        handlePopUpToggle("removeExternalKms", false);
-      } catch (err) {
-        console.error(err);
-      }
+      handlePopUpToggle("removeExternalKms", false);
     };
 
     return (
       <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
         <div className="flex justify-between">
-          <p className="text-xl font-semibold text-mineshaft-100">Key Management System (KMS)</p>
+          <p className="text-xl font-medium text-mineshaft-100">Key Management System (KMS)</p>
           <OrgPermissionCan I={OrgPermissionActions.Create} an={OrgPermissionSubjects.Kms}>
             {(isAllowed) => (
               <Button
                 onClick={() => {
                   if (subscription && !subscription?.externalKms) {
-                    handlePopUpOpen("upgradePlan");
+                    handlePopUpOpen("upgradePlan", {
+                      isEnterpriseFeature: true
+                    });
                     return;
                   }
                   handlePopUpOpen("addExternalKms");
@@ -123,7 +121,8 @@ export const OrgEncryptionTab = withPermission(
         <UpgradePlanModal
           isOpen={popUp.upgradePlan.isOpen}
           onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-          text="You can configure external KMS if you switch to Infisical's Enterprise plan."
+          text="Your current plan does not include access to external KMS. To unlock this feature, please upgrade to Infisical Enterprise plan."
+          isEnterpriseFeature={popUp.upgradePlan.data?.isEnterpriseFeature}
         />
         <AddExternalKmsForm
           isOpen={popUp.addExternalKms.isOpen}

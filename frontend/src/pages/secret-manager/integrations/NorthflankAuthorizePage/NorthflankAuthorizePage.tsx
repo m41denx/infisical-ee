@@ -2,14 +2,14 @@ import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import { Button, Card, CardTitle, FormControl, Input } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useSaveIntegrationAccessToken } from "@app/hooks/api";
 
 export const NorthflankAuthorizePage = () => {
   const navigate = useNavigate();
   const { mutateAsync } = useSaveIntegrationAccessToken();
-  const { currentWorkspace } = useWorkspace();
-
+  const { currentProject } = useProject();
+  const { currentOrg } = useOrganization();
   const [apiKey, setApiKey] = useState("");
   const [apiKeyErrorText, setApiKeyErrorText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -25,7 +25,7 @@ export const NorthflankAuthorizePage = () => {
       setIsLoading(true);
 
       const integrationAuth = await mutateAsync({
-        workspaceId: currentWorkspace.id,
+        workspaceId: currentProject.id,
         integration: "northflank",
         accessToken: apiKey
       });
@@ -33,9 +33,10 @@ export const NorthflankAuthorizePage = () => {
       setIsLoading(false);
 
       navigate({
-        to: "/projects/secret-management/$projectId/integrations/northflank/create",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/integrations/northflank/create",
         params: {
-          projectId: currentWorkspace.id
+          orgId: currentOrg.id,
+          projectId: currentProject.id
         },
         search: {
           integrationAuthId: integrationAuth.id

@@ -41,15 +41,17 @@ export type TCreateProjectDTO = {
   actor: ActorType;
   actorAuthMethod: ActorAuthMethod;
   actorId: string;
-  actorOrgId?: string;
-  workspaceName: string;
-  workspaceDescription?: string;
+  actorOrgId: string;
+  projectName: string;
+  projectDescription?: string;
   slug?: string;
   kmsKeyId?: string;
   createDefaultEnvs?: boolean;
   template?: string;
+  pitVersionLimit?: number;
   tx?: Knex;
   type?: ProjectType;
+  hasDeleteProtection?: boolean;
 };
 
 export type TDeleteProjectBySlugDTO = {
@@ -78,7 +80,7 @@ export type TUpdateProjectVersionLimitDTO = {
 
 export type TUpdateAuditLogsRetentionDTO = {
   auditLogsRetentionDays: number;
-  workspaceSlug: string;
+  filter: Filter;
 } & Omit<TProjectPermission, "projectId">;
 
 export type TUpdateProjectNameDTO = {
@@ -90,6 +92,7 @@ export type TUpdateProjectDTO = {
   update: {
     name?: string;
     description?: string;
+    pitVersionLimit?: number;
     autoCapitalization?: boolean;
     hasDeleteProtection?: boolean;
     defaultProduct?: ProjectType;
@@ -140,6 +143,7 @@ export type TListProjectCertsDTO = {
   limit: number;
   friendlyName?: string;
   commonName?: string;
+  forPkiSync?: boolean;
 } & Omit<TProjectPermission, "projectId">;
 
 export type TListProjectAlertsDTO = TProjectPermission;
@@ -182,8 +186,10 @@ export type TUpdateProjectWorkflowIntegration = (
       integration: WorkflowIntegration.SLACK;
       isAccessRequestNotificationEnabled: boolean;
       isSecretRequestNotificationEnabled: boolean;
+      isSecretSyncErrorNotificationEnabled: boolean;
       accessRequestChannels?: string;
       secretRequestChannels?: string;
+      secretSyncErrorChannels?: string;
     }
   | {
       integrationId: string;
@@ -221,6 +227,7 @@ export type TSearchProjectsDTO = {
   limit?: number;
   offset?: number;
   orderBy?: SearchProjectSortBy;
+  projectIds?: string[];
   orderDirection?: SortDirection;
 };
 

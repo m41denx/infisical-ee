@@ -1,3 +1,4 @@
+import { ProjectType } from "../projects/types";
 import { EventType, UserAgentType } from "./enums";
 
 export const secretEvents: EventType[] = [
@@ -20,7 +21,7 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.CREATE_SECRET]: "Create secret",
   [EventType.UPDATE_SECRET]: "Update secret",
   [EventType.DELETE_SECRET]: "Delete secret",
-  [EventType.GET_WORKSPACE_KEY]: "Read project key",
+  [EventType.GET_PROJECT_KEY]: "Read project key",
   [EventType.AUTHORIZE_INTEGRATION]: "Authorize integration",
   [EventType.UPDATE_INTEGRATION_AUTH]: "Update integration auth",
   [EventType.UNAUTHORIZE_INTEGRATION]: "Unauthorize integration",
@@ -42,11 +43,13 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.REVOKE_IDENTITY_UNIVERSAL_AUTH_CLIENT_SECRET]: "Revoke universal auth client secret",
   [EventType.CLEAR_IDENTITY_UNIVERSAL_AUTH_LOCKOUTS]: "Clear universal auth lockouts",
   [EventType.GET_IDENTITY_UNIVERSAL_AUTH_CLIENT_SECRETS]: "Get universal auth client secrets",
+  [EventType.GET_IDENTITY_UNIVERSAL_AUTH_CLIENT_SECRET_BY_ID]:
+    "Get universal auth client secret by id",
   [EventType.CREATE_ENVIRONMENT]: "Create environment",
   [EventType.UPDATE_ENVIRONMENT]: "Update environment",
   [EventType.DELETE_ENVIRONMENT]: "Delete environment",
-  [EventType.ADD_WORKSPACE_MEMBER]: "Add member",
-  [EventType.REMOVE_WORKSPACE_MEMBER]: "Remove member",
+  [EventType.ADD_PROJECT_MEMBER]: "Add member",
+  [EventType.REMOVE_PROJECT_MEMBER]: "Remove member",
   [EventType.CREATE_FOLDER]: "Create folder",
   [EventType.UPDATE_FOLDER]: "Update folder",
   [EventType.DELETE_FOLDER]: "Delete folder",
@@ -58,8 +61,8 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.CREATE_SECRET_IMPORT]: "Create secret import",
   [EventType.UPDATE_SECRET_IMPORT]: "Update secret import",
   [EventType.DELETE_SECRET_IMPORT]: "Delete secret import",
-  [EventType.UPDATE_USER_WORKSPACE_DENIED_PERMISSIONS]: "Update denied permissions",
-  [EventType.UPDATE_USER_WORKSPACE_ROLE]: "Update user role",
+  [EventType.UPDATE_USER_PROJECT_DENIED_PERMISSIONS]: "Update denied permissions",
+  [EventType.UPDATE_USER_PROJECT_ROLE]: "Update user role",
   [EventType.CREATE_CA]: "Create CA",
   [EventType.GET_CA]: "Get CA",
   [EventType.UPDATE_CA]: "Update CA",
@@ -132,6 +135,8 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.CREATE_APP_CONNECTION]: "Create App Connection",
   [EventType.UPDATE_APP_CONNECTION]: "Update App Connection",
   [EventType.DELETE_APP_CONNECTION]: "Delete App Connection",
+  [EventType.GET_APP_CONNECTION_USAGE]: "Get App Connection Usage",
+  [EventType.MIGRATE_APP_CONNECTION]: "Migrate App Connection",
   [EventType.GET_SECRET_SYNCS]: "List secret syncs",
   [EventType.GET_SECRET_SYNC]: "Get Secret Sync",
   [EventType.CREATE_SECRET_SYNC]: "Create Secret Sync",
@@ -140,6 +145,14 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.SECRET_SYNC_SYNC_SECRETS]: "Secret Sync synced secrets",
   [EventType.SECRET_SYNC_IMPORT_SECRETS]: "Secret Sync imported secrets",
   [EventType.SECRET_SYNC_REMOVE_SECRETS]: "Secret Sync removed secrets",
+  [EventType.GET_PKI_SYNCS]: "List PKI syncs",
+  [EventType.GET_PKI_SYNC]: "Get PKI sync",
+  [EventType.CREATE_PKI_SYNC]: "Create PKI sync",
+  [EventType.UPDATE_PKI_SYNC]: "Update PKI sync",
+  [EventType.DELETE_PKI_SYNC]: "Delete PKI sync",
+  [EventType.PKI_SYNC_SYNC_CERTIFICATES]: "PKI Sync synced certificates",
+  [EventType.PKI_SYNC_IMPORT_CERTIFICATES]: "PKI Sync imported certificates",
+  [EventType.PKI_SYNC_REMOVE_CERTIFICATES]: "PKI Sync removed certificates",
   [EventType.OIDC_GROUP_MEMBERSHIP_MAPPING_ASSIGN_USER]:
     "OIDC group membership mapping assigned user to groups",
   [EventType.OIDC_GROUP_MEMBERSHIP_MAPPING_REMOVE_USER]:
@@ -192,6 +205,7 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.UPDATE_IDENTITY_LDAP_AUTH]: "Updated LDAP Auth for identity",
   [EventType.GET_IDENTITY_LDAP_AUTH]: "Retrieved LDAP Auth for identity",
   [EventType.REVOKE_IDENTITY_LDAP_AUTH]: "Revoked LDAP Auth for identity",
+  [EventType.CLEAR_IDENTITY_LDAP_AUTH_LOCKOUTS]: "Clear LDAP Auth lockouts",
 
   [EventType.SECRET_SCANNING_DATA_SOURCE_LIST]: "List Secret Scanning Data Sources",
   [EventType.SECRET_SCANNING_DATA_SOURCE_CREATE]: "Create Secret Scanning Data Source",
@@ -219,7 +233,65 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.UPDATE_ORG]: "Update Organization",
   [EventType.CREATE_PROJECT]: "Create Project",
   [EventType.UPDATE_PROJECT]: "Update Project",
-  [EventType.DELETE_PROJECT]: "Delete Project"
+  [EventType.DELETE_PROJECT]: "Delete Project",
+
+  [EventType.CREATE_SECRET_REMINDER]: "Create Secret Reminder",
+  [EventType.GET_SECRET_REMINDER]: "Get Secret Reminder",
+  [EventType.DELETE_SECRET_REMINDER]: "Delete Secret Reminder",
+
+  [EventType.DASHBOARD_LIST_SECRETS]: "Dashboard List Secrets",
+  [EventType.DASHBOARD_GET_SECRET_VALUE]: "Dashboard Get Secret Value",
+  [EventType.DASHBOARD_GET_SECRET_VERSION_VALUE]: "Dashboard Get Secret Version Value",
+
+  [EventType.CREATE_PROJECT_ROLE]: "Create Project Role",
+  [EventType.UPDATE_PROJECT_ROLE]: "Update Project Role",
+  [EventType.DELETE_PROJECT_ROLE]: "Delete Project Role",
+
+  [EventType.CREATE_ORG_ROLE]: "Create Org Role",
+  [EventType.UPDATE_ORG_ROLE]: "Update Org Role",
+  [EventType.DELETE_ORG_ROLE]: "Delete Org Role",
+
+  [EventType.CREATE_SUB_ORGANIZATION]: "Create Sub Organization",
+  [EventType.UPDATE_SUB_ORGANIZATION]: "Update Sub Organization",
+
+  [EventType.CREATE_IDENTITY_ORG_MEMBERSHIP]: "Create Identity Org Membership",
+  [EventType.UPDATE_IDENTITY_ORG_MEMBERSHIP]: "Update Identity Org Membership",
+  [EventType.DELETE_IDENTITY_ORG_MEMBERSHIP]: "Delete Identity Org Membership",
+
+  [EventType.CREATE_IDENTITY_PROJECT_MEMBERSHIP]: "Create Identity Project Membership",
+  [EventType.UPDATE_IDENTITY_PROJECT_MEMBERSHIP]: "Update Identity Project Membership",
+  [EventType.DELETE_IDENTITY_PROJECT_MEMBERSHIP]: "Delete Identity Project Membership",
+
+  [EventType.PAM_SESSION_CREDENTIALS_GET]: "Get PAM Session Credentials",
+  [EventType.PAM_SESSION_START]: "Start PAM Session",
+  [EventType.PAM_SESSION_LOGS_UPDATE]: "Update PAM Session Logs",
+  [EventType.PAM_SESSION_END]: "End PAM Session",
+  [EventType.PAM_SESSION_GET]: "Get PAM Session",
+  [EventType.PAM_SESSION_LIST]: "List PAM Sessions",
+  [EventType.PAM_FOLDER_CREATE]: "Create PAM Folder",
+  [EventType.PAM_FOLDER_UPDATE]: "Update PAM Folder",
+  [EventType.PAM_FOLDER_DELETE]: "Delete PAM Folder",
+  [EventType.PAM_ACCOUNT_LIST]: "List PAM Accounts",
+  [EventType.PAM_ACCOUNT_ACCESS]: "Access PAM Account",
+  [EventType.PAM_ACCOUNT_CREATE]: "Create PAM Account",
+  [EventType.PAM_ACCOUNT_UPDATE]: "Update PAM Account",
+  [EventType.PAM_ACCOUNT_DELETE]: "Delete PAM Account",
+  [EventType.PAM_RESOURCE_LIST]: "List PAM Resources",
+  [EventType.PAM_RESOURCE_GET]: "Get PAM Resource",
+  [EventType.PAM_RESOURCE_CREATE]: "Create PAM Resource",
+  [EventType.PAM_RESOURCE_UPDATE]: "Update PAM Resource",
+  [EventType.PAM_RESOURCE_DELETE]: "Delete PAM Resource",
+
+  [EventType.CREATE_CERTIFICATE_PROFILE]: "Create Certificate Profile",
+  [EventType.UPDATE_CERTIFICATE_PROFILE]: "Update Certificate Profile",
+  [EventType.DELETE_CERTIFICATE_PROFILE]: "Delete Certificate Profile",
+  [EventType.GET_CERTIFICATE_PROFILE]: "Get Certificate Profile",
+  [EventType.LIST_CERTIFICATE_PROFILES]: "List Certificate Profiles",
+  [EventType.ISSUE_CERTIFICATE_FROM_PROFILE]: "Issue Certificate From Profile",
+  [EventType.SIGN_CERTIFICATE_FROM_PROFILE]: "Sign Certificate From Profile",
+  [EventType.ORDER_CERTIFICATE_FROM_PROFILE]: "Order Certificate From Profile",
+  [EventType.GET_CERTIFICATE_PROFILE_LATEST_ACTIVE_BUNDLE]:
+    "Get Certificate Profile Latest Active Bundle"
 };
 
 export const userAgentTypeToNameMap: { [K in UserAgentType]: string } = {
@@ -230,4 +302,37 @@ export const userAgentTypeToNameMap: { [K in UserAgentType]: string } = {
   [UserAgentType.NODE_SDK]: "InfisicalNodeSDK",
   [UserAgentType.PYTHON_SDK]: "InfisicalPythonSDK",
   [UserAgentType.OTHER]: "Other"
+};
+
+const sharedProjectEvents = [
+  EventType.ADD_PROJECT_MEMBER,
+  EventType.REMOVE_PROJECT_MEMBER,
+  EventType.CREATE_PROJECT_ROLE,
+  EventType.UPDATE_PROJECT_ROLE,
+  EventType.DELETE_PROJECT_ROLE
+];
+
+export const projectToEventsMap: Partial<Record<ProjectType, EventType[]>> = {
+  [ProjectType.PAM]: [
+    ...sharedProjectEvents,
+    EventType.PAM_SESSION_CREDENTIALS_GET,
+    EventType.PAM_SESSION_START,
+    EventType.PAM_SESSION_LOGS_UPDATE,
+    EventType.PAM_SESSION_END,
+    EventType.PAM_SESSION_GET,
+    EventType.PAM_SESSION_LIST,
+    EventType.PAM_FOLDER_CREATE,
+    EventType.PAM_FOLDER_UPDATE,
+    EventType.PAM_FOLDER_DELETE,
+    EventType.PAM_ACCOUNT_LIST,
+    EventType.PAM_ACCOUNT_ACCESS,
+    EventType.PAM_ACCOUNT_CREATE,
+    EventType.PAM_ACCOUNT_UPDATE,
+    EventType.PAM_ACCOUNT_DELETE,
+    EventType.PAM_RESOURCE_LIST,
+    EventType.PAM_RESOURCE_GET,
+    EventType.PAM_RESOURCE_CREATE,
+    EventType.PAM_RESOURCE_UPDATE,
+    EventType.PAM_RESOURCE_DELETE
+  ]
 };

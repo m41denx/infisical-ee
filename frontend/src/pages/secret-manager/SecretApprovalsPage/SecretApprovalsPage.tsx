@@ -2,9 +2,10 @@ import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader, Tab, TabList, TabPanel, Tabs } from "@app/components/v2";
-import { Badge } from "@app/components/v2/Badge";
-import { useWorkspace } from "@app/context";
+import { Badge } from "@app/components/v3";
+import { useProject } from "@app/context";
 import { useGetAccessRequestsCount, useGetSecretApprovalRequestCount } from "@app/hooks/api";
+import { ProjectType } from "@app/hooks/api/projects/types";
 
 import { AccessApprovalRequest } from "./components/AccessApprovalRequest";
 import { ApprovalPolicyList } from "./components/ApprovalPolicyList";
@@ -20,11 +21,10 @@ enum TabSection {
 
 export const SecretApprovalsPage = () => {
   const { t } = useTranslation();
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
-  const projectSlug = currentWorkspace?.slug || "";
+  const { currentProject, projectId } = useProject();
+  const projectSlug = currentProject?.slug || "";
   const { data: secretApprovalReqCount } = useGetSecretApprovalRequestCount({
-    workspaceId: projectId
+    projectId
   });
   const { data: accessApprovalRequestCount } = useGetAccessRequestsCount({ projectSlug });
   const defaultTab =
@@ -39,26 +39,33 @@ export const SecretApprovalsPage = () => {
         <meta property="og:title" content={String(t("approval.og-title"))} />
         <meta name="og:description" content={String(t("approval.og-description"))} />
       </Helmet>
-      <div className="container mx-auto h-full w-full max-w-7xl bg-bunker-800 text-white">
+      <div className="mx-auto h-full w-full max-w-8xl bg-bunker-800 text-white">
         <PageHeader
+          scope={ProjectType.SecretManager}
           title="Approval Workflows"
           description="Create approval policies for any modifications to secrets in sensitive environments and folders."
         />
-        <Tabs defaultValue={defaultTab}>
+        <Tabs orientation="vertical" defaultValue={defaultTab}>
           <TabList>
-            <Tab value={TabSection.SecretApprovalRequests}>
+            <Tab variant="project" value={TabSection.SecretApprovalRequests}>
               Change Requests
               {Boolean(secretApprovalReqCount?.open) && (
-                <Badge className="ml-2">{secretApprovalReqCount?.open}</Badge>
+                <Badge variant="warning" isSquare className="ml-2">
+                  {secretApprovalReqCount?.open}
+                </Badge>
               )}
             </Tab>
-            <Tab value={TabSection.ResourceApprovalRequests}>
+            <Tab variant="project" value={TabSection.ResourceApprovalRequests}>
               Access Requests
               {Boolean(accessApprovalRequestCount?.pendingCount) && (
-                <Badge className="ml-2">{accessApprovalRequestCount?.pendingCount}</Badge>
+                <Badge variant="warning" isSquare className="ml-2">
+                  {accessApprovalRequestCount?.pendingCount}
+                </Badge>
               )}
             </Tab>
-            <Tab value={TabSection.Policies}>Policies</Tab>
+            <Tab variant="project" value={TabSection.Policies}>
+              Policies
+            </Tab>
           </TabList>
           <TabPanel value={TabSection.SecretApprovalRequests}>
             <SecretApprovalRequest />
@@ -67,7 +74,7 @@ export const SecretApprovalsPage = () => {
             <AccessApprovalRequest projectId={projectId} projectSlug={projectSlug} />
           </TabPanel>
           <TabPanel value={TabSection.Policies}>
-            <ApprovalPolicyList workspaceId={projectId} />
+            <ApprovalPolicyList projectId={projectId} />
           </TabPanel>
         </Tabs>
       </div>

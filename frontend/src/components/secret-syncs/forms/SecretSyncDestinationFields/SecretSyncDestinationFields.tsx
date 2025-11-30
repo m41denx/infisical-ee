@@ -12,6 +12,7 @@ import { AzureKeyVaultSyncFields } from "./AzureKeyVaultSyncFields";
 import { BitbucketSyncFields } from "./BitbucketSyncFields";
 import { CamundaSyncFields } from "./CamundaSyncFields";
 import { ChecklySyncFields } from "./ChecklySyncFields";
+import { ChefSyncFields } from "./ChefSyncFields";
 import { CloudflarePagesSyncFields } from "./CloudflarePagesSyncFields";
 import { CloudflareWorkersSyncFields } from "./CloudflareWorkersSyncFields";
 import { DatabricksSyncFields } from "./DatabricksSyncFields";
@@ -23,7 +24,9 @@ import { GitLabSyncFields } from "./GitLabSyncFields";
 import { HCVaultSyncFields } from "./HCVaultSyncFields";
 import { HerokuSyncFields } from "./HerokuSyncFields";
 import { HumanitecSyncFields } from "./HumanitecSyncFields";
+import { LaravelForgeSyncFields } from "./LaravelForgeSyncFields";
 import { NetlifySyncFields } from "./NetlifySyncFields";
+import { NorthflankSyncFields } from "./NorthflankSyncFields";
 import { OCIVaultSyncFields } from "./OCIVaultSyncFields";
 import { RailwaySyncFields } from "./RailwaySyncFields";
 import { RenderSyncFields } from "./RenderSyncFields";
@@ -100,6 +103,12 @@ export const SecretSyncDestinationFields = () => {
       return <NetlifySyncFields />;
     case SecretSync.Bitbucket:
       return <BitbucketSyncFields />;
+    case SecretSync.LaravelForge:
+      return <LaravelForgeSyncFields />;
+    case SecretSync.Chef:
+      return <ChefSyncFields />;
+    case SecretSync.Northflank:
+      return <NorthflankSyncFields />;
     default:
       throw new Error(`Unhandled Destination Config Field: ${destination}`);
   }

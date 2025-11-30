@@ -2,16 +2,17 @@ import { useEffect } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useAuthorizeIntegration } from "@app/hooks/api";
 
 export const BitbucketOauthCallbackPage = () => {
   const navigate = useNavigate();
   const { mutateAsync } = useAuthorizeIntegration();
+  const { currentOrg } = useOrganization();
   const { code, state } = useSearch({
     from: ROUTE_PATHS.SecretManager.Integratons.BitbucketOauthCallbackPage.id
   });
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
 
   useEffect(() => {
     (async () => {
@@ -21,15 +22,16 @@ export const BitbucketOauthCallbackPage = () => {
         localStorage.removeItem("latestCSRFToken");
 
         const integrationAuth = await mutateAsync({
-          workspaceId: currentWorkspace.id,
+          workspaceId: currentProject.id,
           code: code as string,
           integration: "bitbucket"
         });
 
         navigate({
-          to: "/projects/secret-management/$projectId/integrations/bitbucket/create",
+          to: "/organizations/$orgId/projects/secret-management/$projectId/integrations/bitbucket/create",
           params: {
-            projectId: currentWorkspace.id
+            orgId: currentOrg.id,
+            projectId: currentProject.id
           },
           search: {
             integrationAuthId: integrationAuth.id

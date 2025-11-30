@@ -16,6 +16,7 @@ import {
   FormControl,
   Input,
   ModalClose,
+  SecretInput,
   Select,
   SelectItem,
   Tooltip
@@ -25,7 +26,11 @@ import {
   OrgGatewayPermissionActions,
   OrgPermissionSubjects
 } from "@app/context/OrgPermissionContext/types";
-import { APP_CONNECTION_MAP, getAppConnectionMethodDetails } from "@app/helpers/appConnections";
+import {
+  APP_CONNECTION_MAP,
+  getAppConnectionMethodDetails,
+  useGetAppConnectionOauthReturnUrl
+} from "@app/helpers/appConnections";
 import { isInfisicalCloud } from "@app/helpers/platform";
 import { gatewaysQueryKeys } from "@app/hooks/api";
 import {
@@ -35,6 +40,7 @@ import {
 } from "@app/hooks/api/appConnections";
 import { AppConnection } from "@app/hooks/api/appConnections/enums";
 
+import { GitHubFormData } from "../../../OauthCallbackPage/OauthCallbackPage.types";
 import {
   genericAppConnectionFieldsSchema,
   GenericAppConnectionsFields
@@ -42,28 +48,59 @@ import {
 
 type Props = {
   appConnection?: TGitHubConnection;
+  projectId: string | undefined | null;
+  onSubmit: (formData: PatSchemaForm) => Promise<void>;
 };
 
-const formSchema = genericAppConnectionFieldsSchema.extend({
+const rootSchema = genericAppConnectionFieldsSchema.extend({
   app: z.literal(AppConnection.GitHub),
-  method: z.nativeEnum(GitHubConnectionMethod),
-  credentials: z
-    .union([
-      z.object({
-        instanceType: z.literal("cloud").optional(),
-        host: z.string().optional()
-      }),
-      z.object({
-        instanceType: z.literal("server"),
-        host: z.string().min(1, "Required")
-      })
-    ])
-    .optional()
+  method: z.nativeEnum(GitHubConnectionMethod)
 });
+
+const baseCredentialsSchema = z.union([
+  z.object({
+    instanceType: z.literal("server"),
+    host: z.string().min(1, "Host is required for server instance type")
+  }),
+  z.object({
+    instanceType: z.literal("cloud").optional(),
+    host: z.string().optional()
+  })
+]);
+
+const appSchema = rootSchema.extend({
+  method: z.literal(GitHubConnectionMethod.App),
+  credentials: baseCredentialsSchema
+});
+
+const oauthSchema = rootSchema.extend({
+  method: z.literal(GitHubConnectionMethod.OAuth),
+  credentials: baseCredentialsSchema
+});
+
+const patSchema = rootSchema.extend({
+  method: z.literal(GitHubConnectionMethod.Pat),
+  credentials: z.union([
+    z.object({
+      instanceType: z.literal("server"),
+      host: z.string().min(1, "Host is required for server instance type"),
+      personalAccessToken: z.string().min(1, "Personal Access Token is required")
+    }),
+    z.object({
+      instanceType: z.literal("cloud").optional(),
+      host: z.string().optional(),
+      personalAccessToken: z.string().min(1, "Personal Access Token is required")
+    })
+  ])
+});
+
+type PatSchemaForm = z.infer<typeof patSchema>;
+
+const formSchema = z.discriminatedUnion("method", [appSchema, oauthSchema, patSchema]);
 
 type FormData = z.infer<typeof formSchema>;
 
-export const GitHubConnectionForm = ({ appConnection }: Props) => {
+export const GitHubConnectionForm = ({ appConnection, projectId, onSubmit }: Props) => {
   const isUpdate = Boolean(appConnection);
   const [isRedirecting, setIsRedirecting] = useState(false);
 
@@ -98,13 +135,26 @@ export const GitHubConnectionForm = ({ appConnection }: Props) => {
   const selectedMethod = watch("method");
   const instanceType = watch("credentials.instanceType");
 
-  const onSubmit = (formData: FormData) => {
+  const returnUrl = useGetAppConnectionOauthReturnUrl();
+
+  const submitHandler = async (formData: FormData) => {
+    if (formData.method === GitHubConnectionMethod.Pat) {
+      await onSubmit(formData);
+      return;
+    }
+
     setIsRedirecting(true);
     const state = crypto.randomBytes(16).toString("hex");
     localStorage.setItem("latestCSRFToken", state);
     localStorage.setItem(
       "githubConnectionFormData",
-      JSON.stringify({ ...formData, connectionId: appConnection?.id })
+      JSON.stringify({
+        ...formData,
+        credentials: formData.credentials as TGitHubConnection["credentials"],
+        connectionId: appConnection?.id,
+        projectId,
+        returnUrl
+      } as GitHubFormData)
     );
 
     const githubHost =
@@ -137,15 +187,26 @@ export const GitHubConnectionForm = ({ appConnection }: Props) => {
     case GitHubConnectionMethod.App:
       isMissingConfig = !appClientSlug;
       break;
+    case GitHubConnectionMethod.Pat:
+      isMissingConfig = false;
+      break;
     default:
       throw new Error(`Unhandled GitHub Connection method: ${selectedMethod}`);
   }
 
   const methodDetails = getAppConnectionMethodDetails(selectedMethod);
 
+  const getButtonText = () => {
+    if (selectedMethod === GitHubConnectionMethod.Pat) {
+      return isUpdate ? "Update Connection" : "Create Connection";
+    }
+
+    return isUpdate ? "Reconnect to GitHub" : "Connect to GitHub";
+  };
+
   return (
     <FormProvider {...form}>
-      <form onSubmit={handleSubmit(onSubmit)}>
+      <form onSubmit={handleSubmit(submitHandler)}>
         {!isUpdate && <GenericAppConnectionsFields />}
         <Controller
           name="method"
@@ -187,6 +248,26 @@ export const GitHubConnectionForm = ({ appConnection }: Props) => {
             </FormControl>
           )}
         />
+        {selectedMethod === GitHubConnectionMethod.Pat && (
+          <Controller
+            name="credentials.personalAccessToken"
+            control={control}
+            shouldUnregister
+            render={({ field: { value, onChange }, fieldState: { error } }) => (
+              <FormControl
+                errorText={error?.message}
+                isError={Boolean(error?.message)}
+                label="Personal Access Token"
+              >
+                <SecretInput
+                  containerClassName="text-gray-400 group-focus-within:!border-primary-400/50 border border-mineshaft-500 bg-mineshaft-900 px-2.5 py-1.5"
+                  value={value}
+                  onChange={(e) => onChange(e.target.value)}
+                />
+              </FormControl>
+            )}
+          />
+        )}
         <Accordion type="single" collapsible className="w-full">
           <AccordionItem value="enterprise-options" className="data-[state=open]:border-none">
             <AccordionTrigger className="h-fit flex-none pl-1 text-sm">
@@ -296,7 +377,7 @@ export const GitHubConnectionForm = ({ appConnection }: Props) => {
             isLoading={isSubmitting || isRedirecting}
             isDisabled={isSubmitting || (!isUpdate && !isDirty) || isMissingConfig || isRedirecting}
           >
-            {isUpdate ? "Reconnect to GitHub" : "Connect to GitHub"}
+            {getButtonText()}
           </Button>
           <ModalClose asChild>
             <Button colorSchema="secondary" variant="plain">

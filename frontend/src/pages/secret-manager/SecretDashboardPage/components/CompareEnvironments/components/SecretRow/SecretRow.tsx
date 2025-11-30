@@ -17,7 +17,7 @@ import {
 } from "@app/context/ProjectPermissionContext/types";
 import { useToggle } from "@app/hooks";
 import { SecretV3RawSanitized } from "@app/hooks/api/secrets/types";
-import { WorkspaceEnv } from "@app/hooks/api/types";
+import { ProjectEnv } from "@app/hooks/api/types";
 import { HIDDEN_SECRET_VALUE } from "@app/pages/secret-manager/SecretDashboardPage/components/SecretListView/SecretItem";
 
 import { EnvironmentStatus, EnvironmentStatusCell, ResourceNameCell } from "../shared";
@@ -32,7 +32,7 @@ type Props = {
   getImportedSecretByKey: (
     env: string,
     secretName: string
-  ) => { secret?: SecretV3RawSanitized; environmentInfo?: WorkspaceEnv } | undefined;
+  ) => { secret?: SecretV3RawSanitized; environmentInfo?: ProjectEnv } | undefined;
   colWidth: number;
   tableWidth: number;
 };
@@ -143,7 +143,7 @@ export const SecretRow = ({
                       <th style={{ padding: "0.5rem 1rem" }} className="border-none">
                         Value
                       </th>
-                      <div className="absolute right-3 top-[4px] ml-auto mr-1 mt-1 w-min">
+                      <div className="absolute top-[4px] right-3 mt-1 mr-1 ml-auto w-min">
                         <Tooltip
                           side="left"
                           content={isSecretVisible ? "Hide Values" : "Reveal Values"}
@@ -173,7 +173,7 @@ export const SecretRow = ({
                           className="h-full hover:bg-mineshaft-700/70"
                         >
                           <td
-                            className="h-[1px] border-none !p-0"
+                            className="h-px border-none p-0!"
                             style={{
                               width: colWidth
                             }}
@@ -183,7 +183,7 @@ export const SecretRow = ({
                               style={{
                                 width: colWidth
                               }}
-                              className="flex h-full min-h-[40px] w-[8rem] items-center space-x-2 border-r border-mineshaft-500 px-4"
+                              className="flex h-full min-h-[40px] w-32 items-center space-x-2 border-r border-mineshaft-500 px-4"
                             >
                               <span className="truncate">{name}</span>
                               {isImportedSecret && (

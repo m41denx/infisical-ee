@@ -14,7 +14,7 @@ import {
   IconButton
 } from "@app/components/v2";
 import { CopyButton } from "@app/components/v2/CopyButton";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { ProjectPermissionActions, ProjectPermissionSub, useProject } from "@app/context";
 import { getProjectBaseURL } from "@app/helpers/project";
 import { usePopUp } from "@app/hooks";
 import { useDeleteGroupFromWorkspace } from "@app/hooks/api";
@@ -31,48 +31,37 @@ export const GroupDetailsSection = ({ groupMembership }: Props) => {
   ] as const);
 
   const { mutateAsync: deleteMutateAsync } = useDeleteGroupFromWorkspace();
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const navigate = useNavigate();
 
   const onRemoveGroupSubmit = async () => {
-    try {
-      await deleteMutateAsync({
-        groupId: groupMembership.group.id,
-        projectId: currentWorkspace.id
-      });
+    await deleteMutateAsync({
+      groupId: groupMembership.group.id,
+      projectId: currentProject.id
+    });
 
-      createNotification({
-        text: "Successfully removed group from project",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully removed group from project",
+      type: "success"
+    });
 
-      navigate({
-        to: `${getProjectBaseURL(currentWorkspace.type)}/access-management`,
-        params: {
-          projectId: currentWorkspace.id
-        },
-        search: {
-          selectedTab: "groups"
-        }
-      });
+    navigate({
+      to: `${getProjectBaseURL(currentProject.type)}/access-management`,
+      params: {
+        projectId: currentProject.id
+      },
+      search: {
+        selectedTab: "groups"
+      }
+    });
 
-      handlePopUpClose("deleteGroup");
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to remove group from project";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+    handlePopUpClose("deleteGroup");
   };
 
   return (
     <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-semibold text-mineshaft-100">Group Details</h3>
+        <h3 className="text-lg font-medium text-mineshaft-100">Group Details</h3>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <IconButton ariaLabel="Options" colorSchema="secondary" className="w-6" variant="plain">
@@ -101,7 +90,7 @@ export const GroupDetailsSection = ({ groupMembership }: Props) => {
       </div>
       <div className="pt-4">
         <div className="mb-4">
-          <p className="text-sm font-semibold text-mineshaft-300">Group ID</p>
+          <p className="text-sm font-medium text-mineshaft-300">Group ID</p>
           <div className="group flex items-center gap-2">
             <p className="text-sm text-mineshaft-300">{groupMembership.group.id}</p>
             <CopyButton
@@ -113,18 +102,18 @@ export const GroupDetailsSection = ({ groupMembership }: Props) => {
           </div>
         </div>
         <div className="mb-4">
-          <p className="text-sm font-semibold text-mineshaft-300">Name</p>
+          <p className="text-sm font-medium text-mineshaft-300">Name</p>
           <p className="text-sm text-mineshaft-300">{groupMembership.group.name}</p>
         </div>
         <div className="mb-4">
-          <p className="text-sm font-semibold text-mineshaft-300">Slug</p>
+          <p className="text-sm font-medium text-mineshaft-300">Slug</p>
           <div className="group flex items-center gap-2">
             <p className="text-sm text-mineshaft-300">{groupMembership.group.slug}</p>
             <CopyButton value={groupMembership.group.slug} name="Slug" size="xs" variant="plain" />
           </div>
         </div>
         <div className="mb-4">
-          <p className="text-sm font-semibold text-mineshaft-300">Project Role</p>
+          <p className="text-sm font-medium text-mineshaft-300">Project Role</p>
           <ProjectPermissionCan I={ProjectPermissionActions.Edit} a={ProjectPermissionSub.Groups}>
             {(isAllowed) => (
               <GroupRoles
@@ -138,7 +127,7 @@ export const GroupDetailsSection = ({ groupMembership }: Props) => {
           </ProjectPermissionCan>
         </div>
         <div className="mb-4">
-          <p className="text-sm font-semibold text-mineshaft-300">Assigned to Project</p>
+          <p className="text-sm font-medium text-mineshaft-300">Assigned to Project</p>
           <p className="text-sm text-mineshaft-300">
             {format(groupMembership.createdAt, "M/d/yyyy")}
           </p>

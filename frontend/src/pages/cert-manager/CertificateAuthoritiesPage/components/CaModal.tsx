@@ -12,11 +12,10 @@ import {
   Modal,
   ModalContent,
   Select,
-  SelectItem,
-  Switch
+  SelectItem
   // DatePicker
 } from "@app/components/v2";
-import { useWorkspace } from "@app/context";
+import { useProject } from "@app/context";
 import {
   CaStatus,
   CaType,
@@ -47,7 +46,6 @@ const schema = z
     name: slugSchema({
       field: "Name"
     }),
-    enableDirectIssuance: z.boolean(),
     status: z.nativeEnum(CaStatus),
     configuration: z
       .object({
@@ -60,12 +58,7 @@ const schema = z
         commonName: z.string(),
         notAfter: z.string().trim().refine(isValidDate, { message: "Invalid date format" }),
         maxPathLength: z.string(),
-        keyAlgorithm: z.enum([
-          CertKeyAlgorithm.RSA_2048,
-          CertKeyAlgorithm.RSA_4096,
-          CertKeyAlgorithm.ECDSA_P256,
-          CertKeyAlgorithm.ECDSA_P384
-        ])
+        keyAlgorithm: z.nativeEnum(CertKeyAlgorithm)
       })
       .required()
   })
@@ -84,10 +77,9 @@ const caTypes = [
 ];
 
 export const CaModal = ({ popUp, handlePopUpToggle }: Props) => {
-  const { currentWorkspace } = useWorkspace();
+  const { currentProject } = useProject();
   const { data: ca } = useGetCa({
-    caName: (popUp?.ca?.data as { name: string })?.name || "",
-    projectId: currentWorkspace?.id || "",
+    caId: (popUp?.ca?.data as { caId: string })?.caId || "",
     type: CaType.INTERNAL
   });
 
@@ -106,7 +98,6 @@ export const CaModal = ({ popUp, handlePopUpToggle }: Props) => {
       type: CaType.INTERNAL,
       name: "",
       status: CaStatus.ACTIVE,
-      enableDirectIssuance: true,
       configuration: {
         type: InternalCaType.ROOT,
         organization: "",
@@ -130,7 +121,6 @@ export const CaModal = ({ popUp, handlePopUpToggle }: Props) => {
         type: ca.type,
         name: ca.name,
         status: ca.status,
-        enableDirectIssuance: ca.enableDirectIssuance,
         configuration: {
           type: ca.configuration.type,
           organization: ca.configuration.organization,
@@ -145,7 +135,11 @@ export const CaModal = ({ popUp, handlePopUpToggle }: Props) => {
           maxPathLength: ca.configuration.maxPathLength
             ? String(ca.configuration.maxPathLength)
             : "",
-          keyAlgorithm: ca.configuration.keyAlgorithm
+          keyAlgorithm: Object.values(CertKeyAlgorithm).includes(
+            ca.configuration.keyAlgorithm as CertKeyAlgorithm
+          )
+            ? ca.configuration.keyAlgorithm
+            : CertKeyAlgorithm.RSA_2048
         }
       });
     } else {
@@ -153,7 +147,6 @@ export const CaModal = ({ popUp, handlePopUpToggle }: Props) => {
         type: CaType.INTERNAL,
         name: "",
         status: CaStatus.ACTIVE,
-        enableDirectIssuance: true,
         configuration: {
           type: InternalCaType.ROOT,
           organization: "",
@@ -170,55 +163,38 @@ export const CaModal = ({ popUp, handlePopUpToggle }: Props) => {
     }
   }, [ca]);
 
-  const onFormSubmit = async ({
-    type,
-    name,
-    enableDirectIssuance,
-    status,
-    configuration
-  }: FormData) => {
-    try {
-      if (!currentWorkspace?.slug) return;
+  const onFormSubmit = async ({ type, name, status, configuration }: FormData) => {
+    if (!currentProject?.slug) return;
 
-      if (ca) {
-        // update
-        await updateMutateAsync({
-          caName: ca.name,
-          projectId: currentWorkspace.id,
-          name,
-          type: CaType.INTERNAL,
-          status,
-          enableDirectIssuance
-        });
-      } else {
-        // create
-        await createMutateAsync({
-          projectId: currentWorkspace.id,
-          name,
-          type,
-          status,
-          enableDirectIssuance,
-          configuration: {
-            ...configuration,
-            maxPathLength: Number(configuration.maxPathLength)
-          }
-        });
-      }
-
-      reset();
-      handlePopUpToggle("ca", false);
-
-      createNotification({
-        text: `Successfully ${ca ? "updated" : "created"} CA`,
-        type: "success"
+    if (ca) {
+      // update
+      await updateMutateAsync({
+        id: ca.id,
+        name,
+        type: CaType.INTERNAL,
+        status
       });
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to create CA",
-        type: "error"
+    } else {
+      // create
+      await createMutateAsync({
+        projectId: currentProject.id,
+        name,
+        type,
+        status,
+        configuration: {
+          ...configuration,
+          maxPathLength: Number(configuration.maxPathLength)
+        }
       });
     }
+
+    reset();
+    handlePopUpToggle("ca", false);
+
+    createNotification({
+      text: `Successfully ${ca ? "updated" : "created"} CA`,
+      type: "success"
+    });
   };
 
   return (
@@ -456,23 +432,6 @@ export const CaModal = ({ popUp, handlePopUpToggle }: Props) => {
                 <Input {...field} placeholder="Example CA" isDisabled={Boolean(ca)} />
               </FormControl>
             )}
-          />
-          <Controller
-            control={control}
-            name="enableDirectIssuance"
-            render={({ field, fieldState: { error } }) => {
-              return (
-                <FormControl isError={Boolean(error)} errorText={error?.message} className="my-8">
-                  <Switch
-                    id="enable-direct-issuance"
-                    onCheckedChange={(value) => field.onChange(value)}
-                    isChecked={field.value}
-                  >
-                    <p className="w-full">Enable Direct Issuance</p>
-                  </Switch>
-                </FormControl>
-              );
-            }}
           />
           <div className="flex items-center">
             <Button

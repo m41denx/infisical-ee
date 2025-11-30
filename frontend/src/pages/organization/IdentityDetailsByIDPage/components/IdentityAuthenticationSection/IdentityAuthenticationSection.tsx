@@ -4,7 +4,11 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { OrgPermissionCan } from "@app/components/permissions";
 import { Button, Tooltip } from "@app/components/v2";
 import { OrgPermissionIdentityActions, OrgPermissionSubjects } from "@app/context";
-import { IdentityAuthMethod, identityAuthToNameMap, useGetIdentityById } from "@app/hooks/api";
+import {
+  IdentityAuthMethod,
+  identityAuthToNameMap,
+  useGetOrgIdentityMembershipById
+} from "@app/hooks/api";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 type Props = {
@@ -16,12 +20,12 @@ type Props = {
 };
 
 export const IdentityAuthenticationSection = ({ identityId, handlePopUpOpen }: Props) => {
-  const { data, refetch } = useGetIdentityById(identityId);
+  const { data, refetch } = useGetOrgIdentityMembershipById(identityId);
 
   return data ? (
     <div className="mt-4 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-semibold text-mineshaft-100">Authentication</h3>
+        <h3 className="text-lg font-medium text-mineshaft-100">Authentication</h3>
       </div>
       {data.identity.authMethods.length > 0 ? (
         <div className="flex flex-col divide-y divide-mineshaft-400/50">

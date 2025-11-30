@@ -29,8 +29,8 @@ export const SshHostGroupHostsSection = ({ sshHostGroupId }: Props) => {
   const handleAddSshHostModal = () => {
     if (!subscription?.sshHostGroups) {
       handlePopUpOpen("upgradePlan", {
-        description:
-          "You can manage hosts more efficiently with SSH host groups if you upgrade your Infisical plan to an Enterprise license."
+        text: "Managing SSH host groups can be unlocked if you upgrade to Infisical Enterprise plan.",
+        isEnterpriseFeature: true
       });
     } else {
       handlePopUpOpen("addHostGroupMembers", {
@@ -40,31 +40,23 @@ export const SshHostGroupHostsSection = ({ sshHostGroupId }: Props) => {
   };
 
   const onRemoveSshHostSubmit = async (sshHostId: string) => {
-    try {
-      await removeHostFromGroup({
-        sshHostId,
-        sshHostGroupId
-      });
+    await removeHostFromGroup({
+      sshHostId,
+      sshHostGroupId
+    });
 
-      await createNotification({
-        text: "Successfully removed host from SSH group",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully removed host from SSH group",
+      type: "success"
+    });
 
-      handlePopUpClose("removeHostFromSshHostGroup");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to remove host from SSH group",
-        type: "error"
-      });
-    }
+    handlePopUpClose("removeHostFromSshHostGroup");
   };
 
   return (
     <div className="h-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-semibold text-mineshaft-100">SSH Hosts</h3>
+        <h3 className="text-lg font-medium text-mineshaft-100">SSH Hosts</h3>
         <ProjectPermissionCan
           I={ProjectPermissionActions.Edit}
           a={ProjectPermissionSub.SshHostGroups}
@@ -106,7 +98,8 @@ export const SshHostGroupHostsSection = ({ sshHostGroupId }: Props) => {
       <UpgradePlanModal
         isOpen={popUp.upgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text={(popUp.upgradePlan?.data as { description: string })?.description}
+        text={popUp.upgradePlan?.data?.text}
+        isEnterpriseFeature={popUp.upgradePlan?.data?.isEnterpriseFeature}
       />
     </div>
   );

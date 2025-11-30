@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { Button, DeleteActionModal } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { ProjectPermissionActions, ProjectPermissionSub, useProject } from "@app/context";
 import { useDeletePkiCollection } from "@app/hooks/api";
 import { usePopUp } from "@app/hooks/usePopUp";
 
@@ -12,8 +12,8 @@ import { PkiCollectionModal } from "./PkiCollectionModal";
 import { PkiCollectionTable } from "./PkiCollectionTable";
 
 export const PkiCollectionSection = () => {
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentProject } = useProject();
+  const projectId = currentProject?.id || "";
   const { mutateAsync: deletePkiCollection } = useDeletePkiCollection();
 
   const { popUp, handlePopUpOpen, handlePopUpClose, handlePopUpToggle } = usePopUp([
@@ -22,33 +22,25 @@ export const PkiCollectionSection = () => {
   ] as const);
 
   const onRemovePkiCollectionSubmit = async (collectionId: string) => {
-    try {
-      if (!projectId) return;
+    if (!projectId) return;
 
-      await deletePkiCollection({
-        collectionId,
-        projectId
-      });
+    await deletePkiCollection({
+      collectionId,
+      projectId
+    });
 
-      createNotification({
-        text: "Successfully deleted PKI collection",
-        type: "success"
-      });
+    createNotification({
+      text: "Successfully deleted PKI collection",
+      type: "success"
+    });
 
-      handlePopUpClose("deletePkiCollection");
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: "Failed to delete PKI collection",
-        type: "error"
-      });
-    }
+    handlePopUpClose("deletePkiCollection");
   };
 
   return (
     <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
       <div className="mb-4 flex justify-between">
-        <p className="text-xl font-semibold text-mineshaft-100">Certificate Collections</p>
+        <p className="text-xl font-medium text-mineshaft-100">Certificate Collections</p>
         <ProjectPermissionCan
           I={ProjectPermissionActions.Create}
           a={ProjectPermissionSub.PkiCollections}

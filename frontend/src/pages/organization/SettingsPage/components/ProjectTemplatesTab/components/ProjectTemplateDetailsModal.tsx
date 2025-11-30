@@ -15,12 +15,12 @@ import {
   TextArea
 } from "@app/components/v2";
 import { getProjectLottieIcon } from "@app/helpers/project";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import {
   TProjectTemplate,
   useCreateProjectTemplate,
   useUpdateProjectTemplate
 } from "@app/hooks/api/projectTemplates";
-import { ProjectType } from "@app/hooks/api/workspace/types";
 import { slugSchema } from "@app/lib/schemas";
 
 const formSchema = z.object({
@@ -63,6 +63,10 @@ const PROJECT_TYPE_MENU_ITEMS = [
   {
     label: "Secret Scanning",
     value: ProjectType.SecretScanning
+  },
+  {
+    label: "PAM",
+    value: ProjectType.PAM
   }
 ];
 
@@ -89,25 +93,15 @@ const ProjectTemplateForm = ({ onComplete, projectTemplate }: FormProps) => {
       ? updateProjectTemplate.mutateAsync({ templateId: projectTemplate.id, ...data })
       : createProjectTemplate.mutateAsync({ ...data });
 
-    try {
-      const template = await mutation;
-      createNotification({
-        text: `Successfully ${
-          projectTemplate ? "updated template details" : "created project template"
-        }`,
-        type: "success"
-      });
+    const template = await mutation;
+    createNotification({
+      text: `Successfully ${
+        projectTemplate ? "updated template details" : "created project template"
+      }`,
+      type: "success"
+    });
 
-      onComplete(template);
-    } catch (err) {
-      console.error(err);
-      createNotification({
-        text: `Failed to ${
-          projectTemplate ? "update template details" : "create project template"
-        }`,
-        type: "error"
-      });
-    }
+    onComplete(template);
   };
 
   return (
@@ -131,12 +125,12 @@ const ProjectTemplateForm = ({ onComplete, projectTemplate }: FormProps) => {
             errorText={error?.message}
             className="flex-1"
           >
-            <div className="mt-2 grid grid-cols-5 gap-4">
+            <div className="mt-2 grid grid-cols-3 gap-3">
               {PROJECT_TYPE_MENU_ITEMS.map((el) => (
                 <div
                   key={el.value}
                   className={twMerge(
-                    "flex cursor-pointer flex-col items-center gap-2 rounded border border-mineshaft-600 p-4 opacity-75 transition-all hover:border-primary-400 hover:bg-mineshaft-600",
+                    "flex cursor-pointer flex-col items-center gap-2 rounded-sm border border-mineshaft-600 px-2 py-4 opacity-75 transition-all hover:border-primary-400 hover:bg-mineshaft-600",
                     field.value === el.value && "border-primary-400 bg-mineshaft-600 opacity-100"
                   )}
                   onClick={() => field.onChange(el.value)}
@@ -162,7 +156,7 @@ const ProjectTemplateForm = ({ onComplete, projectTemplate }: FormProps) => {
         isError={Boolean(errors.description?.message)}
       >
         <TextArea
-          className="max-h-[20rem] min-h-[10rem] min-w-full max-w-full"
+          className="max-h-80 min-h-40 max-w-full min-w-full"
           {...register("description")}
         />
       </FormControl>

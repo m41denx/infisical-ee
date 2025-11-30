@@ -10,7 +10,6 @@ import { twMerge } from "tailwind-merge";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
 import {
-  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -26,26 +25,27 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import { Badge } from "@app/components/v3";
+import { ProjectPermissionActions, ProjectPermissionSub, useProject } from "@app/context";
 import { CaStatus, CaType, useListExternalCasByProjectId } from "@app/hooks/api";
 import { caStatusToNameMap, getCaStatusBadgeVariant } from "@app/hooks/api/ca/constants";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 type Props = {
   handlePopUpOpen: (
-    popUpName: keyof UsePopUpState<["ca", "deleteCa", "caStatus", "upgradePlan"]>,
+    popUpName: keyof UsePopUpState<["ca", "deleteCa", "caStatus"]>,
     data?: {
+      caId?: string;
       name?: string;
       type?: CaType;
       status?: CaStatus;
-      description?: string;
     }
   ) => void;
 };
 
 export const ExternalCaTable = ({ handlePopUpOpen }: Props) => {
-  const { currentWorkspace } = useWorkspace();
-  const { data, isPending } = useListExternalCasByProjectId(currentWorkspace.id);
+  const { currentProject } = useProject();
+  const { data, isPending } = useListExternalCasByProjectId(currentProject.id);
 
   return (
     <div>
@@ -71,6 +71,7 @@ export const ExternalCaTable = ({ handlePopUpOpen }: Props) => {
                     key={`ca-${ca.id}`}
                     onClick={() => {
                       handlePopUpOpen("ca", {
+                        caId: ca.id,
                         name: ca.name,
                         type: ca.type
                       });
@@ -105,6 +106,7 @@ export const ExternalCaTable = ({ handlePopUpOpen }: Props) => {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handlePopUpOpen("ca", {
+                                    caId: ca.id,
                                     name: ca.name,
                                     type: ca.type
                                   });
@@ -130,7 +132,7 @@ export const ExternalCaTable = ({ handlePopUpOpen }: Props) => {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handlePopUpOpen("caStatus", {
-                                      name: ca.name,
+                                      caId: ca.id,
                                       type: ca.type,
                                       status:
                                         ca.status === CaStatus.ACTIVE
@@ -158,7 +160,7 @@ export const ExternalCaTable = ({ handlePopUpOpen }: Props) => {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handlePopUpOpen("deleteCa", {
-                                    name: ca.name,
+                                    caId: ca.id,
                                     type: ca.type
                                   });
                                 }}

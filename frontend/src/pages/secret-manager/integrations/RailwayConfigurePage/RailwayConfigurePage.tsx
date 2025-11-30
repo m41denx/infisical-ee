@@ -11,7 +11,7 @@ import {
   SelectItem
 } from "@app/components/v2";
 import { ROUTE_PATHS } from "@app/const/routes";
-import { useWorkspace } from "@app/context";
+import { useOrganization, useProject } from "@app/context";
 import { useCreateIntegration } from "@app/hooks/api";
 import {
   useGetIntegrationAuthApps,
@@ -25,13 +25,14 @@ export const RailwayConfigurePage = () => {
   const navigate = useNavigate();
   const { mutateAsync } = useCreateIntegration();
 
-  const { currentWorkspace } = useWorkspace();
+  const { currentOrg } = useOrganization();
+  const { currentProject } = useProject();
   const [targetAppId, setTargetAppId] = useState("");
   const [targetEnvironmentId, setTargetEnvironmentId] = useState("");
   const [targetServiceId, setTargetServiceId] = useState("");
 
   const [selectedSourceEnvironment, setSelectedSourceEnvironment] = useState(
-    currentWorkspace.environments[0].slug
+    currentProject.environments[0].slug
   );
   const [secretPath, setSecretPath] = useState("/");
   const [isLoading, setIsLoading] = useState(false);
@@ -108,9 +109,10 @@ export const RailwayConfigurePage = () => {
       setIsLoading(false);
 
       navigate({
-        to: "/projects/secret-management/$projectId/integrations",
+        to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
         params: {
-          projectId: currentWorkspace.id
+          orgId: currentOrg.id,
+          projectId: currentProject.id
         },
         search: {
           selectedTab: IntegrationsListPageTabs.NativeIntegrations
@@ -139,7 +141,7 @@ export const RailwayConfigurePage = () => {
             onValueChange={(val) => setSelectedSourceEnvironment(val)}
             className="w-full border border-mineshaft-500"
           >
-            {currentWorkspace?.environments.map((sourceEnvironment) => (
+            {currentProject?.environments.map((sourceEnvironment) => (
               <SelectItem
                 value={sourceEnvironment.slug}
                 key={`source-environment-${sourceEnvironment.slug}`}

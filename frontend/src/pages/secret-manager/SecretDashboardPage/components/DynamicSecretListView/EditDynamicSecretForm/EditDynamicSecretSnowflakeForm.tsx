@@ -35,9 +35,8 @@ const formSchema = z.object({
     const valMs = ms(val);
     if (valMs < 60 * 1000)
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-    // a day
-    if (valMs > 24 * 60 * 60 * 1000)
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+    if (valMs > ms("10y"))
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
   }),
   maxTTL: z
     .string()
@@ -47,9 +46,8 @@ const formSchema = z.object({
       const valMs = ms(val);
       if (valMs < 60 * 1000)
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be a greater than 1min" });
-      // a day
-      if (valMs > 24 * 60 * 60 * 1000)
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than a day" });
+      if (valMs > ms("10y"))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "TTL must be less than 10 years" });
     }),
   newName: slugSchema().optional(),
   usernameTemplate: z.string().trim().nullable().optional()
@@ -99,32 +97,25 @@ export const EditDynamicSecretSnowflakeForm = ({
   }: TForm) => {
     // wait till previous request is finished
     if (updateDynamicSecret.isPending) return;
-    try {
-      const isDefaultUsernameTemplate = usernameTemplate === "{{randomUsername}}";
-      await updateDynamicSecret.mutateAsync({
-        name: dynamicSecret.name,
-        path: secretPath,
-        projectSlug,
-        environmentSlug: environment,
-        data: {
-          maxTTL: maxTTL || undefined,
-          defaultTTL,
-          inputs,
-          newName: newName === dynamicSecret.name ? undefined : newName,
-          usernameTemplate: !usernameTemplate || isDefaultUsernameTemplate ? null : usernameTemplate
-        }
-      });
-      onClose();
-      createNotification({
-        type: "success",
-        text: "Successfully updated dynamic secret"
-      });
-    } catch (err) {
-      createNotification({
-        type: "error",
-        text: err instanceof Error ? err.message : "Failed to update dynamic secret"
-      });
-    }
+    const isDefaultUsernameTemplate = usernameTemplate === "{{randomUsername}}";
+    await updateDynamicSecret.mutateAsync({
+      name: dynamicSecret.name,
+      path: secretPath,
+      projectSlug,
+      environmentSlug: environment,
+      data: {
+        maxTTL: maxTTL || undefined,
+        defaultTTL,
+        inputs,
+        newName: newName === dynamicSecret.name ? undefined : newName,
+        usernameTemplate: !usernameTemplate || isDefaultUsernameTemplate ? null : usernameTemplate
+      }
+    });
+    onClose();
+    createNotification({
+      type: "success",
+      text: "Successfully updated dynamic secret"
+    });
   };
 
   return (
@@ -132,7 +123,7 @@ export const EditDynamicSecretSnowflakeForm = ({
       <form onSubmit={handleSubmit(handleUpdateDynamicSecret)} autoComplete="off">
         <div>
           <div className="flex items-center space-x-2">
-            <div className="flex-grow">
+            <div className="grow">
               <Controller
                 control={control}
                 defaultValue=""
@@ -182,7 +173,7 @@ export const EditDynamicSecretSnowflakeForm = ({
             </div>
           </div>
           <div>
-            <div className="mb-4 mt-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
+            <div className="mt-4 mb-4 border-b border-mineshaft-500 pb-2 pl-1 font-medium text-mineshaft-200">
               Configuration
             </div>
             <div className="flex flex-col">
@@ -194,7 +185,7 @@ export const EditDynamicSecretSnowflakeForm = ({
                   render={({ field, fieldState: { error } }) => (
                     <FormControl
                       label="Account Identifer"
-                      className="flex-grow"
+                      className="grow"
                       isError={Boolean(error?.message)}
                       errorText={error?.message}
                     >
@@ -225,7 +216,7 @@ export const EditDynamicSecretSnowflakeForm = ({
                   render={({ field, fieldState: { error } }) => (
                     <FormControl
                       label="User"
-                      className="flex-grow"
+                      className="grow"
                       isError={Boolean(error?.message)}
                       errorText={error?.message}
                     >
@@ -239,7 +230,7 @@ export const EditDynamicSecretSnowflakeForm = ({
                   render={({ field, fieldState: { error } }) => (
                     <FormControl
                       label="Password"
-                      className="flex-grow"
+                      className="grow"
                       isError={Boolean(error?.message)}
                       errorText={error?.message}
                     >

@@ -1,8 +1,14 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { faCopy, faEdit, faEllipsisV, faTrash } from "@fortawesome/free-solid-svg-icons";
+import {
+  faChevronLeft,
+  faCopy,
+  faEdit,
+  faEllipsisV,
+  faTrash
+} from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
@@ -16,7 +22,12 @@ import {
   DropdownMenuTrigger,
   PageHeader
 } from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useWorkspace } from "@app/context";
+import {
+  ProjectPermissionActions,
+  ProjectPermissionSub,
+  useOrganization,
+  useProject
+} from "@app/context";
 import { getProjectBaseURL } from "@app/helpers/project";
 import { useDeleteProjectRole, useGetProjectRoleBySlug } from "@app/hooks/api";
 import { ProjectMembershipRole } from "@app/hooks/api/roles/types";
@@ -33,8 +44,10 @@ const Page = () => {
     strict: false,
     select: (el) => el.roleSlug as string
   });
-  const { currentWorkspace } = useWorkspace();
-  const projectId = currentWorkspace?.id || "";
+  const { currentProject } = useProject();
+  const { currentOrg } = useOrganization();
+  const projectId = currentProject?.id || "";
+  const orgId = currentOrg?.id || "";
 
   const { data } = useGetProjectRoleBySlug(projectId, roleSlug as string);
 
@@ -47,38 +60,28 @@ const Page = () => {
   ] as const);
 
   const onDeleteRoleSubmit = async () => {
-    try {
-      if (!currentWorkspace?.slug || !data?.id) return;
+    if (!currentProject?.slug || !data?.id) return;
 
-      await deleteProjectRole({
+    await deleteProjectRole({
+      projectId,
+      id: data.id
+    });
+
+    createNotification({
+      text: "Successfully deleted project role",
+      type: "success"
+    });
+    handlePopUpClose("deleteRole");
+    navigate({
+      to: `${getProjectBaseURL(currentProject.type)}/access-management` as const,
+      params: {
         projectId,
-        id: data.id
-      });
-
-      createNotification({
-        text: "Successfully deleted project role",
-        type: "success"
-      });
-      handlePopUpClose("deleteRole");
-      navigate({
-        to: `${getProjectBaseURL(currentWorkspace.type)}/access-management` as const,
-        params: {
-          projectId
-        },
-        search: {
-          selectedTab: ProjectAccessControlTabs.Roles
-        }
-      });
-    } catch (err) {
-      console.error(err);
-      const error = err as any;
-      const text = error?.response?.data?.message ?? "Failed to delete project role";
-
-      createNotification({
-        text,
-        type: "error"
-      });
-    }
+        orgId
+      },
+      search: {
+        selectedTab: ProjectAccessControlTabs.Roles
+      }
+    });
   };
 
   const isCustomRole = !Object.values(ProjectMembershipRole).includes(
@@ -86,19 +89,30 @@ const Page = () => {
   );
 
   return (
-    <div className="container mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       {data && (
-        <div className="mx-auto mb-6 w-full max-w-7xl">
+        <div className="mx-auto mb-6 w-full max-w-8xl">
+          <Link
+            to={`${getProjectBaseURL(currentProject.type)}/access-management`}
+            params={{
+              projectId,
+              orgId
+            }}
+            search={{
+              selectedTab: ProjectAccessControlTabs.Roles
+            }}
+            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+          >
+            <FontAwesomeIcon icon={faChevronLeft} />
+            Project Roles
+          </Link>
           <PageHeader
-            title={
-              <div className="flex flex-col">
-                <div>
-                  <span>{data.name}</span>
-                  <p className="text-sm font-[400] normal-case leading-3 text-mineshaft-400">
-                    {data.slug} {data.description && `- ${data.description}`}
-                  </p>
-                </div>
-              </div>
+            scope={currentProject.type}
+            title={data.name}
+            description={
+              <>
+                {data.slug} {data.description && `- ${data.description}`}
+              </>
             }
           >
             {isCustomRole && (
