@@ -1,59 +1,55 @@
-import { useEffect, useState } from "react";
-import { Controller, useFieldArray, useForm } from "react-hook-form";
-import { faPlus, faXmark } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useParams } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import {
-  Button,
-  FormControl,
-  IconButton,
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
   Input,
-  Tab,
-  TabList,
-  TabPanel,
-  Tabs
-} from "@app/components/v2";
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger
+} from "@app/components/v3";
 import { useOrganization, useSubscription } from "@app/context";
+import {
+  accessTokenTtlSchema,
+  DEFAULT_TRUSTED_IPS,
+  mapTrustedIpsFromServer,
+  superRefineAccessTokenTtl,
+  trustedIpsSchema
+} from "@app/helpers/identityAuthSchemas";
+import { useScopeVariant } from "@app/hooks";
 import {
   useAddIdentityAliCloudAuth,
   useGetIdentityAliCloudAuth,
   useUpdateIdentityAliCloudAuth
 } from "@app/hooks/api";
-import { IdentityTrustedIp } from "@app/hooks/api/identities/types";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
-import { IdentityFormTab } from "./types";
+import { AccessTokenNumUsesLimitField } from "./shared/AccessTokenNumUsesLimitField";
+import { AccessTokenTtlFields } from "./shared/AccessTokenTtlFields";
+import { TrustedIpsField } from "./shared/TrustedIpsField";
+import { IDENTITY_AUTH_FORM_ID, IdentityFormTab } from "./types";
 
-const schema = z
-  .object({
-    allowedArns: z.string().min(1, "Required"),
-    accessTokenTTL: z
-      .string()
-      .refine(
-        (value) => Number(value) <= 315360000,
-        "Access Token TTL cannot be greater than 315360000"
-      ),
-    accessTokenMaxTTL: z
-      .string()
-      .refine(
-        (value) => Number(value) <= 315360000,
-        "Access Token Max TTL cannot be greater than 315360000"
-      ),
-    accessTokenNumUsesLimit: z.string(),
-    accessTokenTrustedIps: z
-      .object({
-        ipAddress: z.string().max(50)
-      })
-      .array()
-      .min(1)
-  })
-  .required();
+const buildSchema = (maxAccessTokenTTL: number) =>
+  z
+    .object({
+      allowedArns: z.string().min(1, "Required"),
+      accessTokenTTL: accessTokenTtlSchema(maxAccessTokenTTL, "Access Token TTL"),
+      accessTokenMaxTTL: accessTokenTtlSchema(maxAccessTokenTTL, "Access Token Max TTL"),
+      accessTokenNumUsesLimit: z.string(),
+      accessTokenTrustedIps: trustedIpsSchema
+    })
+    .required()
+    .superRefine(superRefineAccessTokenTtl);
 
-export type FormData = z.infer<typeof schema>;
+export type FormData = z.infer<ReturnType<typeof buildSchema>>;
 
 type Props = {
   handlePopUpOpen: (
@@ -66,13 +62,17 @@ type Props = {
   ) => void;
   identityId?: string;
   isUpdate?: boolean;
+  maxAccessTokenTTL: number;
+  onSubmittingChange?: (isSubmitting: boolean) => void;
 };
 
 export const IdentityAliCloudAuthForm = ({
   handlePopUpOpen,
   handlePopUpToggle,
   identityId,
-  isUpdate
+  isUpdate,
+  maxAccessTokenTTL,
+  onSubmittingChange
 }: Props) => {
   const { currentOrg } = useOrganization();
   const orgId = currentOrg?.id || "";
@@ -80,6 +80,7 @@ export const IdentityAliCloudAuthForm = ({
   const { projectId } = useParams({
     strict: false
   });
+  const scopeVariant = useScopeVariant();
   const { mutateAsync: addMutateAsync } = useAddIdentityAliCloudAuth();
   const { mutateAsync: updateMutateAsync } = useUpdateIdentityAliCloudAuth();
   const [tabValue, setTabValue] = useState<IdentityFormTab>(IdentityFormTab.Configuration);
@@ -88,27 +89,23 @@ export const IdentityAliCloudAuthForm = ({
     enabled: isUpdate
   });
 
+  const resolver = useMemo(() => zodResolver(buildSchema(maxAccessTokenTTL)), [maxAccessTokenTTL]);
+
   const {
     control,
     handleSubmit,
     reset,
     formState: { isSubmitting }
   } = useForm<FormData>({
-    resolver: zodResolver(schema),
+    resolver,
     defaultValues: {
       allowedArns: "",
       accessTokenTTL: "2592000",
       accessTokenMaxTTL: "2592000",
-      accessTokenNumUsesLimit: "0",
-      accessTokenTrustedIps: [{ ipAddress: "0.0.0.0/0" }, { ipAddress: "::/0" }]
+      accessTokenNumUsesLimit: "",
+      accessTokenTrustedIps: DEFAULT_TRUSTED_IPS
     }
   });
-
-  const {
-    fields: accessTokenTrustedIpsFields,
-    append: appendAccessTokenTrustedIp,
-    remove: removeAccessTokenTrustedIp
-  } = useFieldArray({ control, name: "accessTokenTrustedIps" });
 
   useEffect(() => {
     if (data) {
@@ -116,25 +113,25 @@ export const IdentityAliCloudAuthForm = ({
         allowedArns: data.allowedArns || "",
         accessTokenTTL: String(data.accessTokenTTL),
         accessTokenMaxTTL: String(data.accessTokenMaxTTL),
-        accessTokenNumUsesLimit: String(data.accessTokenNumUsesLimit),
-        accessTokenTrustedIps: data.accessTokenTrustedIps.map(
-          ({ ipAddress, prefix }: IdentityTrustedIp) => {
-            return {
-              ipAddress: `${ipAddress}${prefix !== undefined ? `/${prefix}` : ""}`
-            };
-          }
-        )
+        accessTokenNumUsesLimit: data.accessTokenNumUsesLimit
+          ? String(data.accessTokenNumUsesLimit)
+          : "",
+        accessTokenTrustedIps: mapTrustedIpsFromServer(data.accessTokenTrustedIps)
       });
     } else {
       reset({
         allowedArns: "",
         accessTokenTTL: "2592000",
         accessTokenMaxTTL: "2592000",
-        accessTokenNumUsesLimit: "0",
-        accessTokenTrustedIps: [{ ipAddress: "0.0.0.0/0" }, { ipAddress: "::/0" }]
+        accessTokenNumUsesLimit: "",
+        accessTokenTrustedIps: DEFAULT_TRUSTED_IPS
       });
     }
   }, [data]);
+
+  useEffect(() => {
+    onSubmittingChange?.(isSubmitting);
+  }, [isSubmitting, onSubmittingChange]);
 
   const onFormSubmit = async ({
     allowedArns,
@@ -152,7 +149,7 @@ export const IdentityAliCloudAuthForm = ({
         identityId,
         accessTokenTTL: Number(accessTokenTTL),
         accessTokenMaxTTL: Number(accessTokenMaxTTL),
-        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit),
+        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit || "0"),
         accessTokenTrustedIps
       });
     } else {
@@ -162,7 +159,7 @@ export const IdentityAliCloudAuthForm = ({
         allowedArns,
         accessTokenTTL: Number(accessTokenTTL),
         accessTokenMaxTTL: Number(accessTokenMaxTTL),
-        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit),
+        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit || "0"),
         accessTokenTrustedIps
       });
     }
@@ -179,6 +176,7 @@ export const IdentityAliCloudAuthForm = ({
 
   return (
     <form
+      id={IDENTITY_AUTH_FORM_ID}
       onSubmit={handleSubmit(onFormSubmit, (fields) => {
         setTabValue(
           ["accessTokenTrustedIps"].includes(Object.keys(fields)[0])
@@ -188,167 +186,46 @@ export const IdentityAliCloudAuthForm = ({
       })}
     >
       <Tabs value={tabValue} onValueChange={(value) => setTabValue(value as IdentityFormTab)}>
-        <TabList>
-          <Tab value={IdentityFormTab.Configuration}>Configuration</Tab>
-          <Tab value={IdentityFormTab.Advanced}>Advanced</Tab>
-        </TabList>
-        <TabPanel value={IdentityFormTab.Configuration}>
-          <Controller
-            control={control}
-            name="allowedArns"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Allowed ARNs"
-                isRequired
-                isError={Boolean(error)}
-                errorText={error?.message}
-              >
-                <Input
-                  {...field}
-                  placeholder="acs:ram::0000000000000000:user/user1, acs:ram::0000000000000000:user/user2, ..."
-                />
-              </FormControl>
-            )}
-          />
-          <Controller
-            control={control}
-            defaultValue="2592000"
-            name="accessTokenTTL"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Access Token TTL (seconds)"
-                isError={Boolean(error)}
-                errorText={error?.message}
-              >
-                <Input {...field} placeholder="2592000" type="number" min="0" step="1" />
-              </FormControl>
-            )}
-          />
-          <Controller
-            control={control}
-            defaultValue="2592000"
-            name="accessTokenMaxTTL"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Access Token Max TTL (seconds)"
-                isError={Boolean(error)}
-                errorText={error?.message}
-              >
-                <Input {...field} placeholder="2592000" type="number" min="0" step="1" />
-              </FormControl>
-            )}
-          />
-          <Controller
-            control={control}
-            defaultValue="0"
-            name="accessTokenNumUsesLimit"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Access Token Max Number of Uses"
-                isError={Boolean(error)}
-                errorText={error?.message}
-              >
-                <Input {...field} placeholder="0" type="number" min="0" step="1" />
-              </FormControl>
-            )}
-          />
-        </TabPanel>
-        <TabPanel value={IdentityFormTab.Advanced}>
-          {accessTokenTrustedIpsFields.map(({ id }, index) => (
-            <div className="mb-3 flex items-end space-x-2" key={id}>
-              <Controller
-                control={control}
-                name={`accessTokenTrustedIps.${index}.ipAddress`}
-                defaultValue="0.0.0.0/0"
-                render={({ field, fieldState: { error } }) => {
-                  return (
-                    <FormControl
-                      className="mb-0 grow"
-                      label={index === 0 ? "Access Token Trusted IPs" : undefined}
-                      isError={Boolean(error)}
-                      errorText={error?.message}
-                    >
-                      <Input
-                        value={field.value}
-                        onChange={(e) => {
-                          if (subscription?.ipAllowlisting) {
-                            field.onChange(e);
-                            return;
-                          }
-
-                          handlePopUpOpen("upgradePlan", {
-                            featureName: "IP allowlisting"
-                          });
-                        }}
-                        placeholder="123.456.789.0"
-                      />
-                    </FormControl>
-                  );
-                }}
-              />
-              <IconButton
-                onClick={() => {
-                  if (subscription?.ipAllowlisting) {
-                    removeAccessTokenTrustedIp(index);
-                    return;
-                  }
-
-                  handlePopUpOpen("upgradePlan", {
-                    featureName: "IP allowlisting"
-                  });
-                }}
-                size="lg"
-                colorSchema="danger"
-                variant="plain"
-                ariaLabel="update"
-                className="p-3"
-              >
-                <FontAwesomeIcon icon={faXmark} />
-              </IconButton>
-            </div>
-          ))}
-          <div className="my-4 ml-1">
-            <Button
-              variant="outline_bg"
-              onClick={() => {
-                if (subscription?.ipAllowlisting) {
-                  appendAccessTokenTrustedIp({
-                    ipAddress: "0.0.0.0/0"
-                  });
-                  return;
-                }
-
-                handlePopUpOpen("upgradePlan", {
-                  featureName: "IP allowlisting"
-                });
-              }}
-              leftIcon={<FontAwesomeIcon icon={faPlus} />}
-              size="xs"
-            >
-              Add IP Address
-            </Button>
-          </div>
-        </TabPanel>
+        <TabsList variant={scopeVariant}>
+          <TabsTrigger value={IdentityFormTab.Configuration}>Configuration</TabsTrigger>
+          <TabsTrigger value={IdentityFormTab.Advanced}>Advanced</TabsTrigger>
+        </TabsList>
+        <TabsContent value={IdentityFormTab.Configuration}>
+          <FieldGroup>
+            <Controller
+              control={control}
+              name="allowedArns"
+              render={({ field, fieldState: { error } }) => (
+                <Field>
+                  <FieldLabel htmlFor="allowedArns">Allowed ARNs</FieldLabel>
+                  <Input
+                    {...field}
+                    id="allowedArns"
+                    placeholder="acs:ram::0000000000000000:user/user1, acs:ram::0000000000000000:user/user2, ..."
+                    isError={Boolean(error)}
+                  />
+                  <FieldError>{error?.message}</FieldError>
+                </Field>
+              )}
+            />
+            <AccessTokenTtlFields control={control} maxAccessTokenTTL={maxAccessTokenTTL} />
+            <AccessTokenNumUsesLimitField control={control} />
+          </FieldGroup>
+        </TabsContent>
+        <TabsContent value={IdentityFormTab.Advanced}>
+          <FieldGroup>
+            <TrustedIpsField
+              control={control}
+              name="accessTokenTrustedIps"
+              label="Access Token Trusted IPs"
+              isAllowed={Boolean(subscription?.ipAllowlisting)}
+              onUpgradeRequired={() =>
+                handlePopUpOpen("upgradePlan", { featureName: "IP allowlisting" })
+              }
+            />
+          </FieldGroup>
+        </TabsContent>
       </Tabs>
-      <div className="flex items-center">
-        <Button
-          className="mr-4"
-          size="sm"
-          type="submit"
-          isLoading={isSubmitting}
-          isDisabled={isSubmitting}
-        >
-          {isUpdate ? "Update" : "Add"}
-        </Button>
-
-        <Button
-          colorSchema="secondary"
-          variant="plain"
-          onClick={() => handlePopUpToggle("identityAuthMethod", false)}
-        >
-          Cancel
-        </Button>
-      </div>
     </form>
   );
 };

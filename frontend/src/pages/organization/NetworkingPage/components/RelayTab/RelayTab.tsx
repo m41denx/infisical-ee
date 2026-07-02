@@ -4,19 +4,17 @@ import {
   faDoorClosed,
   faEllipsisV,
   faInfoCircle,
-  faMagnifyingGlass,
-  faPlus,
   faSearch,
   faTrash
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { formatRelative } from "date-fns";
+import { PlusIcon, SearchIcon } from "lucide-react";
 
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
 import {
-  Button,
   DeleteActionModal,
   DropdownMenu,
   DropdownMenuContent,
@@ -24,7 +22,6 @@ import {
   DropdownMenuTrigger,
   EmptyState,
   IconButton,
-  Input,
   Table,
   TableContainer,
   TableSkeleton,
@@ -35,8 +32,21 @@ import {
   Tooltip,
   Tr
 } from "@app/components/v2";
-import { DocumentationLinkBadge } from "@app/components/v3";
+import {
+  Button,
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  DocumentationLinkBadge,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput
+} from "@app/components/v3";
 import { ROUTE_PATHS } from "@app/const/routes";
+import { useOrganization } from "@app/context";
 import {
   OrgPermissionSubjects,
   OrgRelayPermissionActions
@@ -49,16 +59,20 @@ import { RelayDeployModal } from "./components/RelayDeployModal";
 
 const RelayHealthStatus = ({ heartbeat }: { heartbeat?: string }) => {
   const heartbeatDate = heartbeat ? new Date(heartbeat) : null;
-  const now = new Date();
-  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
-  const isHealthy = !heartbeatDate || heartbeatDate >= oneHourAgo;
-  const tooltipContent = heartbeatDate
-    ? `Last heartbeat: ${heartbeatDate.toLocaleString()}`
-    : "No heartbeat data available";
+  if (!heartbeatDate) {
+    return (
+      <Tooltip content="No heartbeat data available">
+        <span className="cursor-default text-yellow-400">Unregistered</span>
+      </Tooltip>
+    );
+  }
+
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  const isHealthy = heartbeatDate >= oneHourAgo;
 
   return (
-    <Tooltip content={tooltipContent}>
+    <Tooltip content={`Last heartbeat: ${heartbeatDate.toLocaleString()}`}>
       <span className={`cursor-default ${isHealthy ? "text-green-400" : "text-red-400"}`}>
         {isHealthy ? "Healthy" : "Unreachable"}
       </span>
@@ -70,6 +84,8 @@ export const RelayTab = withPermission(
   () => {
     const [search, setSearch] = useState("");
     const { data: relays, isPending: isRelaysLoading } = useGetRelays();
+    const { currentOrg } = useOrganization();
+    const orgId = currentOrg?.id || "";
 
     const { popUp, handlePopUpOpen, handlePopUpToggle } = usePopUp([
       "deleteRelay",
@@ -113,35 +129,34 @@ export const RelayTab = withPermission(
     );
 
     return (
-      <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="flex grow items-center gap-x-2">
-            <h3 className="text-lg font-medium text-mineshaft-100">Relays</h3>
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>
+            Relays
             <DocumentationLinkBadge href="https://infisical.com/docs/documentation/platform/gateways/relay-deployment" />
-            <div className="flex grow" />
-            <Button
-              variant="outline_bg"
-              leftIcon={<FontAwesomeIcon icon={faPlus} />}
-              onClick={() => handlePopUpOpen("deployRelay")}
-            >
-              Deploy Relay
+          </CardTitle>
+          <CardDescription>
+            Create and configure relays to securely access private network resources from Infisical
+          </CardDescription>
+          <CardAction>
+            <Button variant="org" onClick={() => handlePopUpOpen("deployRelay")}>
+              <PlusIcon />
+              Create Relay
             </Button>
-          </div>
-        </div>
-        <p className="mb-4 text-sm text-mineshaft-400">
-          Create and configure relays to securely access private network resources from Infisical
-        </p>
-        <div>
-          <div className="flex gap-2">
-            <Input
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <InputGroup className="mb-4">
+            <InputGroupAddon align="inline-start">
+              <SearchIcon />
+            </InputGroupAddon>
+            <InputGroupInput
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
               placeholder="Search relay..."
-              className="flex-1"
             />
-          </div>
-          <TableContainer className="mt-4">
+          </InputGroup>
+          <TableContainer>
             <Table>
               <THead>
                 <Tr>
@@ -163,10 +178,21 @@ export const RelayTab = withPermission(
               </THead>
               <TBody>
                 {isRelaysLoading && (
-                  <TableSkeleton innerKey="relay-table" columns={4} key="relay-table" />
+                  <TableSkeleton innerKey="relay-table" columns={5} key="relay-table" />
                 )}
                 {filteredRelays?.map((el) => (
-                  <Tr key={el.id}>
+                  <Tr
+                    key={el.id}
+                    className={el.orgId ? "cursor-pointer hover:bg-mineshaft-700" : ""}
+                    onClick={() => {
+                      if (el.orgId) {
+                        navigate({
+                          to: "/organizations/$orgId/networking/relays/$relayId",
+                          params: { orgId, relayId: el.id }
+                        });
+                      }
+                    }}
+                  >
                     <Td>
                       <div className="flex items-center gap-2">
                         <span>{el.name}</span>
@@ -249,8 +275,8 @@ export const RelayTab = withPermission(
               onOpenChange={(isOpen) => handlePopUpToggle("deployRelay", isOpen)}
             />
           </TableContainer>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     );
   },
   { action: OrgRelayPermissionActions.ListRelays, subject: OrgPermissionSubjects.Relay }

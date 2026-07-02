@@ -1,28 +1,23 @@
-import {
-  faArrowDown,
-  faArrowUp,
-  faFolder,
-  faMagnifyingGlass,
-  faSearch
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { ChevronDownIcon, PlusIcon } from "lucide-react";
+import { twMerge } from "tailwind-merge";
 
-import { OrgPermissionCan } from "@app/components/permissions";
+import { Lottie } from "@app/components/v2";
 import {
   Button,
-  EmptyState,
-  IconButton,
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
   Input,
   Pagination,
   Table,
-  TableContainer,
-  TableSkeleton,
-  TBody,
-  Th,
-  THead,
-  Tr
-} from "@app/components/v2";
-import { OrgPermissionGroupActions, OrgPermissionSubjects } from "@app/context";
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@app/components/v3";
+import { useOrganization } from "@app/context";
 import {
   getUserTablePreference,
   PreferenceKey,
@@ -31,7 +26,8 @@ import {
 import { usePagination, useResetPageHelper } from "@app/hooks";
 import { useListGroupProjects } from "@app/hooks/api";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
-import { EFilterReturnedProjects } from "@app/hooks/api/groups/types";
+import { FilterReturnedProjects } from "@app/hooks/api/groups/types";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 import { GroupProjectRow } from "./GroupProjectRow";
@@ -43,13 +39,21 @@ type Props = {
     popUpName: keyof UsePopUpState<["removeProjectFromGroup", "addGroupProjects"]>,
     data?: object
   ) => void;
+  hideAddToProject?: boolean;
 };
 
 enum GroupProjectsOrderBy {
   Name = "name"
 }
 
-export const GroupProjectsTable = ({ groupId, groupSlug, handlePopUpOpen }: Props) => {
+export const GroupProjectsTable = ({
+  groupId,
+  groupSlug,
+  handlePopUpOpen,
+  hideAddToProject = false
+}: Props) => {
+  const { isSubOrganization } = useOrganization();
+
   const {
     search,
     debouncedSearch,
@@ -78,12 +82,13 @@ export const GroupProjectsTable = ({ groupId, groupSlug, handlePopUpOpen }: Prop
     search: debouncedSearch,
     orderBy,
     orderDirection,
-    filter: EFilterReturnedProjects.ASSIGNED_PROJECTS
+    filter: FilterReturnedProjects.ASSIGNED_PROJECTS
   });
 
   const totalCount = groupMemberships?.totalCount ?? 0;
-  const isEmpty = !isPending && totalCount === 0;
-  const projects = groupMemberships?.projects ?? [];
+  const projects = (groupMemberships?.projects ?? []).filter(
+    (p) => p.type !== ProjectType.CertificateManager
+  );
 
   useResetPageHelper({
     totalCount,
@@ -91,93 +96,92 @@ export const GroupProjectsTable = ({ groupId, groupSlug, handlePopUpOpen }: Prop
     setPage
   });
 
+  if (isPending) {
+    return (
+      <div className="flex h-40 w-full items-center justify-center">
+        <Lottie icon="infisical_loading_white" isAutoPlay className="w-16" />
+      </div>
+    );
+  }
+
   return (
-    <div>
+    <>
       <Input
+        className="mb-4"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
         placeholder="Search projects..."
       />
-      <TableContainer className="mt-4">
+      {projects.length ? (
         <Table>
-          <THead>
-            <Tr>
-              <Th className="w-1/3">
-                <div className="flex items-center">
-                  Name
-                  <IconButton
-                    variant="plain"
-                    className="ml-2"
-                    ariaLabel="sort"
-                    onClick={toggleOrderDirection}
-                  >
-                    <FontAwesomeIcon
-                      icon={orderDirection === OrderByDirection.DESC ? faArrowUp : faArrowDown}
-                    />
-                  </IconButton>
-                </div>
-              </Th>
-              <Th>Type</Th>
-              <Th>Added On</Th>
-              <Th className="w-5" />
-            </Tr>
-          </THead>
-          <TBody>
-            {isPending && <TableSkeleton columns={4} innerKey="group-project-memberships" />}
-            {!isPending &&
-              projects.map((project) => {
-                return (
-                  <GroupProjectRow
-                    key={`group-project-${project.id}`}
-                    project={project}
-                    handlePopUpOpen={handlePopUpOpen}
-                  />
-                );
-              })}
-          </TBody>
+          <TableHeader>
+            <TableRow>
+              <TableHead onClick={toggleOrderDirection} className="w-1/3">
+                Name
+                <ChevronDownIcon
+                  className={twMerge(
+                    orderDirection === OrderByDirection.DESC && "rotate-180",
+                    "transition-transform"
+                  )}
+                />
+              </TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Added On</TableHead>
+              <TableHead className="w-5" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {projects.map((project) => (
+              <GroupProjectRow
+                key={`group-project-${project.id}`}
+                project={project}
+                handlePopUpOpen={handlePopUpOpen}
+              />
+            ))}
+          </TableBody>
         </Table>
-        {!isEmpty && (
-          <Pagination
-            count={totalCount}
-            page={page}
-            perPage={perPage}
-            onChangePage={setPage}
-            onChangePerPage={handlePerPageChange}
-          />
-        )}
-        {isEmpty && (
-          <EmptyState
-            title={
-              debouncedSearch
-                ? "No projects match this search..."
-                : "This group is not a part of any projects yet"
-            }
-            icon={debouncedSearch ? faSearch : faFolder}
-          />
-        )}
-        {isEmpty && (
-          <OrgPermissionCan I={OrgPermissionGroupActions.Edit} a={OrgPermissionSubjects.Groups}>
-            {(isAllowed) => (
-              <div className="mb-4 flex items-center justify-center">
+      ) : (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>
+              {debouncedSearch
+                ? "No projects match this search"
+                : "This group is not a member of any projects"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {debouncedSearch
+                ? "Adjust search filters to view project memberships."
+                : "Add this group to a project."}
+            </EmptyDescription>
+            {!debouncedSearch && !hideAddToProject && (
+              <EmptyContent>
                 <Button
-                  variant="solid"
-                  colorSchema="secondary"
-                  isDisabled={!isAllowed}
-                  onClick={() => {
+                  variant={isSubOrganization ? "sub-org" : "org"}
+                  size="xs"
+                  onClick={() =>
                     handlePopUpOpen("addGroupProjects", {
                       groupId,
                       slug: groupSlug
-                    });
-                  }}
+                    })
+                  }
                 >
-                  Add projects
+                  <PlusIcon />
+                  Add to Project
                 </Button>
-              </div>
+              </EmptyContent>
             )}
-          </OrgPermissionCan>
-        )}
-      </TableContainer>
-    </div>
+          </EmptyHeader>
+        </Empty>
+      )}
+      {Boolean(projects.length) && (
+        <Pagination
+          count={totalCount}
+          page={page}
+          perPage={perPage}
+          onChangePage={setPage}
+          onChangePerPage={handlePerPageChange}
+        />
+      )}
+    </>
   );
 };

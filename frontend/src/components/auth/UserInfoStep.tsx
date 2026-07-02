@@ -1,255 +1,264 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { faXmark } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Eye, EyeOff, X } from "lucide-react";
+import { z } from "zod";
 
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  FieldError,
+  IconButton,
+  Input,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  TextArea
+} from "@app/components/v3";
+import { isInfisicalCloud } from "@app/helpers/platform";
 import { initProjectHelper } from "@app/helpers/project";
-import { completeAccountSignup, useSelectOrganization } from "@app/hooks/api/auth/queries";
+import { getHubSpotUtk } from "@app/helpers/utmTracking";
+import { useCompleteAccountSignup } from "@app/hooks/api/auth/queries";
 import { fetchOrganizations } from "@app/hooks/api/organization/queries";
-import { onRequestError } from "@app/hooks/api/reactQuery";
 
-import InputField from "../basic/InputField";
-import checkPassword from "../utilities/checks/password/checkPassword";
+import { checkIsPasswordBreached } from "../utilities/checks/password/checkIsPasswordBreached";
+import {
+  escapeCharRegex,
+  letterCharRegex,
+  lowEntropyRegexes,
+  numAndSpecialCharRegex,
+  repeatedCharRegex
+} from "../utilities/checks/password/passwordRegexes";
 import SecurityClient from "../utilities/SecurityClient";
-import { Button, Input } from "../v2";
+
+const passwordSchema = z
+  .string()
+  .min(1, "Password is required")
+  .min(14, "at least 14 characters")
+  .max(100, "at most 100 characters")
+  .regex(letterCharRegex, "at least 1 letter character")
+  .regex(numAndSpecialCharRegex, "at least 1 number or special character")
+  .refine((pwd) => !repeatedCharRegex.test(pwd), "at most 3 repeated, consecutive characters")
+  .refine((pwd) => !escapeCharRegex.test(pwd), "No escape characters allowed")
+  .refine(
+    (pwd) => !lowEntropyRegexes.some((regex) => regex.test(pwd)),
+    "Password contains personal info"
+  );
+
+const createUserInfoFormSchema = (isInvite: boolean) =>
+  z.object({
+    name: z.string().min(1, "Please, specify your name"),
+    organizationName: isInvite
+      ? z.string().optional()
+      : z.string().min(1, "Please, specify your organization name").max(64),
+    password: passwordSchema,
+    attributionSource: z.string().optional()
+  });
+
+type UserInfoFormData = z.infer<ReturnType<typeof createUserInfoFormSchema>>;
 
 interface UserInfoStepProps {
-  incrementStep: () => void;
+  onComplete: () => void;
   email: string;
-  password: string;
-  setPassword: (value: string) => void;
-  name: string;
-  setName: (value: string) => void;
-  organizationName: string;
-  setOrganizationName: (value: string) => void;
-  attributionSource: string;
-  setAttributionSource: (value: string) => void;
-  providerAuthToken?: string;
+  isInvite?: boolean;
 }
 
-type Errors = {
-  tooShort?: string;
-  tooLong?: string;
-  noLetterChar?: string;
-  noNumOrSpecialChar?: string;
-  repeatedChar?: string;
-  escapeChar?: string;
-  lowEntropy?: string;
-  breached?: string;
-};
+const BREACH_CHECK_DEBOUNCE_MS = 1000;
 
-/**
- * This is the step of the sign up flow where people provife their name/surname and password
- * @param {object} obj
- * @param {string} obj.verificationToken - the token which we use to verify the legitness of a user
- * @param {string} obj.incrementStep - a function to move to the next signup step
- * @param {string} obj.email - email of a user who is signing up
- * @param {string} obj.password - user's password
- * @param {string} obj.setPassword - function managing the state of user's password
- * @param {string} obj.firstName - user's first name
- * @param {string} obj.setFirstName  - function managing the state of user's first name
- * @param {string} obj.lastName - user's lastName
- * @param {string} obj.setLastName - function managing the state of user's last name
- */
 export default function UserInfoStep({
-  incrementStep,
+  onComplete,
   email,
-  password,
-  setPassword,
-  name,
-  setName,
-  organizationName,
-  setOrganizationName,
-  attributionSource,
-  setAttributionSource,
-  providerAuthToken
+  isInvite = false
 }: UserInfoStepProps): JSX.Element {
-  const [nameError, setNameError] = useState(false);
-  const [organizationNameError, setOrganizationNameError] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [breachWarning, setBreachWarning] = useState<string | null>(null);
+  const breachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [errors, setErrors] = useState<Errors>({});
-
-  const { mutateAsync: selectOrganization } = useSelectOrganization();
-  const [isLoading, setIsLoading] = useState(false);
+  const { mutateAsync: completeSignup, isPending: isLoading } = useCompleteAccountSignup();
   const { t } = useTranslation();
 
-  // Verifies if the information that the users entered (name, workspace)
-  // is there, and if the password matches the criteria.
-  const signupErrorCheck = async () => {
-    setIsLoading(true);
-    let errorCheck = false;
-    if (!name) {
-      setNameError(true);
-      errorCheck = true;
-    } else {
-      setNameError(false);
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors }
+  } = useForm<UserInfoFormData>({
+    resolver: zodResolver(createUserInfoFormSchema(isInvite)),
+    criteriaMode: "all",
+    defaultValues: {
+      name: "",
+      organizationName: "",
+      password: "",
+      attributionSource: ""
     }
-    if (!organizationName) {
-      setOrganizationNameError(true);
-      errorCheck = true;
-    } else {
-      setOrganizationNameError(false);
+  });
+
+  const passwordValue = watch("password");
+  const passwordIssues = errors.password?.types
+    ? (Object.values(errors.password.types).flat().filter(Boolean) as string[])
+    : [];
+
+  const debouncedBreachCheck = useCallback((pwd: string) => {
+    if (breachTimerRef.current) {
+      clearTimeout(breachTimerRef.current);
+    }
+    if (pwd.length < 14) {
+      setBreachWarning(null);
+      return;
+    }
+    breachTimerRef.current = setTimeout(async () => {
+      const isBreached = await checkIsPasswordBreached(pwd);
+      setBreachWarning(isBreached ? "Password was found in a data breach" : null);
+    }, BREACH_CHECK_DEBOUNCE_MS);
+  }, []);
+
+  const onSubmit = async (formData: UserInfoFormData) => {
+    // Run breach check synchronously on submit if not already checked
+    const isBreached = await checkIsPasswordBreached(formData.password);
+    if (isBreached) {
+      setBreachWarning("Password was found in a data breach");
+      return;
     }
 
-    errorCheck = await checkPassword({
-      password,
-      setErrors
+    const response = await completeSignup({
+      type: "email",
+      email,
+      password: formData.password,
+      firstName: formData.name.split(" ")[0],
+      lastName: formData.name.split(" ").slice(1).join(" "),
+      organizationName: formData.organizationName || undefined,
+      attributionSource: formData.attributionSource,
+      hubspotUtk: getHubSpotUtk()
     });
 
-    if (!errorCheck) {
-      try {
-        const response = await completeAccountSignup({
-          email,
-          password,
-          firstName: name.split(" ")[0],
-          lastName: name.split(" ").slice(1).join(" "),
-          providerAuthToken,
-          organizationName,
-          attributionSource
-        });
+    SecurityClient.setSignupToken("");
+    SecurityClient.setToken(response.token);
 
-        // unset signup JWT token and set JWT token
-        SecurityClient.setSignupToken("");
-        SecurityClient.setToken(response.token);
-        SecurityClient.setProviderAuthToken("");
-
-        if (response.organizationId) {
-          await selectOrganization({ organizationId: response.organizationId });
-        }
-
-        const userOrgs = await fetchOrganizations();
-
-        const orgId = userOrgs[0]?.id;
-        await initProjectHelper({
-          projectName: "Example Project"
-        });
-
-        localStorage.setItem("orgData.id", orgId);
-
-        incrementStep();
-      } catch (error) {
-        onRequestError(error);
-        setIsLoading(false);
-        console.error(error);
-      }
-    } else {
-      setIsLoading(false);
+    if (isInfisicalCloud()) {
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push({ event: "signup_completed" });
     }
+
+    const userOrgs = await fetchOrganizations();
+    const orgId = userOrgs[0]?.id;
+
+    if (!isInvite) {
+      await initProjectHelper({
+        projectName: "Example Project"
+      });
+    }
+
+    if (orgId) {
+      localStorage.setItem("orgData.id", orgId);
+    }
+
+    onComplete();
   };
 
-  return (
-    <div className="mx-auto mb-36 h-full w-max rounded-xl md:mb-16 md:px-8">
-      <p className="text-medium mx-8 mb-6 flex justify-center bg-linear-to-b from-white to-bunker-200 bg-clip-text text-xl font-bold text-transparent md:mx-16">
-        {t("signup.step3-message")}
-      </p>
-      <div className="mx-auto mb-36 h-full w-max rounded-xl py-6 md:mb-16 md:border md:border-mineshaft-600 md:bg-mineshaft-800 md:px-8">
-        <div className="relative z-0 flex w-full min-w-[20rem] flex-col items-center justify-end rounded-lg py-2 lg:w-1/6">
-          <p className="mb-1 ml-1 w-full text-left text-sm font-medium text-bunker-300">
-            Your Name
-          </p>
-          <Input
-            placeholder="Jane Doe"
-            onChange={(e) => setName(e.target.value)}
-            value={name}
-            isRequired
-            autoComplete="given-name"
-            className="h-12"
-          />
-          {nameError && (
-            <p className="mt-1 ml-1 w-full text-left text-xs text-red-600">
-              Please, specify your name
-            </p>
-          )}
-        </div>
-        <div className="relative z-0 flex w-full min-w-[20rem] flex-col items-center justify-end rounded-lg py-2 lg:w-1/6">
-          <p className="mb-1 ml-1 w-full text-left text-sm font-medium text-bunker-300">
-            Organization Name
-          </p>
-          <Input
-            placeholder="Infisical"
-            onChange={(e) => setOrganizationName(e.target.value)}
-            value={organizationName}
-            maxLength={64}
-            isRequired
-            className="h-12"
-          />
-          {organizationNameError && (
-            <p className="mt-1 ml-1 w-full text-left text-xs text-red-600">
-              Please, specify your organization name
-            </p>
-          )}
-        </div>
-        <div className="relative z-0 flex w-full min-w-[20rem] flex-col items-center justify-end rounded-lg py-2 lg:w-1/6">
-          <p className="mb-1 ml-1 w-full text-left text-sm font-medium text-bunker-300">
-            Where did you hear about us? <span className="font-light">(optional)</span>
-          </p>
-          <Input
-            placeholder=""
-            onChange={(e) => setAttributionSource(e.target.value)}
-            value={attributionSource}
-            className="h-12"
-          />
-        </div>
-        <div className="mt-2 flex max-h-60 w-full min-w-[20rem] flex-col items-center justify-center rounded-lg py-2 lg:w-1/6">
-          <InputField
-            label={t("section.password.password")}
-            onChangeHandler={async (pass: string) => {
-              setPassword(pass);
-              await checkPassword({
-                password: pass,
-                setErrors
-              });
-            }}
-            type="password"
-            value={password}
-            isRequired
-            error={Object.keys(errors).length > 0}
-            autoComplete="new-password"
-            id="new-password"
-          />
-          {Object.keys(errors).length > 0 && (
-            <div className="mt-4 flex w-full flex-col items-start rounded-md bg-white/5 px-2 py-2">
-              <div className="mb-2 text-sm text-gray-400">
-                {t("section.password.validate-base")}
-              </div>
-              {Object.keys(errors).map((key) => {
-                if (errors[key as keyof Errors]) {
-                  return (
-                    <div className="items-top ml-1 flex flex-row justify-start" key={key}>
-                      <div>
-                        <FontAwesomeIcon
-                          icon={faXmark}
-                          className="text-md mr-2.5 ml-0.5 text-red"
-                        />
-                      </div>
-                      <p className="text-sm text-gray-400">{errors[key as keyof Errors]}</p>
-                    </div>
-                  );
-                }
+  const allIssues = [...passwordIssues, ...(breachWarning ? [breachWarning] : [])];
 
-                return null;
-              })}
-            </div>
+  return (
+    <div className="mx-auto flex w-full flex-col items-center justify-center">
+      <Card className="mx-auto w-full max-w-sm items-stretch gap-0 p-6">
+        <CardHeader className="mb-4 gap-2">
+          <CardTitle className="bg-linear-to-b from-white to-bunker-200 bg-clip-text text-[1.65rem] font-medium text-transparent">
+            {isInvite ? "Set up your account" : t("signup.step3-message")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex w-full flex-col items-stretch py-2">
+            <p className="mb-1 ml-1 text-sm font-medium text-bunker-300">Your Name</p>
+            <Input
+              {...register("name")}
+              placeholder="Jane Doe"
+              autoComplete="given-name"
+              isError={!!errors.name}
+            />
+            {errors.name && <FieldError>{errors.name.message}</FieldError>}
+          </div>
+          {!isInvite && (
+            <>
+              <div className="flex w-full flex-col items-stretch py-2">
+                <p className="mb-1 ml-1 text-sm font-medium text-bunker-300">Organization Name</p>
+                <Input
+                  {...register("organizationName")}
+                  placeholder="Infisical"
+                  maxLength={64}
+                  isError={!!errors.organizationName}
+                />
+                {errors.organizationName && (
+                  <FieldError>{errors.organizationName.message}</FieldError>
+                )}
+              </div>
+              <div className="flex w-full flex-col items-stretch py-2">
+                <p className="mb-1 ml-1 text-sm font-medium text-bunker-300">
+                  Where did you hear about us? <span className="font-light">(optional)</span>
+                </p>
+                <TextArea {...register("attributionSource")} placeholder="" rows={2} />
+              </div>
+            </>
           )}
-        </div>
-        <div className="mx-auto mt-2 flex w-1/4 max-w-xs min-w-[20rem] flex-col items-center justify-center text-center text-sm md:max-w-md md:text-left lg:w-[19%]">
-          <div className="text-l w-full py-1 text-lg">
+          <div className="flex w-full flex-col items-stretch py-2">
+            <p className="mb-1 ml-1 text-sm font-medium text-bunker-300">
+              {t("section.password.password")}
+            </p>
+            <InputGroup className="h-10">
+              <InputGroupInput
+                {...register("password", {
+                  onChange(e) {
+                    setBreachWarning(null);
+                    debouncedBreachCheck(e.target.value);
+                  }
+                })}
+                type={showPassword ? "text" : "password"}
+                placeholder="Enter a strong password..."
+                autoComplete="new-password"
+                id="new-password"
+              />
+              <InputGroupAddon align="inline-end">
+                <IconButton
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff /> : <Eye />}
+                </IconButton>
+              </InputGroupAddon>
+            </InputGroup>
+            {allIssues.length > 0 && passwordValue.length > 0 && (
+              <div className="mt-4 flex w-full flex-col items-start rounded-md border border-border bg-container px-3 py-2.5">
+                <div className="mb-1 text-sm text-gray-400">
+                  {t("section.password.validate-base")}
+                </div>
+                {allIssues.map((issue) => (
+                  <div className="items-top flex flex-row justify-start" key={issue}>
+                    <X className="mt-0.5 mr-2 size-4 shrink-0 text-danger" />
+                    <p className="text-sm text-gray-400">{issue}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="mt-4 w-full">
             <Button
               type="submit"
-              onClick={signupErrorCheck}
-              size="sm"
+              onClick={handleSubmit(onSubmit)}
+              variant="project"
+              size="lg"
               isFullWidth
-              className="h-14"
-              colorSchema="primary"
-              variant="outline_bg"
-              isLoading={isLoading}
+              isPending={isLoading}
+              isDisabled={isLoading}
             >
-              {" "}
-              {String(t("signup.signup"))}{" "}
+              {String(t("signup.signup"))}
             </Button>
           </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

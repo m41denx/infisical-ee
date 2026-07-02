@@ -15,7 +15,11 @@ import {
 } from "@app/ee/services/permission/project-permission";
 import { auth0ClientSecretRotationFactory } from "@app/ee/services/secret-rotation-v2/auth0-client-secret/auth0-client-secret-rotation-fns";
 import { azureClientSecretRotationFactory } from "@app/ee/services/secret-rotation-v2/azure-client-secret/azure-client-secret-rotation-fns";
+import { convexAccessKeyRotationFactory } from "@app/ee/services/secret-rotation-v2/convex-access-key/convex-access-key-rotation-fns";
+import { databricksServicePrincipalSecretRotationFactory } from "@app/ee/services/secret-rotation-v2/databricks-service-principal-secret/databricks-service-principal-secret-rotation-fns";
+import { datadogApplicationKeySecretRotationFactory } from "@app/ee/services/secret-rotation-v2/datadog-application-key-secret/datadog-application-key-secret-rotation-fns";
 import { ldapPasswordRotationFactory } from "@app/ee/services/secret-rotation-v2/ldap-password/ldap-password-rotation-fns";
+import { salesforceOauthCredentialsRotationFactory } from "@app/ee/services/secret-rotation-v2/salesforce-oauth-credentials/salesforce-oauth-credentials-rotation-fns";
 import { SecretRotation, SecretRotationStatus } from "@app/ee/services/secret-rotation-v2/secret-rotation-v2-enums";
 import {
   calculateNextRotationAt,
@@ -24,6 +28,7 @@ import {
   expandSecretRotation,
   getNextUtcRotationInterval,
   getSecretRotationRotateSecretJobOptions,
+  getWebhookSanitizedErrorMessage,
   listSecretRotationOptions,
   parseRotationErrorMessage,
   throwOnImmutableParameterUpdate
@@ -33,6 +38,7 @@ import {
   SECRET_ROTATION_NAME_MAP
 } from "@app/ee/services/secret-rotation-v2/secret-rotation-v2-maps";
 import {
+  TCheckSecretRotationV2Credentials,
   TCreateSecretRotationV2DTO,
   TDeleteSecretRotationV2DTO,
   TFindSecretRotationV2ByIdDTO,
@@ -40,12 +46,14 @@ import {
   TGetDashboardSecretRotationsV2,
   TGetDashboardSecretRotationV2Count,
   TListSecretRotationsV2ByProjectId,
+  TMoveSecretRotationV2DTO,
   TQuickSearchSecretRotationsV2,
   TRotateSecretRotationV2,
   TRotationFactory,
   TSecretRotationRotateGeneratedCredentials,
   TSecretRotationV2,
   TSecretRotationV2GeneratedCredentials,
+  TSecretRotationV2PermissionContext,
   TSecretRotationV2Raw,
   TSecretRotationV2TemporaryParameters,
   TSecretRotationV2WithConnection,
@@ -58,7 +66,7 @@ import { getConfig } from "@app/lib/config/env";
 import { DatabaseErrorCode } from "@app/lib/error-codes";
 import { BadRequestError, DatabaseError, InternalServerError, NotFoundError } from "@app/lib/errors";
 import { OrderByDirection, OrgServiceActor } from "@app/lib/types";
-import { QueueJobs, TQueueServiceFactory } from "@app/queue";
+import { QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue";
 import { TAppConnectionDALFactory } from "@app/services/app-connection/app-connection-dal";
 import { decryptAppConnection } from "@app/services/app-connection/app-connection-fns";
 import { TAppConnectionServiceFactory } from "@app/services/app-connection/app-connection-service";
@@ -77,16 +85,49 @@ import {
   fnSecretBulkDelete,
   fnSecretBulkInsert,
   fnSecretBulkUpdate,
+  fnUpdateMovedSecretReferences,
   reshapeBridgeSecret
 } from "@app/services/secret-v2-bridge/secret-v2-bridge-fns";
 import { TSecretVersionV2DALFactory } from "@app/services/secret-v2-bridge/secret-version-dal";
 import { TSecretVersionV2TagDALFactory } from "@app/services/secret-v2-bridge/secret-version-tag-dal";
+import { convertSecretRotationToValidationRuleProvider } from "@app/services/secret-validation-rule/secret-validation-rule-fns";
+import { TSecretValidationRuleServiceFactory } from "@app/services/secret-validation-rule/secret-validation-rule-service";
+import { SecretValidationRuleType } from "@app/services/secret-validation-rule/secret-validation-rule-types";
+import { TTelemetryServiceFactory } from "@app/services/telemetry/telemetry-service";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
+import { WebhookEvents } from "@app/services/webhook/webhook-types";
 
+import { TGatewayPoolServiceFactory } from "../gateway-pool/gateway-pool-service";
 import { TGatewayV2ServiceFactory } from "../gateway-v2/gateway-v2-service";
 import { awsIamUserSecretRotationFactory } from "./aws-iam-user-secret/aws-iam-user-secret-rotation-fns";
+import { dbtServiceTokenRotationFactory } from "./dbt-service-token/dbt-service-token-rotation-fns";
+import { hpIloRotationFactory } from "./hp-ilo-rotation/hp-ilo-rotation-fns";
+import { HpIloRotationMethod } from "./hp-ilo-rotation/hp-ilo-rotation-schemas";
+import { THpIloRotation, THpIloRotationGeneratedCredentials } from "./hp-ilo-rotation/hp-ilo-rotation-types";
+import { mongodbCredentialsRotationFactory } from "./mongodb-credentials/mongodb-credentials-rotation-fns";
 import { oktaClientSecretRotationFactory } from "./okta-client-secret/okta-client-secret-rotation-fns";
+import { openRouterApiKeyRotationFactory } from "./open-router-api-key/open-router-api-key-rotation-fns";
 import { redisCredentialsRotationFactory } from "./redis-credentials/redis-credentials-rotation-fns";
 import { TSecretRotationV2DALFactory } from "./secret-rotation-v2-dal";
+import { supabaseApiKeyRotationFactory } from "./supabase-api-key/supabase-api-key-rotation-fns";
+import { unixLinuxLocalAccountRotationFactory } from "./unix-linux-local-account-rotation/unix-linux-local-account-rotation-fns";
+import { UnixLinuxLocalAccountRotationMethod } from "./unix-linux-local-account-rotation/unix-linux-local-account-rotation-schemas";
+import {
+  TUnixLinuxLocalAccountRotation,
+  TUnixLinuxLocalAccountRotationGeneratedCredentials
+} from "./unix-linux-local-account-rotation/unix-linux-local-account-rotation-types";
+import { windowsLocalAccountRotationFactory } from "./windows-local-account-rotation/windows-local-account-rotation-fns";
+import { WindowsLocalAccountRotationMethod } from "./windows-local-account-rotation/windows-local-account-rotation-schemas";
+import {
+  TWindowsLocalAccountRotation,
+  TWindowsLocalAccountRotationGeneratedCredentials
+} from "./windows-local-account-rotation/windows-local-account-rotation-types";
+
+type TLocalAccountRotation = TUnixLinuxLocalAccountRotation | TWindowsLocalAccountRotation | THpIloRotation;
+type TLocalAccountRotationGeneratedCredentials =
+  | TUnixLinuxLocalAccountRotationGeneratedCredentials
+  | TWindowsLocalAccountRotationGeneratedCredentials
+  | THpIloRotationGeneratedCredentials;
 
 export type TSecretRotationV2ServiceFactoryDep = {
   secretRotationV2DAL: TSecretRotationV2DALFactory;
@@ -97,22 +138,37 @@ export type TSecretRotationV2ServiceFactoryDep = {
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
   auditLogService: Pick<TAuditLogServiceFactory, "createAuditLog">;
   keyStore: Pick<TKeyStoreFactory, "acquireLock" | "setItemWithExpiry" | "getItem">;
-  folderDAL: Pick<TSecretFolderDALFactory, "findBySecretPath" | "findBySecretPathMultiEnv">;
+  folderDAL: Pick<
+    TSecretFolderDALFactory,
+    "findBySecretPath" | "findBySecretPathMultiEnv" | "findSecretPathByFolderIds"
+  >;
   secretV2BridgeDAL: Pick<
     TSecretV2BridgeDALFactory,
-    "bulkUpdate" | "insertMany" | "deleteMany" | "upsertSecretReferences" | "find" | "invalidateSecretCacheByProjectId"
+    | "bulkUpdate"
+    | "insertMany"
+    | "deleteMany"
+    | "upsertSecretReferences"
+    | "find"
+    | "findOne"
+    | "updateById"
+    | "findReferencedSecretReferencesBySecretKey"
+    | "updateSecretReferenceEnvAndPath"
+    | "invalidateSecretCacheByProjectId"
   >;
-  secretVersionV2BridgeDAL: Pick<TSecretVersionV2DALFactory, "insertMany" | "findLatestVersionMany">;
+  secretVersionV2BridgeDAL: Pick<TSecretVersionV2DALFactory, "insertMany" | "findLatestVersionMany" | "update">;
   secretVersionTagV2BridgeDAL: Pick<TSecretVersionV2TagDALFactory, "insertMany">;
   resourceMetadataDAL: Pick<TResourceMetadataDALFactory, "insertMany" | "delete">;
   secretTagDAL: Pick<TSecretTagDALFactory, "saveTagsToSecretV2" | "deleteTagsToSecretV2" | "find">;
   secretQueueService: Pick<TSecretQueueFactory, "syncSecrets" | "removeSecretReminder">;
   snapshotService: Pick<TSecretSnapshotServiceFactory, "performSnapshot">;
-  queueService: Pick<TQueueServiceFactory, "queuePg">;
+  queueService: Pick<TQueueServiceFactory, "queue">;
   appConnectionDAL: Pick<TAppConnectionDALFactory, "findById" | "update" | "updateById">;
   folderCommitService: Pick<TFolderCommitServiceFactory, "createCommit">;
   gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">;
   gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
+  gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
+  telemetryService: Pick<TTelemetryServiceFactory, "sendPostHogEvents">;
+  secretValidationRuleService: Pick<TSecretValidationRuleServiceFactory, "findConstraintsForGeneratedSecret">;
 };
 
 export type TSecretRotationV2ServiceFactory = ReturnType<typeof secretRotationV2ServiceFactory>;
@@ -134,7 +190,21 @@ const SECRET_ROTATION_FACTORY_MAP: Record<SecretRotation, TRotationFactoryImplem
   [SecretRotation.AwsIamUserSecret]: awsIamUserSecretRotationFactory as TRotationFactoryImplementation,
   [SecretRotation.LdapPassword]: ldapPasswordRotationFactory as TRotationFactoryImplementation,
   [SecretRotation.OktaClientSecret]: oktaClientSecretRotationFactory as TRotationFactoryImplementation,
-  [SecretRotation.RedisCredentials]: redisCredentialsRotationFactory as TRotationFactoryImplementation
+  [SecretRotation.RedisCredentials]: redisCredentialsRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.MongoDBCredentials]: mongodbCredentialsRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.DatabricksServicePrincipalSecret]:
+    databricksServicePrincipalSecretRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.UnixLinuxLocalAccount]: unixLinuxLocalAccountRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.DbtServiceToken]: dbtServiceTokenRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.WindowsLocalAccount]: windowsLocalAccountRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.OpenRouterApiKey]: openRouterApiKeyRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.HpIloLocalAccount]: hpIloRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.SupabaseApiKey]: supabaseApiKeyRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.SalesforceOauthCredentials]:
+    salesforceOauthCredentialsRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.DatadogApplicationKeySecret]:
+    datadogApplicationKeySecretRotationFactory as TRotationFactoryImplementation,
+  [SecretRotation.ConvexAccessKey]: convexAccessKeyRotationFactory as TRotationFactoryImplementation
 };
 
 export const secretRotationV2ServiceFactory = ({
@@ -158,22 +228,76 @@ export const secretRotationV2ServiceFactory = ({
   folderCommitService,
   appConnectionDAL,
   gatewayService,
-  gatewayV2Service
+  gatewayV2Service,
+  gatewayPoolService,
+  telemetryService,
+  secretValidationRuleService
 }: TSecretRotationV2ServiceFactoryDep) => {
+  const $resolvePasswordValidationContext = async ({
+    projectId,
+    envId,
+    secretPath,
+    type
+  }: {
+    projectId: string;
+    envId: string;
+    secretPath: string;
+    type: SecretRotation;
+  }) => {
+    const provider = convertSecretRotationToValidationRuleProvider(type);
+    if (!provider) return undefined;
+
+    const matched = await secretValidationRuleService.findConstraintsForGeneratedSecret({
+      projectId,
+      envId,
+      secretPath,
+      type: SecretValidationRuleType.SecretRotations,
+      provider
+    });
+    if (!matched.constraints.length) return undefined;
+    return matched;
+  };
+
   const $queueSendSecretRotationStatusNotification = async (secretRotation: TSecretRotationV2Raw) => {
     const appCfg = getConfig();
     if (!appCfg.isSmtpConfigured) return; // comment out if testing email sending
 
-    await queueService.queuePg(
+    const { name, type, projectId, lastRotationAttemptedAt, folder, environment, id } = secretRotation;
+
+    await queueService.queue(
+      QueueName.SecretRotationV2,
       QueueJobs.SecretRotationV2SendNotification,
-      { secretRotation },
+      { secretRotation: { name, type, projectId, lastRotationAttemptedAt, folder, environment, id } },
       {
-        jobId: `secret-rotation-v2-notification-${secretRotation.id}`,
-        retryLimit: 5,
-        retryBackoff: true
+        jobId: `secret-rotation-v2-notifications-${secretRotation.id}`,
+        attempts: 5,
+        backoff: {
+          type: "exponential",
+          delay: 1000
+        }
       }
     );
   };
+
+  const $findConflictingSecrets = async ({
+    secretKeys,
+    folderId,
+    tx
+  }: {
+    secretKeys: string[];
+    folderId: string;
+    tx?: Knex;
+  }) =>
+    secretV2BridgeDAL.find(
+      {
+        $in: {
+          [`${TableName.SecretV2}.key` as "key"]: secretKeys
+        },
+        [`${TableName.SecretV2}.folderId` as "folderId"]: folderId,
+        [`${TableName.SecretV2}.type` as "type"]: SecretType.Shared
+      },
+      tx ? { tx } : undefined
+    );
 
   const $throwOnConflictingSecrets = async ({
     secretKeys,
@@ -183,7 +307,7 @@ export const secretRotationV2ServiceFactory = ({
   }: {
     secretKeys: string[];
     folderId: string;
-    tx: Knex;
+    tx?: Knex;
     secretPath: string;
   }) => {
     if (new Set(secretKeys).size !== secretKeys.length) {
@@ -192,16 +316,7 @@ export const secretRotationV2ServiceFactory = ({
       });
     }
 
-    const conflictingSecrets = await secretV2BridgeDAL.find(
-      {
-        $in: {
-          [`${TableName.SecretV2}.key` as "key"]: secretKeys
-        },
-        [`${TableName.SecretV2}.folderId` as "folderId"]: folderId,
-        [`${TableName.SecretV2}.type` as "type"]: SecretType.Shared
-      },
-      { tx }
-    );
+    const conflictingSecrets = await $findConflictingSecrets({ secretKeys, folderId, tx });
 
     if (conflictingSecrets.length) {
       throw new BadRequestError({
@@ -210,6 +325,26 @@ export const secretRotationV2ServiceFactory = ({
           .join(", ")}`
       });
     }
+  };
+
+  const getSecretRotationSubject = (
+    rotation: {
+      environment?: { slug: string };
+      folder?: { path: string };
+      connection?: { id: string };
+    },
+    overrides?: { environment?: string; secretPath?: string; connectionId?: string }
+  ) => {
+    const connectionId = overrides?.connectionId ?? rotation.connection?.id;
+    const envSlug = overrides?.environment ?? rotation.environment?.slug;
+    const secretPath = overrides?.secretPath ?? rotation.folder?.path;
+    const hasAny = connectionId || envSlug || secretPath;
+    if (!hasAny) return ProjectPermissionSub.SecretRotation;
+    return subject(ProjectPermissionSub.SecretRotation, {
+      ...(envSlug && { environment: envSlug }),
+      ...(secretPath && { secretPath }),
+      ...(connectionId && { connectionId })
+    });
   };
 
   const listSecretRotationsByProjectId = async (
@@ -245,13 +380,7 @@ export const secretRotationV2ServiceFactory = ({
     return Promise.all(
       secretRotations
         .filter((rotation) =>
-          permission.can(
-            ProjectPermissionSecretRotationActions.Read,
-            subject(ProjectPermissionSub.SecretRotation, {
-              environment: rotation.environment.slug,
-              secretPath: rotation.folder.path
-            })
-          )
+          permission.can(ProjectPermissionSecretRotationActions.Read, getSecretRotationSubject(rotation))
         )
         .map((rotation) => expandSecretRotation(rotation, kmsService))
     );
@@ -272,7 +401,7 @@ export const secretRotationV2ServiceFactory = ({
         message: `Could not find ${SECRET_ROTATION_NAME_MAP[type]} Rotation with ID "${rotationId}"`
       });
 
-    const { projectId, environment, folder, connection } = secretRotation;
+    const { projectId, connection } = secretRotation;
 
     const { permission } = await permissionService.getProjectPermission({
       actor: actor.type,
@@ -285,10 +414,7 @@ export const secretRotationV2ServiceFactory = ({
 
     ForbiddenError.from(permission).throwUnlessCan(
       ProjectPermissionSecretRotationActions.Read,
-      subject(ProjectPermissionSub.SecretRotation, {
-        environment: environment.slug,
-        secretPath: folder.path
-      })
+      getSecretRotationSubject(secretRotation)
     );
 
     if (connection.app !== SECRET_ROTATION_CONNECTION_MAP[type])
@@ -318,7 +444,7 @@ export const secretRotationV2ServiceFactory = ({
         message: `Could not find ${SECRET_ROTATION_NAME_MAP[type]} Rotation with ID "${rotationId}"`
       });
 
-    const { projectId, environment, folder, connection, encryptedGeneratedCredentials } = secretRotation;
+    const { projectId, connection, encryptedGeneratedCredentials } = secretRotation;
 
     const { permission } = await permissionService.getProjectPermission({
       actor: actor.type,
@@ -331,10 +457,7 @@ export const secretRotationV2ServiceFactory = ({
 
     ForbiddenError.from(permission).throwUnlessCan(
       ProjectPermissionSecretRotationActions.ReadGeneratedCredentials,
-      subject(ProjectPermissionSub.SecretRotation, {
-        environment: environment.slug,
-        secretPath: folder.path
-      })
+      getSecretRotationSubject(secretRotation)
     );
 
     if (connection.app !== SECRET_ROTATION_CONNECTION_MAP[type])
@@ -396,10 +519,7 @@ export const secretRotationV2ServiceFactory = ({
 
     ForbiddenError.from(permission).throwUnlessCan(
       ProjectPermissionSecretRotationActions.Read,
-      subject(ProjectPermissionSub.SecretRotation, {
-        environment,
-        secretPath
-      })
+      getSecretRotationSubject(secretRotation)
     );
 
     if (connection.app !== SECRET_ROTATION_CONNECTION_MAP[type])
@@ -448,7 +568,11 @@ export const secretRotationV2ServiceFactory = ({
 
     ForbiddenError.from(permission).throwUnlessCan(
       ProjectPermissionSecretRotationActions.Create,
-      subject(ProjectPermissionSub.SecretRotation, { environment, secretPath })
+      getSecretRotationSubject({
+        environment: { slug: environment },
+        folder: { path: secretPath },
+        connection: payload.connectionId ? { id: payload.connectionId } : undefined
+      })
     );
 
     const folder = await folderDAL.findBySecretPath(projectId, environment, secretPath);
@@ -467,6 +591,13 @@ export const secretRotationV2ServiceFactory = ({
       actor
     );
 
+    const passwordValidationContext = await $resolvePasswordValidationContext({
+      projectId,
+      envId: folder.envId,
+      secretPath,
+      type: payload.type
+    });
+
     const rotationFactory = SECRET_ROTATION_FACTORY_MAP[payload.type](
       {
         parameters: payload.parameters,
@@ -477,11 +608,13 @@ export const secretRotationV2ServiceFactory = ({
       appConnectionDAL,
       kmsService,
       gatewayService,
-      gatewayV2Service
+      gatewayV2Service,
+      gatewayPoolService,
+      passwordValidationContext
     );
 
-    // even though we have a db constraint we want to check before any rotation of credentials is attempted
-    // to prevent creation failure after external credentials have been modified
+    // Perform ALL validation checks BEFORE rotating credentials on the external system.
+    // Check 1: Ensure no rotation with the same name exists at this path
     const conflictingRotation = await secretRotationV2DAL.findOne({
       name: payload.name,
       folderId: folder.id
@@ -491,6 +624,14 @@ export const secretRotationV2ServiceFactory = ({
       throw new BadRequestError({
         message: `A Secret Rotation with the name "${payload.name}" already exists at the secret path "${secretPath}"`
       });
+
+    // Check 2: Ensure no secrets with the mapped names already exist at this path
+    // We do this check outside the transaction to fail fast before any credential rotation
+    await $throwOnConflictingSecrets({
+      secretPath,
+      secretKeys: Object.values(secretsMapping),
+      folderId: folder.id
+    });
 
     try {
       const currentTime = new Date();
@@ -506,6 +647,7 @@ export const secretRotationV2ServiceFactory = ({
         return secretRotationV2DAL.transaction(async (tx) => {
           await tx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.SecretRotationV2Creation(folder.id)]);
 
+          // We repeat the check here to handle race conditions
           await $throwOnConflictingSecrets({
             secretPath,
             secretKeys: Object.values(secretsMapping),
@@ -537,22 +679,27 @@ export const secretRotationV2ServiceFactory = ({
 
           const secretsPayload = rotationFactory.getSecretsPayload(newCredentials);
 
-          const { encryptor } = await kmsService.createCipherPairWithDataKey({
+          const { encryptor, generateSecretBlindIndex } = await kmsService.createCipherPairWithDataKey({
             type: KmsDataKey.SecretManager,
             projectId
           });
+
+          const inputSecretsWithBlindIndex = await Promise.all(
+            secretsPayload.map(async ({ key, value }) => ({
+              key,
+              encryptedValue: encryptor({
+                plainText: Buffer.from(value)
+              }).cipherTextBlob,
+              secretValueBlindIndex: await generateSecretBlindIndex(Buffer.from(value)),
+              references: []
+            }))
+          );
 
           const mappedSecrets = await fnSecretBulkInsert({
             folderId: folder.id,
             orgId: connection.orgId,
             tx,
-            inputSecrets: secretsPayload.map(({ key, value }) => ({
-              key,
-              encryptedValue: encryptor({
-                plainText: Buffer.from(value)
-              }).cipherTextBlob,
-              references: []
-            })),
+            inputSecrets: inputSecretsWithBlindIndex,
             secretDAL: secretV2BridgeDAL,
             secretVersionDAL: secretVersionV2BridgeDAL,
             secretVersionTagDAL: secretVersionTagV2BridgeDAL,
@@ -584,6 +731,7 @@ export const secretRotationV2ServiceFactory = ({
         secretPath,
         projectId,
         environmentSlug: environment,
+        environmentName: folder.environment.name,
         excludeReplication: true
       });
 
@@ -647,10 +795,7 @@ export const secretRotationV2ServiceFactory = ({
 
     ForbiddenError.from(permission).throwUnlessCan(
       ProjectPermissionSecretRotationActions.Edit,
-      subject(ProjectPermissionSub.SecretRotation, {
-        environment: environment.slug,
-        secretPath: folder.path
-      })
+      getSecretRotationSubject(secretRotation)
     );
 
     if (connection.app !== SECRET_ROTATION_CONNECTION_MAP[type])
@@ -727,13 +872,15 @@ export const secretRotationV2ServiceFactory = ({
           secretPath: folder.path,
           projectId,
           environmentSlug: environment.slug,
+          environmentName: environment.name,
           excludeReplication: true
         });
       }
 
       // queue for rotation if adjusted time falls before next cron
       if (nextRotationAt && nextRotationAt.getTime() < getNextUtcRotationInterval().getTime()) {
-        await queueService.queuePg(
+        await queueService.queue(
+          QueueName.SecretRotationV2RotateSecrets,
           QueueJobs.SecretRotationV2RotateSecrets,
           { rotationId, queuedAt: new Date(), isManualRotation: true },
           getSecretRotationRotateSecretJobOptions(updatedSecretRotation)
@@ -769,13 +916,6 @@ export const secretRotationV2ServiceFactory = ({
     { type, rotationId, deleteSecrets, revokeGeneratedCredentials }: TDeleteSecretRotationV2DTO,
     actor: OrgServiceActor
   ) => {
-    const plan = await licenseService.getPlan(actor.orgId);
-
-    if (!plan.secretRotation)
-      throw new BadRequestError({
-        message: "Failed to delete secret rotation due to plan restriction. Upgrade plan to delete secret rotation."
-      });
-
     const secretRotation = await secretRotationV2DAL.findById(rotationId);
 
     if (!secretRotation)
@@ -797,10 +937,7 @@ export const secretRotationV2ServiceFactory = ({
 
     ForbiddenError.from(permission).throwUnlessCan(
       ProjectPermissionSecretRotationActions.Delete,
-      subject(ProjectPermissionSub.SecretRotation, {
-        environment: environment.slug,
-        secretPath: folder.path
-      })
+      getSecretRotationSubject(secretRotation)
     );
 
     if (connection.app !== SECRET_ROTATION_CONNECTION_MAP[type])
@@ -834,6 +971,13 @@ export const secretRotationV2ServiceFactory = ({
     if (revokeGeneratedCredentials) {
       const appConnection = await decryptAppConnection(connection, kmsService);
 
+      const passwordValidationContext = await $resolvePasswordValidationContext({
+        projectId,
+        envId: environment.id,
+        secretPath: folder.path,
+        type
+      });
+
       const rotationFactory = SECRET_ROTATION_FACTORY_MAP[type](
         {
           ...secretRotation,
@@ -842,7 +986,9 @@ export const secretRotationV2ServiceFactory = ({
         appConnectionDAL,
         kmsService,
         gatewayService,
-        gatewayV2Service
+        gatewayV2Service,
+        gatewayPoolService,
+        passwordValidationContext
       );
 
       const generatedCredentials = await decryptSecretRotationCredentials({
@@ -864,11 +1010,264 @@ export const secretRotationV2ServiceFactory = ({
         secretPath: folder.path,
         projectId,
         environmentSlug: environment.slug,
+        environmentName: environment.name,
         excludeReplication: true
       });
     }
 
     return expandSecretRotation(secretRotation, kmsService);
+  };
+
+  const moveSecretRotation = async (
+    { type, rotationId, destinationEnvironment, destinationSecretPath, overwriteDestination }: TMoveSecretRotationV2DTO,
+    actor: OrgServiceActor
+  ) => {
+    const plan = await licenseService.getPlan(actor.orgId);
+
+    if (!plan.secretRotation)
+      throw new BadRequestError({
+        message: "Failed to move secret rotation due to plan restriction. Upgrade plan to manage secret rotations."
+      });
+
+    const secretRotation = await secretRotationV2DAL.findById(rotationId);
+
+    if (!secretRotation)
+      throw new NotFoundError({
+        message: `Could not find ${SECRET_ROTATION_NAME_MAP[type]} Rotation with ID "${rotationId}"`
+      });
+
+    const { projectId, folderId: sourceFolderId, secretsMapping, folder, environment, connection } = secretRotation;
+
+    if (connection.app !== SECRET_ROTATION_CONNECTION_MAP[type])
+      throw new BadRequestError({
+        message: `Secret Rotation with ID "${rotationId}" is not configured for ${SECRET_ROTATION_NAME_MAP[type]}`
+      });
+
+    const isRotationOccurring = Boolean(await keyStore.getItem(KeyStorePrefixes.SecretRotationLock(secretRotation.id)));
+
+    if (isRotationOccurring)
+      throw new BadRequestError({
+        message: "A rotation is currently in progress for this secret rotation. Please try again shortly."
+      });
+
+    const { permission } = await permissionService.getProjectPermission({
+      actor: actor.type,
+      actorId: actor.id,
+      actorAuthMethod: actor.authMethod,
+      actorOrgId: actor.orgId,
+      actionProjectType: ActionProjectType.SecretManager,
+      projectId
+    });
+
+    ForbiddenError.from(permission).throwUnlessCan(
+      ProjectPermissionSecretRotationActions.Delete,
+      getSecretRotationSubject(secretRotation)
+    );
+
+    const destinationFolder = await folderDAL.findBySecretPath(
+      projectId,
+      destinationEnvironment,
+      destinationSecretPath
+    );
+
+    if (!destinationFolder)
+      throw new NotFoundError({
+        message: `Destination folder with path "${destinationSecretPath}" in environment "${destinationEnvironment}" not found`
+      });
+
+    if (destinationFolder.id === sourceFolderId)
+      throw new BadRequestError({
+        message: "Source and destination locations are the same"
+      });
+
+    ForbiddenError.from(permission).throwUnlessCan(
+      ProjectPermissionSecretRotationActions.Create,
+      getSecretRotationSubject(secretRotation, {
+        environment: destinationEnvironment,
+        secretPath: destinationSecretPath
+      })
+    );
+
+    const mappedKeys = Object.values(secretsMapping as TSecretRotationV2["secretsMapping"]);
+
+    const {
+      encryptor: secretManagerEncryptor,
+      decryptor: secretManagerDecryptor,
+      generateSecretBlindIndex
+    } = await kmsService.createCipherPairWithDataKey({
+      type: KmsDataKey.SecretManager,
+      projectId
+    });
+
+    const updatedRotation = await secretRotationV2DAL.transaction(async (tx) => {
+      const conflictingRotation = await secretRotationV2DAL.findOne({
+        name: secretRotation.name,
+        folderId: destinationFolder.id
+      });
+
+      if (conflictingRotation)
+        throw new BadRequestError({
+          message: `A Secret Rotation with the name "${secretRotation.name}" already exists at the secret path "${destinationSecretPath}"`
+        });
+
+      const conflictingDestinationSecrets = await $findConflictingSecrets({
+        secretKeys: mappedKeys,
+        folderId: destinationFolder.id
+      });
+
+      if (conflictingDestinationSecrets.length && !overwriteDestination) {
+        throw new BadRequestError({
+          message: `The following secrets already exist at the destination path "${destinationSecretPath}": ${conflictingDestinationSecrets
+            .map(({ key }) => key)
+            .join(", ")}. Set "overwriteDestination" to true to replace them.`
+        });
+      }
+
+      if (conflictingDestinationSecrets.length && overwriteDestination) {
+        // Require secret-level delete permission.
+        conflictingDestinationSecrets.forEach((conflictingSecret) => {
+          ForbiddenError.from(permission).throwUnlessCan(
+            ProjectPermissionSecretActions.Delete,
+            subject(ProjectPermissionSub.Secrets, {
+              environment: destinationEnvironment,
+              secretPath: destinationSecretPath,
+              secretName: conflictingSecret.key,
+              secretTags: conflictingSecret.tags?.map((el) => el.slug)
+            })
+          );
+        });
+
+        await secretV2BridgeDAL.deleteMany(
+          conflictingDestinationSecrets.map((s) => ({ key: s.key, type: SecretType.Shared })),
+          destinationFolder.id,
+          actor.id,
+          tx
+        );
+      }
+
+      const sourceSecrets = await secretV2BridgeDAL.find(
+        {
+          $in: {
+            [`${TableName.SecretV2}.key` as "key"]: mappedKeys
+          },
+          [`${TableName.SecretV2}.folderId` as "folderId"]: sourceFolderId,
+          [`${TableName.SecretV2}.type` as "type"]: SecretType.Shared
+        },
+        { tx }
+      );
+
+      if (sourceSecrets.length) {
+        await tx(TableName.SecretV2)
+          .whereIn(
+            "id",
+            sourceSecrets.map((s) => s.id)
+          )
+          .update({ folderId: destinationFolder.id });
+
+        await secretVersionV2BridgeDAL.update(
+          {
+            $in: {
+              secretId: sourceSecrets.map((s) => s.id)
+            }
+          },
+          { folderId: destinationFolder.id },
+          tx
+        );
+
+        for await (const secret of sourceSecrets) {
+          await fnUpdateMovedSecretReferences({
+            orgId: actor.orgId,
+            projectId,
+            sourceEnvironment: environment.slug,
+            sourceSecretPath: folder.path,
+            sourceFolderId,
+            destinationEnvironment,
+            destinationSecretPath,
+            destinationFolderId: destinationFolder.id,
+            secretKey: secret.key,
+            secretId: secret.id,
+            secretDAL: secretV2BridgeDAL,
+            secretVersionDAL: secretVersionV2BridgeDAL,
+            folderCommitService,
+            folderDAL,
+            secretQueueService,
+            encryptor: ({ plainText }) => secretManagerEncryptor({ plainText }),
+            decryptor: ({ cipherTextBlob }) => secretManagerDecryptor({ cipherTextBlob }),
+            generateSecretBlindIndex,
+            tx
+          });
+        }
+      }
+
+      return secretRotationV2DAL.updateById(rotationId, { folderId: destinationFolder.id }, tx);
+    });
+
+    await secretV2BridgeDAL.invalidateSecretCacheByProjectId(projectId);
+
+    await snapshotService.performSnapshot(destinationFolder.id);
+    await secretQueueService.syncSecrets({
+      orgId: connection.orgId,
+      secretPath: destinationSecretPath,
+      projectId,
+      environmentSlug: destinationEnvironment,
+      environmentName: destinationFolder.environment.name,
+      excludeReplication: true
+    });
+
+    await snapshotService.performSnapshot(sourceFolderId);
+    await secretQueueService.syncSecrets({
+      orgId: connection.orgId,
+      secretPath: folder.path,
+      projectId,
+      environmentSlug: environment.slug,
+      environmentName: environment.name,
+      excludeReplication: true
+    });
+
+    return {
+      secretRotation: await expandSecretRotation(updatedRotation, kmsService),
+      sourceEnvironment: environment.slug,
+      sourceSecretPath: folder.path
+    };
+  };
+
+  const triggerFailedWebhook = async (
+    projectId: string,
+    environment: { slug: string; name: string; id: string },
+    error: unknown,
+    folder: { id: string; path: string },
+    secretRotation: TSecretRotationV2Raw,
+    isManualRotation: boolean
+  ) => {
+    const webhookErrorMessage = getWebhookSanitizedErrorMessage(error);
+
+    await queueService.queue(
+      QueueName.SecretWebhook,
+      QueueJobs.SecWebhook,
+      {
+        type: WebhookEvents.SecretRotationFailed,
+        payload: {
+          projectId,
+          environment: environment.slug,
+          environmentName: environment.name,
+          secretPath: folder.path,
+          rotationName: secretRotation.name,
+          triggeredManually: isManualRotation,
+          errorMessage: webhookErrorMessage
+        }
+      },
+      {
+        jobId: `secret-rotation-webhook-${secretRotation.id}-${Date.now()}`,
+        removeOnFail: { count: 5 },
+        removeOnComplete: true,
+        delay: 1000,
+        attempts: 5,
+        backoff: {
+          type: "exponential",
+          delay: 3000
+        }
+      }
+    );
   };
 
   const rotateGeneratedCredentials = async (
@@ -919,6 +1318,13 @@ export const secretRotationV2ServiceFactory = ({
       const inactiveCredentials = generatedCredentials[inactiveIndex];
       const activeCredentials = generatedCredentials[activeIndex];
 
+      const passwordValidationContext = await $resolvePasswordValidationContext({
+        projectId,
+        envId: environment.id,
+        secretPath: folder.path,
+        type: type as SecretRotation
+      });
+
       const rotationFactory = SECRET_ROTATION_FACTORY_MAP[type as SecretRotation](
         {
           ...secretRotation,
@@ -927,7 +1333,9 @@ export const secretRotationV2ServiceFactory = ({
         appConnectionDAL,
         kmsService,
         gatewayService,
-        gatewayV2Service
+        gatewayV2Service,
+        gatewayPoolService,
+        passwordValidationContext
       );
 
       const updatedRotation = await rotationFactory.rotateCredentials(
@@ -945,17 +1353,14 @@ export const secretRotationV2ServiceFactory = ({
           return secretRotationV2DAL.transaction(async (tx) => {
             const secretsPayload = rotationFactory.getSecretsPayload(newCredentials);
 
-            const { encryptor } = await kmsService.createCipherPairWithDataKey({
+            const { encryptor, generateSecretBlindIndex } = await kmsService.createCipherPairWithDataKey({
               type: KmsDataKey.SecretManager,
               projectId
             });
 
             // update mapped secrets with new credential values
-            await fnSecretBulkUpdate({
-              folderId,
-              orgId: connection.orgId,
-              tx,
-              inputSecrets: secretsPayload.map(({ key, value }) => ({
+            const inputSecretsWithBlindIndex = await Promise.all(
+              secretsPayload.map(async ({ key, value }) => ({
                 filter: {
                   key,
                   folderId,
@@ -965,9 +1370,17 @@ export const secretRotationV2ServiceFactory = ({
                   encryptedValue: encryptor({
                     plainText: Buffer.from(value)
                   }).cipherTextBlob,
+                  secretValueBlindIndex: await generateSecretBlindIndex(Buffer.from(value)),
                   references: []
                 }
-              })),
+              }))
+            );
+
+            await fnSecretBulkUpdate({
+              folderId,
+              orgId: connection.orgId,
+              tx,
+              inputSecrets: inputSecretsWithBlindIndex,
               secretDAL: secretV2BridgeDAL,
               secretVersionDAL: secretVersionV2BridgeDAL,
               secretVersionTagDAL: secretVersionTagV2BridgeDAL,
@@ -1038,12 +1451,17 @@ export const secretRotationV2ServiceFactory = ({
         secretPath: folder.path,
         projectId,
         environmentSlug: environment.slug,
+        environmentName: environment.name,
         excludeReplication: true
       });
 
       return updatedRotation;
     } catch (error) {
       const errorMessage = parseRotationErrorMessage(error);
+
+      if (isManualRotation) {
+        await triggerFailedWebhook(projectId, environment, error, folder, secretRotation, isManualRotation);
+      }
 
       if (isFinalAttempt) {
         const { encryptor } = await kmsService.createCipherPairWithDataKey({
@@ -1065,7 +1483,21 @@ export const secretRotationV2ServiceFactory = ({
 
         if (shouldSendNotification) {
           await $queueSendSecretRotationStatusNotification(updatedRotation);
+          await triggerFailedWebhook(projectId, environment, error, folder, secretRotation, isManualRotation);
         }
+
+        void telemetryService
+          .sendPostHogEvents({
+            event: PostHogEventTypes.SecretRotationV2Failed,
+            distinctId: `platform/${projectId}`,
+            organizationId: connection.orgId,
+            properties: {
+              rotationId,
+              type: type as SecretRotation,
+              projectId
+            }
+          })
+          .catch(() => {});
       }
 
       await auditLogService.createAuditLog({
@@ -1118,7 +1550,7 @@ export const secretRotationV2ServiceFactory = ({
         message: `Could not find ${SECRET_ROTATION_NAME_MAP[type]} Rotation with ID "${rotationId}"`
       });
 
-    const { projectId, environment, folder, connection } = secretRotation;
+    const { projectId, connection } = secretRotation;
 
     const { permission } = await permissionService.getProjectPermission({
       actor: actor.type,
@@ -1131,10 +1563,7 @@ export const secretRotationV2ServiceFactory = ({
 
     ForbiddenError.from(permission).throwUnlessCan(
       ProjectPermissionSecretRotationActions.RotateSecrets,
-      subject(ProjectPermissionSub.SecretRotation, {
-        environment: environment.slug,
-        secretPath: folder.path
-      })
+      getSecretRotationSubject(secretRotation)
     );
 
     if (connection.app !== SECRET_ROTATION_CONNECTION_MAP[type])
@@ -1159,6 +1588,113 @@ export const secretRotationV2ServiceFactory = ({
         message: (err as Error).message ?? "Failed to rotate secrets: check Rotation status for details."
       });
     }
+  };
+
+  const checkSecretRotationCredentials = async (
+    { rotationId, type, auditLogInfo }: TCheckSecretRotationV2Credentials,
+    actor: OrgServiceActor
+  ) => {
+    const plan = await licenseService.getPlan(actor.orgId);
+
+    if (!plan.secretRotation)
+      throw new BadRequestError({
+        message:
+          "Failed to check secret rotation credentials due to plan restriction. Upgrade plan to check secret rotation credentials."
+      });
+
+    const secretRotation = await secretRotationV2DAL.findById(rotationId);
+
+    if (!secretRotation)
+      throw new NotFoundError({
+        message: `Could not find ${SECRET_ROTATION_NAME_MAP[type]} Rotation with ID "${rotationId}"`
+      });
+
+    const { projectId, connection, encryptedGeneratedCredentials, activeIndex, folderId } = secretRotation;
+
+    const { permission } = await permissionService.getProjectPermission({
+      actor: actor.type,
+      actorId: actor.id,
+      actorAuthMethod: actor.authMethod,
+      actorOrgId: actor.orgId,
+      actionProjectType: ActionProjectType.SecretManager,
+      projectId
+    });
+
+    ForbiddenError.from(permission).throwUnlessCan(
+      ProjectPermissionSecretRotationActions.ReadGeneratedCredentials,
+      getSecretRotationSubject(secretRotation)
+    );
+
+    if (connection.app !== SECRET_ROTATION_CONNECTION_MAP[type])
+      throw new BadRequestError({
+        message: `Secret Rotation with ID "${rotationId}" is not configured for ${SECRET_ROTATION_NAME_MAP[type]}`
+      });
+
+    const isRotationOccurring = Boolean(await keyStore.getItem(KeyStorePrefixes.SecretRotationLock(secretRotation.id)));
+
+    if (isRotationOccurring)
+      throw new BadRequestError({ message: `A rotation is in progress. Please try again shortly.` });
+
+    const appConnection = await decryptAppConnection(connection, kmsService);
+
+    const generatedCredentials = await decryptSecretRotationCredentials({
+      projectId,
+      encryptedGeneratedCredentials,
+      kmsService
+    });
+
+    const activeCredentials = generatedCredentials?.[activeIndex];
+
+    if (!activeCredentials)
+      throw new BadRequestError({ message: "No active credentials are available to check for this rotation." });
+
+    const rotationFactory = SECRET_ROTATION_FACTORY_MAP[type as SecretRotation](
+      {
+        ...secretRotation,
+        connection: appConnection
+      } as TSecretRotationV2WithConnection,
+      appConnectionDAL,
+      kmsService,
+      gatewayService,
+      gatewayV2Service,
+      gatewayPoolService
+    );
+
+    if (!rotationFactory.checkActiveCredentials)
+      throw new BadRequestError({
+        message: `Credential check is not yet supported for ${SECRET_ROTATION_NAME_MAP[type]} Rotations.`
+      });
+
+    let success = true;
+    let errorMessage: string | undefined;
+
+    try {
+      await rotationFactory.checkActiveCredentials(activeCredentials);
+    } catch (err) {
+      success = false;
+      errorMessage = (err as Error).message;
+    }
+
+    await auditLogService.createAuditLog({
+      ...(auditLogInfo ?? { actor: { type: ActorType.PLATFORM, metadata: {} } }),
+      projectId,
+      event: {
+        type: EventType.SECRET_ROTATION_CHECK_CREDENTIALS,
+        metadata: {
+          type,
+          rotationId,
+          connectionId: connection.id,
+          folderId,
+          success,
+          errorMessage
+        }
+      }
+    });
+
+    if (!success)
+      throw new BadRequestError({
+        message: errorMessage ?? "Active credentials are no longer valid."
+      });
   };
 
   const getDashboardSecretRotationCount = async (
@@ -1195,11 +1731,20 @@ export const secretRotationV2ServiceFactory = ({
       });
     }
 
-    const count = await secretRotationV2DAL.findWithMappedSecretsCount({
-      $in: { folderId: folders.map((folder) => folder.id) },
-      search,
-      projectId
-    });
+    const folderIds = folders.map((folder) => folder.id);
+
+    // Fetch rotations (with search) then filter by per-rotation permission so connectionId
+    // (and other) restrictions are enforced; findWithMappedSecretsCount cannot filter by connectionId.
+    const secretRotations = await secretRotationV2DAL.findWithMappedSecrets(
+      { $in: { folderId: folderIds }, search, projectId },
+      {}
+    );
+
+    const rotationsForCount = secretRotations as (TSecretRotationV2PermissionContext & { name: string })[];
+    const allowedRotations = rotationsForCount.filter((rotation) =>
+      permission.can(ProjectPermissionSecretRotationActions.Read, getSecretRotationSubject(rotation))
+    );
+    const count = new Set(allowedRotations.map((r) => r.name)).size;
 
     return count;
   };
@@ -1249,7 +1794,7 @@ export const secretRotationV2ServiceFactory = ({
 
     const folderIds = folders.map((folder) => folder.id);
 
-    const secretRotations = await secretRotationV2DAL.findWithMappedSecrets(
+    const secretRotationsRaw = await secretRotationV2DAL.findWithMappedSecrets(
       {
         $in: { folderId: folderIds },
         search,
@@ -1260,6 +1805,11 @@ export const secretRotationV2ServiceFactory = ({
         offset,
         sort: orderBy ? [[orderBy, orderDirection]] : undefined
       }
+    );
+
+    // Filter by per-rotation permission so connectionId (and other) restrictions are enforced.
+    const secretRotations = secretRotationsRaw.filter((rotation: TSecretRotationV2PermissionContext) =>
+      permission.can(ProjectPermissionSecretRotationActions.Read, getSecretRotationSubject(rotation))
     );
 
     const { decryptor: secretManagerDecryptor } = await kmsService.createCipherPairWithDataKey({
@@ -1299,13 +1849,21 @@ export const secretRotationV2ServiceFactory = ({
               secretTags: (secret.tags as { slug: string; name: string; color: string }[]).map((i) => i.slug)
             }
           );
-
           return reshapeBridgeSecret(
             projectId,
             rotation.environment.slug,
             rotation.folder.path,
             {
               ...secret,
+              secretMetadata: (
+                secret as { secretMetadata: { key: string; value?: string; encryptedValue?: Buffer }[] }
+              ).secretMetadata?.map((el) => ({
+                isEncrypted: Boolean(el.encryptedValue),
+                key: el.key,
+                value: el.encryptedValue
+                  ? secretManagerDecryptor({ cipherTextBlob: el.encryptedValue }).toString()
+                  : el.value || ""
+              })),
               value: secret.encryptedValue
                 ? secretManagerDecryptor({ cipherTextBlob: secret.encryptedValue }).toString()
                 : "",
@@ -1357,7 +1915,7 @@ export const secretRotationV2ServiceFactory = ({
       {
         projectId,
         $search: {
-          name: `%${search}%`
+          name: search
         },
         $in: {
           folderId: permissiveFolderMappings.map(({ folderId }) => folderId)
@@ -1366,7 +1924,201 @@ export const secretRotationV2ServiceFactory = ({
       options
     );
 
-    return secretRotations as TSecretRotationV2[];
+    // Filter by per-rotation permission so connectionId (and other) restrictions are enforced.
+    return secretRotations.filter((rotation) =>
+      permission.can(ProjectPermissionSecretRotationActions.Read, getSecretRotationSubject(rotation))
+    ) as TSecretRotationV2[];
+  };
+
+  const reconcileLocalAccountRotation = async (
+    {
+      rotationId,
+      type
+    }: {
+      rotationId: string;
+      type:
+        | SecretRotation.UnixLinuxLocalAccount
+        | SecretRotation.WindowsLocalAccount
+        | SecretRotation.HpIloLocalAccount;
+    },
+    actor: OrgServiceActor
+  ) => {
+    const plan = await licenseService.getPlan(actor.orgId);
+
+    if (!plan.secretRotation)
+      throw new BadRequestError({
+        message:
+          "Failed to reconcile secret rotation due to plan restriction. Upgrade plan to reconcile secret rotations."
+      });
+
+    const secretRotation = await secretRotationV2DAL.findById(rotationId);
+
+    if (!secretRotation)
+      throw new NotFoundError({
+        message: `Could not find Secret Rotation with ID "${rotationId}"`
+      });
+
+    if (
+      secretRotation.type !== SecretRotation.UnixLinuxLocalAccount &&
+      secretRotation.type !== SecretRotation.WindowsLocalAccount &&
+      secretRotation.type !== SecretRotation.HpIloLocalAccount
+    )
+      throw new BadRequestError({
+        message: `Reconcile operation is only supported for Unix/Linux Local Account, Windows Local Account, and HP iLO Local Account rotations`
+      });
+
+    const { projectId, environment, folder, connection, encryptedGeneratedCredentials, parameters, folderId } =
+      secretRotation;
+
+    const { permission } = await permissionService.getProjectPermission({
+      actor: actor.type,
+      actorId: actor.id,
+      actorAuthMethod: actor.authMethod,
+      actorOrgId: actor.orgId,
+      actionProjectType: ActionProjectType.SecretManager,
+      projectId
+    });
+
+    ForbiddenError.from(permission).throwUnlessCan(
+      ProjectPermissionSecretRotationActions.RotateSecrets,
+      getSecretRotationSubject(secretRotation)
+    );
+
+    const localAccountParams = parameters as TLocalAccountRotation["parameters"];
+
+    let loginAsTargetMethod;
+    let loginAsRootMethod;
+
+    if (type === SecretRotation.UnixLinuxLocalAccount) {
+      loginAsTargetMethod = UnixLinuxLocalAccountRotationMethod.LoginAsTarget;
+      loginAsRootMethod = UnixLinuxLocalAccountRotationMethod.LoginAsRoot;
+    } else if (type === SecretRotation.WindowsLocalAccount) {
+      loginAsTargetMethod = WindowsLocalAccountRotationMethod.LoginAsTarget;
+      loginAsRootMethod = WindowsLocalAccountRotationMethod.LoginAsRoot;
+    } else {
+      loginAsTargetMethod = HpIloRotationMethod.LoginAsTarget;
+      loginAsRootMethod = HpIloRotationMethod.LoginAsRoot;
+    }
+
+    // Only allow reconcile for login-as-target mode
+    if (localAccountParams.rotationMethod !== loginAsTargetMethod) {
+      throw new BadRequestError({
+        message: `Reconcile operation is only supported for login-as-target mode Unix/Linux Local Account, Windows Local Account, and HP iLO Local Account rotations`
+      });
+    }
+
+    // Get current generated credentials
+    const generatedCredentials = await decryptSecretRotationCredentials({
+      projectId,
+      encryptedGeneratedCredentials,
+      kmsService
+    });
+
+    const activeCredentials = generatedCredentials[
+      secretRotation.activeIndex
+    ] as TLocalAccountRotationGeneratedCredentials[number];
+    const appConnection = await decryptAppConnection(connection, kmsService);
+
+    // Use the rotation factory to perform a rotation using the app connection credentials
+    const rotationFactory = SECRET_ROTATION_FACTORY_MAP[type](
+      {
+        ...secretRotation,
+        // Override rotation method to login-as-root so it uses the app connection credentials
+        parameters: {
+          ...localAccountParams,
+          rotationMethod: loginAsRootMethod
+        },
+        connection: appConnection
+      } as TSecretRotationV2WithConnection,
+      appConnectionDAL,
+      kmsService,
+      gatewayService,
+      gatewayV2Service,
+      gatewayPoolService
+    );
+
+    // Issue new credentials using login-as-root mode (app connection credentials)
+    const updatedRotation = await rotationFactory.issueCredentials(
+      async (newCredentials) => {
+        const localAccountCredentials = newCredentials as TLocalAccountRotationGeneratedCredentials[number];
+        const updatedCredentials = [...generatedCredentials];
+        updatedCredentials[secretRotation.activeIndex] = localAccountCredentials;
+
+        const encryptedUpdatedCredentials = await encryptSecretRotationCredentials({
+          projectId,
+          generatedCredentials: updatedCredentials as TSecretRotationV2GeneratedCredentials,
+          kmsService
+        });
+
+        return secretRotationV2DAL.transaction(async (tx) => {
+          const { encryptor, generateSecretBlindIndex } = await kmsService.createCipherPairWithDataKey({
+            type: KmsDataKey.SecretManager,
+            projectId
+          });
+
+          // Update the password secret with the new value
+          const secretsMapping = secretRotation.secretsMapping as TLocalAccountRotation["secretsMapping"];
+          const passwordBuffer = Buffer.from(localAccountCredentials.password);
+
+          await fnSecretBulkUpdate({
+            folderId,
+            orgId: connection.orgId,
+            tx,
+            inputSecrets: [
+              {
+                filter: {
+                  key: secretsMapping.password,
+                  folderId,
+                  type: SecretType.Shared
+                },
+                data: {
+                  encryptedValue: encryptor({
+                    plainText: passwordBuffer
+                  }).cipherTextBlob,
+                  secretValueBlindIndex: await generateSecretBlindIndex(passwordBuffer),
+                  references: []
+                }
+              }
+            ],
+            secretDAL: secretV2BridgeDAL,
+            secretVersionDAL: secretVersionV2BridgeDAL,
+            secretVersionTagDAL: secretVersionTagV2BridgeDAL,
+            folderCommitService,
+            actor: { type: ActorType.PLATFORM },
+            secretTagDAL,
+            resourceMetadataDAL
+          });
+
+          return secretRotationV2DAL.updateById(
+            rotationId,
+            {
+              encryptedGeneratedCredentials: encryptedUpdatedCredentials,
+              lastRotatedAt: new Date(),
+              rotationStatus: SecretRotationStatus.Success
+            },
+            tx
+          );
+        });
+      },
+      { password: activeCredentials.password }
+    );
+
+    await secretV2BridgeDAL.invalidateSecretCacheByProjectId(projectId);
+    await snapshotService.performSnapshot(folder.id);
+    await secretQueueService.syncSecrets({
+      orgId: connection.orgId,
+      secretPath: folder.path,
+      projectId,
+      environmentSlug: environment.slug,
+      environmentName: environment.name,
+      excludeReplication: true
+    });
+
+    return {
+      message: `${type === SecretRotation.UnixLinuxLocalAccount ? "Unix/Linux Local Account" : "Windows Local Account"} rotation credentials reconciled successfully`,
+      reconciled: true,
+      secretRotation: await expandSecretRotation(updatedRotation, kmsService)
+    };
   };
 
   return {
@@ -1377,11 +2129,14 @@ export const secretRotationV2ServiceFactory = ({
     findSecretRotationById,
     findSecretRotationByName,
     deleteSecretRotation,
+    moveSecretRotation,
     findSecretRotationGeneratedCredentialsById,
     rotateSecretRotation,
     rotateGeneratedCredentials,
     getDashboardSecretRotationCount,
     getDashboardSecretRotations,
-    getQuickSearchSecretRotations
+    getQuickSearchSecretRotations,
+    reconcileLocalAccountRotation,
+    checkSecretRotationCredentials
   };
 };

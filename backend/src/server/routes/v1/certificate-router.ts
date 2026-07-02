@@ -5,18 +5,17 @@ import { z } from "zod";
 import { CertificatesSchema } from "@app/db/schemas";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags, CERTIFICATES } from "@app/lib/api-docs";
+import { NotFoundError } from "@app/lib/errors";
 import { ms } from "@app/lib/ms";
+import { isUuidV4 } from "@app/lib/validator";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { addNoCacheHeaders } from "@app/server/lib/caching";
+import { openApiHidden } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
-import {
-  ACMESANType,
-  CertificateOrderStatus,
-  CertKeyAlgorithm,
-  CertSignatureAlgorithm,
-  CrlReason
-} from "@app/services/certificate/certificate-types";
+import { CertKeyAlgorithm, CertSignatureAlgorithm, CrlReason } from "@app/services/certificate/certificate-types";
+import { CaType } from "@app/services/certificate-authority/certificate-authority-enums";
 import { validateCaDateField } from "@app/services/certificate-authority/certificate-authority-validators";
 import {
   CertExtendedKeyUsageType,
@@ -26,12 +25,41 @@ import {
 import { extractCertificateRequestFromCSR } from "@app/services/certificate-common/certificate-csr-utils";
 import { mapEnumsForValidation } from "@app/services/certificate-common/certificate-utils";
 import { EnrollmentType } from "@app/services/certificate-profile/certificate-profile-types";
+import { CertificateRequestStatus } from "@app/services/certificate-request/certificate-request-types";
 import { validateTemplateRegexField } from "@app/services/certificate-template/certificate-template-validators";
+import { TCertificateIssuanceResponse } from "@app/services/certificate-v3/certificate-v3-types";
+import { ResourceMetadataNonEncryptionSchema } from "@app/services/resource-metadata/resource-metadata-schema";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 import { booleanSchema } from "../sanitizedSchemas";
 
+type CertificateServiceResponse = TCertificateIssuanceResponse | Omit<TCertificateIssuanceResponse, "privateKey">;
+
+const extractCertificateData = (
+  data: CertificateServiceResponse
+): {
+  certificate: string;
+  issuingCaCertificate: string;
+  certificateChain: string;
+  privateKey: string | undefined;
+  serialNumber: string;
+  certificateId: string;
+} => ({
+  certificate: data.certificate ?? "",
+  issuingCaCertificate: data.issuingCaCertificate ?? "",
+  certificateChain: data.certificateChain ?? "",
+  privateKey: "privateKey" in data ? data.privateKey : undefined,
+  serialNumber: data.serialNumber ?? "",
+  certificateId: data.certificateId ?? ""
+});
+
 interface CertificateRequestForService {
   commonName?: string;
+  organization?: string;
+  organizationalUnit?: string;
+  country?: string;
+  state?: string;
+  locality?: string;
   keyUsages?: CertKeyUsageType[];
   extendedKeyUsages?: CertExtendedKeyUsageType[];
   altNames?: Array<{
@@ -45,15 +73,38 @@ interface CertificateRequestForService {
   notAfter?: Date;
   signatureAlgorithm?: string;
   keyAlgorithm?: string;
+  basicConstraints?: {
+    isCA: boolean;
+    pathLength?: number;
+  };
 }
 
-const validateTtlAndDateFields = (data: { notBefore?: string; notAfter?: string; ttl?: string }) => {
+const validateTtlAndDateFields = (data: {
+  attributes?: { notBefore?: string; notAfter?: string; ttl?: string };
+  notBefore?: string;
+  notAfter?: string;
+  ttl?: string;
+}) => {
+  if (data.attributes) {
+    const hasDateFields = data.attributes.notBefore || data.attributes.notAfter;
+    const hasTtl = data.attributes.ttl;
+    return !(hasDateFields && hasTtl);
+  }
   const hasDateFields = data.notBefore || data.notAfter;
   const hasTtl = data.ttl;
   return !(hasDateFields && hasTtl);
 };
 
-const validateDateOrder = (data: { notBefore?: string; notAfter?: string }) => {
+const validateDateOrder = (data: {
+  attributes?: { notBefore?: string; notAfter?: string };
+  notBefore?: string;
+  notAfter?: string;
+}) => {
+  if (data.attributes?.notBefore && data.attributes?.notAfter) {
+    const notBefore = new Date(data.attributes.notBefore);
+    const notAfter = new Date(data.attributes.notAfter);
+    return notBefore < notAfter;
+  }
   if (data.notBefore && data.notAfter) {
     const notBefore = new Date(data.notBefore);
     const notAfter = new Date(data.notAfter);
@@ -65,13 +116,729 @@ const validateDateOrder = (data: { notBefore?: string; notAfter?: string }) => {
 export const registerCertificateRouter = async (server: FastifyZodProvider) => {
   server.route({
     method: "POST",
-    url: "/issue-certificate",
+    url: "/",
     config: {
       rateLimit: writeLimit
     },
     schema: {
       hide: false,
+      operationId: "createCertificate",
       tags: [ApiDocsTags.PkiCertificates],
+      body: z
+        .object({
+          profileId: z.string().uuid(),
+          applicationId: z.string().uuid().optional(),
+          csr: z
+            .string()
+            .trim()
+            .min(1, "CSR cannot be empty")
+            .max(4096, "CSR cannot exceed 4096 characters")
+            .optional(),
+          attributes: z
+            .object({
+              commonName: validateTemplateRegexField.nullish(),
+              organization: validateTemplateRegexField.nullish(),
+              organizationalUnit: validateTemplateRegexField.nullish(),
+              country: validateTemplateRegexField.nullish(),
+              state: validateTemplateRegexField.nullish(),
+              locality: validateTemplateRegexField.nullish(),
+              keyUsages: z.nativeEnum(CertKeyUsageType).array().optional(),
+              extendedKeyUsages: z.nativeEnum(CertExtendedKeyUsageType).array().optional(),
+              altNames: z
+                .array(
+                  z.object({
+                    type: z.nativeEnum(CertSubjectAlternativeNameType),
+                    value: z.string().min(1, "SAN value cannot be empty")
+                  })
+                )
+                .optional(),
+              signatureAlgorithm: z.nativeEnum(CertSignatureAlgorithm).optional(),
+              keyAlgorithm: z.nativeEnum(CertKeyAlgorithm).optional(),
+              ttl: z
+                .string()
+                .trim()
+                .refine((val) => !val || ms(val) > 0, "TTL must be a positive number")
+                .optional(),
+              notBefore: validateCaDateField.optional(),
+              notAfter: validateCaDateField.optional(),
+              basicConstraints: z
+                .object({
+                  isCA: z.boolean(),
+                  pathLength: z.number().int().min(0).optional()
+                })
+                .optional()
+            })
+            .optional(),
+          removeRootsFromChain: booleanSchema.default(false).optional(),
+          metadata: ResourceMetadataNonEncryptionSchema.optional()
+        })
+        .refine(validateTtlAndDateFields, {
+          message:
+            "Cannot specify both TTL and notBefore/notAfter. Use either TTL for duration-based validity or notBefore/notAfter for explicit date range."
+        })
+        .refine(validateDateOrder, {
+          message: "notBefore must be earlier than notAfter"
+        }),
+      response: {
+        200: z.object({
+          certificate: z
+            .object({
+              certificate: z.string().trim(),
+              issuingCaCertificate: z.string().trim(),
+              certificateChain: z.string().trim(),
+              privateKey: z.string().trim().optional(),
+              serialNumber: z.string().trim(),
+              certificateId: z.string()
+            })
+            .nullable(),
+          certificateRequestId: z.string(),
+          status: z.nativeEnum(CertificateRequestStatus).optional(),
+          message: z.string().optional()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const { csr, attributes, metadata, ...requestBody } = req.body;
+      const profile = await server.services.certificateProfile.getProfileById({
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId,
+        profileId: requestBody.profileId
+      });
+
+      let useOrderFlow = false;
+      if (profile?.caId) {
+        const ca = await server.services.certificateAuthority.getCaById({
+          caId: profile.caId,
+          actor: req.permission.type,
+          actorId: req.permission.id,
+          actorAuthMethod: req.permission.authMethod,
+          actorOrgId: req.permission.orgId,
+          isInternal: true
+        });
+        const caType = (ca?.externalCa?.type as CaType) ?? CaType.INTERNAL;
+        useOrderFlow = caType !== CaType.INTERNAL;
+      }
+
+      if (useOrderFlow) {
+        const certificateOrderObject = {
+          altNames: attributes?.altNames || [],
+          validity: { ttl: attributes?.ttl || "" },
+          ...(attributes?.commonName !== undefined && { commonName: attributes.commonName ?? undefined }),
+          keyUsages: attributes?.keyUsages,
+          extendedKeyUsages: attributes?.extendedKeyUsages,
+          notBefore: attributes?.notBefore ? new Date(attributes.notBefore) : undefined,
+          notAfter: attributes?.notAfter ? new Date(attributes.notAfter) : undefined,
+          signatureAlgorithm: attributes?.signatureAlgorithm,
+          keyAlgorithm: attributes?.keyAlgorithm,
+          csr,
+          basicConstraints: attributes?.basicConstraints,
+          organization: attributes?.organization ?? undefined,
+          organizationalUnit: attributes?.organizationalUnit ?? undefined,
+          country: attributes?.country ?? undefined,
+          state: attributes?.state ?? undefined,
+          locality: attributes?.locality ?? undefined
+        };
+
+        const data = await server.services.certificateV3.orderCertificate({
+          actor: req.permission.type,
+          actorId: req.permission.id,
+          actorAuthMethod: req.permission.authMethod,
+          actorOrgId: req.permission.orgId,
+          profileId: requestBody.profileId,
+          applicationId: requestBody.applicationId,
+          certificateOrder: certificateOrderObject,
+          metadata,
+          removeRootsFromChain: requestBody.removeRootsFromChain
+        });
+
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          projectId: data.projectId,
+          event: {
+            type: EventType.ORDER_CERTIFICATE_FROM_PROFILE,
+            metadata: {
+              certificateProfileId: requestBody.profileId,
+              profileName: data.profileName,
+              ...(requestBody.applicationId && { applicationId: requestBody.applicationId })
+            }
+          }
+        });
+
+        await server.services.telemetry.sendPostHogEvents({
+          event: PostHogEventTypes.CertificateRequestCreated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            orgId: req.permission.orgId
+          }
+        });
+
+        return {
+          certificate: null,
+          certificateRequestId: data.certificateRequestId,
+          status: data.status,
+          message: data.message
+        };
+      }
+
+      if (csr) {
+        const extractedCsrData = extractCertificateRequestFromCSR(csr);
+
+        const data = await server.services.certificateV3.signCertificateFromProfile({
+          actor: req.permission.type,
+          actorId: req.permission.id,
+          actorAuthMethod: req.permission.authMethod,
+          actorOrgId: req.permission.orgId,
+          profileId: requestBody.profileId,
+          applicationId: requestBody.applicationId,
+          csr,
+          validity: { ttl: attributes?.ttl || "" },
+          notBefore: attributes?.notBefore ? new Date(attributes.notBefore) : undefined,
+          notAfter: attributes?.notAfter ? new Date(attributes.notAfter) : undefined,
+          enrollmentType: EnrollmentType.API,
+          metadata,
+          removeRootsFromChain: requestBody.removeRootsFromChain,
+          basicConstraints: attributes?.basicConstraints
+        });
+
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          projectId: data.projectId,
+          event: {
+            type: EventType.SIGN_CERTIFICATE_FROM_PROFILE,
+            metadata: {
+              certificateProfileId: requestBody.profileId,
+              certificateId: data.certificateId || "",
+              profileName: data.profileName,
+              commonName: extractedCsrData.commonName || "",
+              ...(requestBody.applicationId && { applicationId: requestBody.applicationId })
+            }
+          }
+        });
+        await server.services.telemetry.sendPostHogEvents({
+          event: PostHogEventTypes.CertificateRequestCreated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            orgId: req.permission.orgId
+          }
+        });
+
+        return {
+          certificate: data.status === CertificateRequestStatus.ISSUED ? extractCertificateData(data) : null,
+          certificateRequestId: data.certificateRequestId,
+          status: data.status,
+          message: data.message
+        };
+      }
+
+      const certificateRequestForService: CertificateRequestForService = {
+        keyUsages: attributes?.keyUsages,
+        extendedKeyUsages: attributes?.extendedKeyUsages,
+        altNames: attributes?.altNames,
+        validity: { ttl: attributes?.ttl || "" },
+        notBefore: attributes?.notBefore ? new Date(attributes.notBefore) : undefined,
+        notAfter: attributes?.notAfter ? new Date(attributes.notAfter) : undefined,
+        signatureAlgorithm: attributes?.signatureAlgorithm,
+        keyAlgorithm: attributes?.keyAlgorithm,
+        basicConstraints: attributes?.basicConstraints
+      };
+
+      // Only include subject fields when explicitly provided (null or string).
+      // Omitting the key lets applyProfileDefaults use the profile default.
+      // Sending null (converted to undefined here) signals "clear the default".
+      const subjectFields = [
+        "commonName",
+        "organization",
+        "organizationalUnit",
+        "country",
+        "state",
+        "locality"
+      ] as const;
+      for (const field of subjectFields) {
+        if (attributes?.[field] !== undefined) {
+          certificateRequestForService[field] = attributes[field] ?? undefined;
+        }
+      }
+
+      const mappedCertificateRequest = mapEnumsForValidation(certificateRequestForService);
+
+      const data = await server.services.certificateV3.issueCertificateFromProfile({
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId,
+        profileId: requestBody.profileId,
+        applicationId: requestBody.applicationId,
+        certificateRequest: mappedCertificateRequest,
+        metadata,
+        removeRootsFromChain: requestBody.removeRootsFromChain
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: data.projectId,
+        event: {
+          type: EventType.ISSUE_CERTIFICATE_FROM_PROFILE,
+          metadata: {
+            certificateProfileId: requestBody.profileId,
+            certificateId: data.certificateId || "",
+            commonName: attributes?.commonName || "",
+            profileName: data.profileName,
+            ...(requestBody.applicationId && { applicationId: requestBody.applicationId })
+          }
+        }
+      });
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CertificateRequestCreated,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          orgId: req.permission.orgId
+        }
+      });
+
+      return {
+        certificate: data.status === CertificateRequestStatus.ISSUED ? extractCertificateData(data) : null,
+        certificateRequestId: data.certificateRequestId,
+        status: data.status,
+        message: data.message
+      };
+    }
+  });
+  server.route({
+    method: "GET",
+    url: "/certificate-requests/:requestId",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      hide: false,
+      operationId: "getCertificateRequest",
+      tags: [ApiDocsTags.PkiCertificates],
+      params: z.object({
+        requestId: z.string().uuid()
+      }),
+      response: {
+        200: z.object({
+          status: z.nativeEnum(CertificateRequestStatus),
+          certificate: z.string().nullable(),
+          certificateId: z.string().nullable(),
+          privateKey: z.string().nullable(),
+          serialNumber: z.string().nullable(),
+          errorMessage: z.string().nullable(),
+          pendingMessage: z.string().nullable().optional(),
+          commonName: z.string().nullable().optional(),
+          organization: z.string().nullable().optional(),
+          organizationalUnit: z.string().nullable().optional(),
+          country: z.string().nullable().optional(),
+          state: z.string().nullable().optional(),
+          locality: z.string().nullable().optional(),
+          basicConstraints: z
+            .object({
+              isCA: z.boolean(),
+              pathLength: z.number().optional()
+            })
+            .nullable()
+            .optional(),
+          metadata: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
+          createdAt: z.date(),
+          updatedAt: z.date()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const { certificateRequest, projectId } = await server.services.certificateRequest.getCertificateFromRequest({
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId,
+        certificateRequestId: req.params.requestId
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.GET_CERTIFICATE_REQUEST,
+          metadata: {
+            certificateRequestId: req.params.requestId
+          }
+        }
+      });
+      return certificateRequest;
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/certificate-requests/:requestId/trigger-validation",
+    config: {
+      rateLimit: writeLimit
+    },
+    schema: {
+      hide: false,
+      operationId: "triggerCertificateRequestValidation",
+      tags: [ApiDocsTags.PkiCertificates],
+      description: "Manually ask the issuing CA to re-check validation for a pending certificate request",
+      params: z.object({
+        requestId: z.string().uuid()
+      }),
+      response: {
+        200: z.object({
+          status: z.nativeEnum(CertificateRequestStatus),
+          orderStatus: z.string().optional()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const result = await server.services.certificateAuthority.triggerCertificateRequestValidation({
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId,
+        certificateRequestId: req.params.requestId
+      });
+
+      const orderStatus = "orderStatus" in result ? result.orderStatus : undefined;
+      const mappedStatus =
+        result.status === "skipped"
+          ? CertificateRequestStatus.PENDING_VALIDATION
+          : (result.status as CertificateRequestStatus);
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: result.projectId,
+        event: {
+          type: EventType.TRIGGER_CERTIFICATE_REQUEST_VALIDATION,
+          metadata: {
+            certificateRequestId: req.params.requestId,
+            status: mappedStatus,
+            orderStatus
+          }
+        }
+      });
+
+      return {
+        status: mappedStatus,
+        orderStatus
+      };
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/certificate-requests",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      deprecated: true,
+      description: "Deprecated: Use POST /certificate-requests/search instead.",
+      hide: true,
+      operationId: "listCertificateRequests",
+      tags: [ApiDocsTags.PkiCertificates],
+      querystring: z.object({
+        offset: z.coerce.number().min(0).default(0),
+        limit: z.coerce.number().min(1).max(100).default(20),
+        search: z.string().trim().optional(),
+        status: z.nativeEnum(CertificateRequestStatus).optional(),
+        fromDate: z.coerce.date().optional(),
+        toDate: z.coerce.date().optional(),
+        profileIds: z
+          .string()
+          .transform((val) => val.split(",").map((id) => id.trim()))
+          .pipe(z.array(z.string().uuid()))
+          .optional()
+          .describe("Comma-separated list of profile IDs"),
+        sortBy: z.string().trim().optional(),
+        sortOrder: z.enum(["asc", "desc"]).optional()
+      }),
+      response: {
+        200: z.object({
+          certificateRequests: z.array(
+            z.object({
+              id: z.string(),
+              status: z.nativeEnum(CertificateRequestStatus),
+              commonName: z.string().nullable(),
+              altNames: z.string().nullable(),
+              profileId: z.string().nullable(),
+              profileName: z.string().nullable(),
+              caId: z.string().nullable(),
+              certificateId: z.string().nullable(),
+              approvalRequestId: z.string().nullable(),
+              errorMessage: z.string().nullable(),
+              pendingMessage: z.string().nullable(),
+              createdAt: z.date(),
+              updatedAt: z.date(),
+              certificate: z
+                .object({
+                  id: z.string(),
+                  serialNumber: z.string(),
+                  status: z.string()
+                })
+                .nullable()
+            })
+          ),
+          totalCount: z.number()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const projectId = req.internalCertManagerProjectId;
+
+      const { certificateRequests, totalCount } = await server.services.certificateRequest.listCertificateRequests({
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId,
+        projectId,
+        offset: req.query.offset,
+        limit: req.query.limit,
+        search: req.query.search,
+        status: req.query.status,
+        fromDate: req.query.fromDate,
+        toDate: req.query.toDate,
+        profileIds: req.query.profileIds,
+        sortBy: req.query.sortBy,
+        sortOrder: req.query.sortOrder
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.LIST_CERTIFICATE_REQUESTS,
+          metadata: {
+            offset: req.query.offset,
+            limit: req.query.limit,
+            search: req.query.search,
+            status: req.query.status,
+            count: certificateRequests.length,
+            certificateRequestIds: certificateRequests.map((certReq) => certReq.id)
+          }
+        }
+      });
+
+      return {
+        certificateRequests: certificateRequests.map((certReq) => ({
+          ...certReq,
+          profileId: certReq.profileId ?? null,
+          caId: certReq.caId ?? null,
+          certificateId: certReq.certificateId ?? null,
+          approvalRequestId: certReq.approvalRequestId ?? null,
+          commonName: certReq.commonName ?? null,
+          altNames:
+            (certReq.altNames as Array<{ type: string; value: string }> | null)?.map((san) => san.value).join(",") ??
+            null,
+          errorMessage: certReq.errorMessage ?? null,
+          pendingMessage: certReq.pendingMessage ?? null,
+          profileName: certReq.profileName ?? null
+        })),
+        totalCount
+      };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/certificate-requests/search",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      hide: false,
+      operationId: "searchCertificateRequests",
+      tags: [ApiDocsTags.PkiCertificates],
+      description: "Search and filter certificate requests.",
+      body: z.object({
+        offset: z.number().min(0).default(0),
+        limit: z.number().min(1).max(100).default(20),
+        search: z.string().trim().optional(),
+        status: z.nativeEnum(CertificateRequestStatus).optional(),
+        fromDate: z.coerce.date().optional(),
+        toDate: z.coerce.date().optional(),
+        profileIds: z.array(z.string().uuid()).optional(),
+        applicationId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe("Filter to certificate requests for profiles attached to a specific Application."),
+        projectId: z.string().uuid().optional().describe(openApiHidden()),
+        sortBy: z.string().trim().optional(),
+        sortOrder: z.enum(["asc", "desc"]).optional(),
+        metadata: z
+          .array(
+            z.object({
+              key: z.string().trim().min(1).max(255),
+              value: z.string().trim().max(1020).optional()
+            })
+          )
+          .optional()
+      }),
+      response: {
+        200: z.object({
+          certificateRequests: z.array(
+            z.object({
+              id: z.string(),
+              status: z.nativeEnum(CertificateRequestStatus),
+              commonName: z.string().nullable(),
+              altNames: z.string().nullable(),
+              profileId: z.string().nullable(),
+              profileName: z.string().nullable(),
+              caId: z.string().nullable(),
+              certificateId: z.string().nullable(),
+              approvalRequestId: z.string().nullable(),
+              errorMessage: z.string().nullable(),
+              pendingMessage: z.string().nullable(),
+              createdAt: z.date(),
+              updatedAt: z.date(),
+              certificate: z
+                .object({
+                  id: z.string(),
+                  serialNumber: z.string(),
+                  status: z.string()
+                })
+                .nullable()
+            })
+          ),
+          totalCount: z.number()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const { metadata, ...filters } = req.body;
+      const projectId = req.internalCertManagerProjectId;
+
+      const { certificateRequests, totalCount } = await server.services.certificateRequest.listCertificateRequests({
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId,
+        projectId,
+        offset: filters.offset,
+        limit: filters.limit,
+        search: filters.search,
+        status: filters.status,
+        fromDate: filters.fromDate,
+        toDate: filters.toDate,
+        profileIds: filters.profileIds,
+        applicationId: filters.applicationId,
+        sortBy: filters.sortBy,
+        sortOrder: filters.sortOrder,
+        metadataFilter: metadata
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.LIST_CERTIFICATE_REQUESTS,
+          metadata: {
+            offset: filters.offset,
+            limit: filters.limit,
+            search: filters.search,
+            status: filters.status,
+            count: certificateRequests.length,
+            certificateRequestIds: certificateRequests.map((certReq) => certReq.id)
+          }
+        }
+      });
+
+      return {
+        certificateRequests: certificateRequests.map((certReq) => ({
+          ...certReq,
+          profileId: certReq.profileId ?? null,
+          caId: certReq.caId ?? null,
+          certificateId: certReq.certificateId ?? null,
+          approvalRequestId: certReq.approvalRequestId ?? null,
+          commonName: certReq.commonName ?? null,
+          altNames:
+            (certReq.altNames as Array<{ type: string; value: string }> | null)?.map((san) => san.value).join(",") ??
+            null,
+          errorMessage: certReq.errorMessage ?? null,
+          pendingMessage: certReq.pendingMessage ?? null,
+          profileName: certReq.profileName ?? null
+        })),
+        totalCount
+      };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/certificate-requests/:requestId/cancel",
+    config: {
+      rateLimit: writeLimit
+    },
+    schema: {
+      hide: false,
+      operationId: "cancelCertificateRequest",
+      tags: [ApiDocsTags.PkiCertificates],
+      description: "Cancel a pending certificate request.",
+      params: z.object({
+        requestId: z.string().uuid()
+      }),
+      response: {
+        200: z.object({
+          status: z.nativeEnum(CertificateRequestStatus),
+          cancelled: z.boolean(),
+          errorMessage: z.string().nullable()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const { certificateRequest, projectId, cancelled, previousStatus, previousPendingMessage } =
+        await server.services.certificateRequest.cancelCertificateRequest({
+          actor: req.permission.type,
+          actorId: req.permission.id,
+          actorAuthMethod: req.permission.authMethod,
+          actorOrgId: req.permission.orgId,
+          certificateRequestId: req.params.requestId
+        });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.CANCEL_CERTIFICATE_REQUEST,
+          metadata: {
+            certificateRequestId: req.params.requestId,
+            cancelled,
+            previousStatus,
+            previousPendingMessage
+          }
+        }
+      });
+
+      return {
+        status: (certificateRequest?.status ?? CertificateRequestStatus.FAILED) as CertificateRequestStatus,
+        cancelled,
+        errorMessage: certificateRequest?.errorMessage ?? null
+      };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/issue-certificate",
+    config: {
+      rateLimit: writeLimit
+    },
+    schema: {
+      hide: true,
+      operationId: "issueCertificate",
+      deprecated: true,
+      tags: [ApiDocsTags.PkiCertificates],
+      description: "This endpoint will be removed in a future version.",
       body: z
         .object({
           profileId: z.string().uuid(),
@@ -106,12 +873,15 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
         }),
       response: {
         200: z.object({
-          certificate: z.string().trim(),
-          issuingCaCertificate: z.string().trim(),
-          certificateChain: z.string().trim(),
+          certificate: z.string().trim().optional(),
+          issuingCaCertificate: z.string().trim().optional(),
+          certificateChain: z.string().trim().optional(),
           privateKey: z.string().trim().optional(),
-          serialNumber: z.string().trim(),
-          certificateId: z.string()
+          serialNumber: z.string().trim().optional(),
+          certificateId: z.string().optional(),
+          certificateRequestId: z.string(),
+          status: z.nativeEnum(CertificateRequestStatus).optional(),
+          message: z.string().optional()
         })
       }
     },
@@ -150,12 +920,20 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
           type: EventType.ISSUE_CERTIFICATE_FROM_PROFILE,
           metadata: {
             certificateProfileId: req.body.profileId,
-            certificateId: data.certificateId,
+            certificateId: data.certificateId || "",
             commonName: req.body.commonName || "",
             profileName: data.profileName
           }
         }
       });
+
+      if (data.status === CertificateRequestStatus.PENDING_APPROVAL) {
+        return {
+          certificateRequestId: data.certificateRequestId,
+          status: data.status,
+          message: data.message
+        };
+      }
 
       return data;
     }
@@ -168,8 +946,11 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
-      hide: false,
+      hide: true,
+      operationId: "signCertificate",
+      deprecated: true,
       tags: [ApiDocsTags.PkiCertificates],
+      description: "This endpoint will be removed in a future version.",
       body: z
         .object({
           profileId: z.string().uuid(),
@@ -191,19 +972,28 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
           message: "notBefore must be earlier than notAfter"
         }),
       response: {
-        200: z.object({
-          certificate: z.string().trim(),
-          issuingCaCertificate: z.string().trim(),
-          certificateChain: z.string().trim(),
-          serialNumber: z.string().trim(),
-          certificateId: z.string()
-        })
+        200: z.union([
+          z.object({
+            certificate: z.string().trim(),
+            issuingCaCertificate: z.string().trim(),
+            certificateChain: z.string().trim(),
+            serialNumber: z.string().trim(),
+            certificateId: z.string(),
+            certificateRequestId: z.string()
+          }),
+          z.object({
+            status: z.nativeEnum(CertificateRequestStatus),
+            certificateRequestId: z.string(),
+            message: z.string().optional(),
+            projectId: z.string(),
+            profileName: z.string(),
+            commonName: z.string().optional()
+          })
+        ])
       }
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const certificateRequest = extractCertificateRequestFromCSR(req.body.csr);
-
       const data = await server.services.certificateV3.signCertificateFromProfile({
         actor: req.permission.type,
         actorId: req.permission.id,
@@ -220,6 +1010,8 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
         removeRootsFromChain: req.body.removeRootsFromChain
       });
 
+      const certificateRequestData = extractCertificateRequestFromCSR(req.body.csr);
+
       await server.services.auditLog.createAuditLog({
         ...req.auditLogInfo,
         projectId: data.projectId,
@@ -227,9 +1019,9 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
           type: EventType.SIGN_CERTIFICATE_FROM_PROFILE,
           metadata: {
             certificateProfileId: req.body.profileId,
-            certificateId: data.certificateId,
+            certificateId: data.certificateId || "",
             profileName: data.profileName,
-            commonName: certificateRequest.commonName || ""
+            commonName: certificateRequestData.commonName || ""
           }
         }
       });
@@ -245,23 +1037,24 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
-      hide: false,
+      hide: true,
+      operationId: "orderCertificate",
+      deprecated: true,
       tags: [ApiDocsTags.PkiCertificates],
+      description: "This endpoint will be removed in a future version.",
       body: z
         .object({
           profileId: z.string().uuid(),
-          subjectAlternativeNames: z
-            .array(
-              z.object({
-                type: z.nativeEnum(ACMESANType),
-                value: z
-                  .string()
-                  .trim()
-                  .min(1, "SAN value cannot be empty")
-                  .max(255, "SAN value must be less than 255 characters")
-              })
-            )
-            .min(1, "At least one subject alternative name must be provided"),
+          subjectAlternativeNames: z.array(
+            z.object({
+              type: z.nativeEnum(CertSubjectAlternativeNameType),
+              value: z
+                .string()
+                .trim()
+                .min(1, "SAN value cannot be empty")
+                .max(255, "SAN value must be less than 255 characters")
+            })
+          ),
           ttl: z
             .string()
             .trim()
@@ -284,60 +1077,47 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
           message: "notBefore must be earlier than notAfter"
         }),
       response: {
-        200: z.object({
-          orderId: z.string(),
-          status: z.nativeEnum(CertificateOrderStatus),
-          subjectAlternativeNames: z.array(
-            z.object({
-              type: z.nativeEnum(ACMESANType),
-              value: z.string(),
-              status: z.nativeEnum(CertificateOrderStatus)
-            })
-          ),
-          authorizations: z.array(
-            z.object({
-              identifier: z.object({
-                type: z.nativeEnum(ACMESANType),
-                value: z.string()
-              }),
-              status: z.nativeEnum(CertificateOrderStatus),
-              expires: z.string().optional(),
-              challenges: z.array(
-                z.object({
-                  type: z.string(),
-                  status: z.nativeEnum(CertificateOrderStatus),
-                  url: z.string(),
-                  token: z.string()
-                })
-              )
-            })
-          ),
-          finalize: z.string(),
-          certificate: z.string().optional()
-        })
+        200: z.union([
+          z.object({
+            certificate: z.string().optional(),
+            certificateRequestId: z.string(),
+            projectId: z.string(),
+            profileName: z.string()
+          }),
+          z.object({
+            status: z.nativeEnum(CertificateRequestStatus),
+            certificateRequestId: z.string(),
+            message: z.string(),
+            projectId: z.string(),
+            profileName: z.string(),
+            commonName: z.string().optional()
+          })
+        ])
       }
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const data = await server.services.certificateV3.orderCertificateFromProfile({
+      const certificateOrderObject = {
+        altNames: req.body.subjectAlternativeNames,
+        validity: {
+          ttl: req.body.ttl
+        },
+        commonName: req.body.commonName,
+        keyUsages: req.body.keyUsages,
+        extendedKeyUsages: req.body.extendedKeyUsages,
+        notBefore: req.body.notBefore ? new Date(req.body.notBefore) : undefined,
+        notAfter: req.body.notAfter ? new Date(req.body.notAfter) : undefined,
+        signatureAlgorithm: req.body.signatureAlgorithm,
+        keyAlgorithm: req.body.keyAlgorithm
+      };
+
+      const data = await server.services.certificateV3.orderCertificate({
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
         actorOrgId: req.permission.orgId,
         profileId: req.body.profileId,
-        certificateOrder: {
-          altNames: req.body.subjectAlternativeNames,
-          validity: {
-            ttl: req.body.ttl
-          },
-          commonName: req.body.commonName,
-          keyUsages: req.body.keyUsages,
-          extendedKeyUsages: req.body.extendedKeyUsages,
-          notBefore: req.body.notBefore ? new Date(req.body.notBefore) : undefined,
-          notAfter: req.body.notAfter ? new Date(req.body.notAfter) : undefined,
-          signatureAlgorithm: req.body.signatureAlgorithm,
-          keyAlgorithm: req.body.keyAlgorithm
-        },
+        certificateOrder: certificateOrderObject,
         removeRootsFromChain: req.body.removeRootsFromChain
       });
 
@@ -348,7 +1128,6 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
           type: EventType.ORDER_CERTIFICATE_FROM_PROFILE,
           metadata: {
             certificateProfileId: req.body.profileId,
-            orderId: data.orderId,
             profileName: data.profileName
           }
         }
@@ -366,6 +1145,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "renewCertificate",
       tags: [ApiDocsTags.PkiCertificates],
       params: z.object({
         id: z.string().uuid()
@@ -382,12 +1162,24 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
           certificateChain: z.string().trim(),
           privateKey: z.string().trim().optional(),
           serialNumber: z.string().trim(),
-          certificateId: z.string()
+          certificateId: z.string(),
+          certificateRequestId: z.string()
         })
       }
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
+      const originalCertificate = await server.services.certificate.getCert({
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId,
+        id: req.params.id
+      });
+      if (!originalCertificate) {
+        throw new NotFoundError({ message: "Original certificate not found" });
+      }
+
       const data = await server.services.certificateV3.renewCertificate({
         actor: req.permission.type,
         actorId: req.permission.id,
@@ -404,14 +1196,31 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
           type: EventType.RENEW_CERTIFICATE,
           metadata: {
             originalCertificateId: req.params.id,
-            newCertificateId: data.certificateId,
+            newCertificateId: data.certificateId || "",
             profileName: data.profileName,
-            commonName: data.commonName
+            commonName: data.commonName || ""
           }
         }
       });
 
-      return data;
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CertificateRenewed,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          orgId: req.permission.orgId
+        }
+      });
+
+      return {
+        certificate: data.certificate || "",
+        issuingCaCertificate: data.issuingCaCertificate || "",
+        certificateChain: data.certificateChain || "",
+        privateKey: data.privateKey,
+        serialNumber: data.serialNumber || "",
+        certificateId: data.certificateId || "",
+        certificateRequestId: data.certificateRequestId
+      };
     }
   });
 
@@ -423,6 +1232,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "updateCertificateRenewalConfig",
       tags: [ApiDocsTags.PkiCertificates],
       params: z.object({
         id: z.string().uuid()
@@ -514,6 +1324,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getCertificate",
       tags: [ApiDocsTags.PkiCertificates],
       description: "Get certificate",
       params: z.object({
@@ -521,7 +1332,35 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
       }),
       response: {
         200: z.object({
-          certificate: CertificatesSchema
+          certificate: CertificatesSchema.extend({
+            subject: z
+              .object({
+                commonName: z.string().optional(),
+                organization: z.string().optional(),
+                organizationalUnit: z.string().optional(),
+                country: z.string().optional(),
+                state: z.string().optional(),
+                locality: z.string().optional()
+              })
+              .optional(),
+            fingerprints: z
+              .object({
+                sha256: z.string(),
+                sha1: z.string().optional()
+              })
+              .optional(),
+            basicConstraints: z
+              .object({
+                isCA: z.boolean(),
+                pathLength: z.number().optional()
+              })
+              .optional(),
+            caName: z.string().nullable().optional(),
+            caType: z.enum(["internal", "external"]).nullable().optional(),
+            profileName: z.string().nullable().optional(),
+            applicationName: z.string().nullable().optional(),
+            metadata: z.array(z.object({ key: z.string(), value: z.string() })).optional()
+          })
         })
       }
     },
@@ -554,6 +1393,59 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
   });
 
   server.route({
+    method: "PATCH",
+    url: "/:id",
+    config: {
+      rateLimit: writeLimit
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    schema: {
+      hide: false,
+      operationId: "updateCertificate",
+      tags: [ApiDocsTags.PkiCertificates],
+      description: "Update certificate",
+      params: z.object({
+        id: z.string().trim().describe(CERTIFICATES.GET.id)
+      }),
+      body: z.object({
+        metadata: ResourceMetadataNonEncryptionSchema.optional()
+      }),
+      response: {
+        200: z.object({
+          metadata: z.array(z.object({ key: z.string(), value: z.string() }))
+        })
+      }
+    },
+    handler: async (req) => {
+      const result = await server.services.certificateV3.updateCertificate({
+        certificateId: req.params.id,
+        metadata: req.body.metadata,
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId
+      });
+
+      if (req.body.metadata) {
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          projectId: result.projectId,
+          event: {
+            type: EventType.UPDATE_CERTIFICATE_METADATA,
+            metadata: {
+              certificateId: req.params.id,
+              commonName: result.commonName,
+              metadata: req.body.metadata.map(({ key, value }) => ({ key, value }))
+            }
+          }
+        });
+      }
+
+      return { metadata: result.metadata };
+    }
+  });
+
+  server.route({
     method: "GET",
     url: "/:id/private-key",
     config: {
@@ -562,6 +1454,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getCertificatePrivateKey",
       tags: [ApiDocsTags.PkiCertificates],
       description: "Get certificate private key",
       params: z.object({
@@ -608,6 +1501,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getCertificateBundle",
       tags: [ApiDocsTags.PkiCertificates],
       description: "Get certificate bundle including the certificate, chain, and private key.",
       params: z.object({
@@ -645,6 +1539,16 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
         }
       });
 
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CertificateExported,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          format: "pem-bundle",
+          orgId: req.permission.orgId
+        }
+      });
+
       addNoCacheHeaders(reply);
 
       return {
@@ -665,23 +1569,23 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "importCertificate",
       tags: [ApiDocsTags.PkiCertificates],
       description: "Import certificate",
       body: z.object({
-        projectSlug: z.string().trim().min(1).describe(CERTIFICATES.IMPORT.projectSlug),
-
         certificatePem: z.string().trim().min(1).describe(CERTIFICATES.IMPORT.certificatePem),
-        privateKeyPem: z.string().trim().min(1).describe(CERTIFICATES.IMPORT.privateKeyPem),
-        chainPem: z.string().trim().min(1).describe(CERTIFICATES.IMPORT.chainPem),
+        privateKeyPem: z.string().trim().min(1).optional().describe(CERTIFICATES.IMPORT.privateKeyPem),
+        chainPem: z.string().trim().min(1).optional().describe(CERTIFICATES.IMPORT.chainPem),
 
         friendlyName: z.string().trim().optional().describe(CERTIFICATES.IMPORT.friendlyName),
-        pkiCollectionId: z.string().trim().optional().describe(CERTIFICATES.IMPORT.pkiCollectionId)
+        pkiCollectionId: z.string().trim().optional().describe(CERTIFICATES.IMPORT.pkiCollectionId),
+        applicationId: z.string().trim().uuid().optional()
       }),
       response: {
         200: z.object({
           certificate: z.string().trim().describe(CERTIFICATES.IMPORT.certificate),
-          certificateChain: z.string().trim().describe(CERTIFICATES.IMPORT.certificateChain),
-          privateKey: z.string().trim().describe(CERTIFICATES.IMPORT.privateKey),
+          certificateChain: z.string().trim().optional().describe(CERTIFICATES.IMPORT.certificateChain),
+          privateKey: z.string().trim().optional().describe(CERTIFICATES.IMPORT.privateKey),
           serialNumber: z.string().trim().describe(CERTIFICATES.IMPORT.serialNumber)
         })
       }
@@ -693,6 +1597,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
           actorId: req.permission.id,
           actorAuthMethod: req.permission.authMethod,
           actorOrgId: req.permission.orgId,
+          projectId: req.internalCertManagerProjectId,
           ...req.body
         });
 
@@ -727,6 +1632,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "revokeCertificate",
       tags: [ApiDocsTags.PkiCertificates],
       description: "Revoke",
       params: z.object({
@@ -744,8 +1650,9 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
+      const { id: identifier } = req.params;
       const { revokedAt, cert, ca } = await server.services.certificate.revokeCert({
-        id: req.params.id,
+        ...(isUuidV4(identifier) ? { id: identifier } : { thumbprint: identifier }),
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
@@ -766,6 +1673,15 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
         }
       });
 
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CertificateRevoked,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          orgId: req.permission.orgId
+        }
+      });
+
       return {
         message: "Successfully revoked certificate",
         serialNumber: cert.serialNumber,
@@ -783,6 +1699,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "deleteCertificate",
       tags: [ApiDocsTags.PkiCertificates],
       description: "Delete certificate",
       params: z.object({
@@ -816,9 +1733,70 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
         }
       });
 
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CertificateDeleted,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          orgId: req.permission.orgId
+        }
+      });
+
       return {
         certificate: deletedCert
       };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/:id/application",
+    config: { rateLimit: writeLimit },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    schema: {
+      hide: false,
+      operationId: "assignCertificateToApplication",
+      tags: [ApiDocsTags.PkiCertificates],
+      description:
+        "Assign a certificate to an Application. Only certificates that aren't already attached to an Application can be assigned; once attached the binding cannot be moved.",
+      params: z.object({
+        id: z.string().uuid()
+      }),
+      body: z.object({
+        applicationId: z.string().uuid()
+      }),
+      response: {
+        200: z.object({
+          certificate: CertificatesSchema
+        })
+      }
+    },
+    handler: async (req) => {
+      const { certificate, application } = await server.services.certificate.assignCertificateToApplication({
+        certificateId: req.params.id,
+        applicationId: req.body.applicationId,
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: certificate.projectId,
+        event: {
+          type: EventType.ASSIGN_CERT_TO_APPLICATION,
+          metadata: {
+            certId: certificate.id,
+            cn: certificate.commonName,
+            serialNumber: certificate.serialNumber,
+            applicationId: application.id,
+            applicationName: application.name
+          }
+        }
+      });
+
+      return { certificate };
     }
   });
 
@@ -831,6 +1809,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getCertificateBody",
       tags: [ApiDocsTags.PkiCertificates],
       description: "Get certificate body of certificate",
       params: z.object({
@@ -883,6 +1862,7 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT]),
     schema: {
       hide: true,
+      operationId: "exportCertificatePkcs12",
       tags: [ApiDocsTags.PkiCertificates],
       description: "Download certificate in PKCS12 format",
       params: z.object({
@@ -920,6 +1900,16 @@ export const registerCertificateRouter = async (server: FastifyZodProvider) => {
             cn: cert.commonName,
             serialNumber: cert.serialNumber
           }
+        }
+      });
+
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CertificateExported,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          format: "pkcs12",
+          orgId: req.permission.orgId
         }
       });
 

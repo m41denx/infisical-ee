@@ -19,6 +19,7 @@ export enum SecretSync {
   Heroku = "heroku",
   Render = "render",
   Flyio = "flyio",
+  TriggerDev = "trigger-dev",
   GitLab = "gitlab",
   CloudflarePages = "cloudflare-pages",
   CloudflareWorkers = "cloudflare-workers",
@@ -31,7 +32,18 @@ export enum SecretSync {
   Northflank = "northflank",
   Bitbucket = "bitbucket",
   LaravelForge = "laravel-forge",
-  Chef = "chef"
+  Chef = "chef",
+  OctopusDeploy = "octopus-deploy",
+  CircleCI = "circleci",
+  AzureEntraIdScim = "azure-entra-id-scim",
+  ExternalInfisical = "external-infisical",
+  OVH = "ovh",
+  Devin = "devin",
+  Ona = "ona",
+  TravisCI = "travis-ci",
+  Snowflake = "snowflake",
+  Qovery = "qovery",
+  Cloud66 = "cloud-66"
 }
 
 export enum SecretSyncInitialSyncBehavior {

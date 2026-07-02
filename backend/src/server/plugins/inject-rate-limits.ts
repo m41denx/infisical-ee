@@ -4,7 +4,7 @@ import { getRateLimiterConfig } from "@app/ee/services/rate-limit/rate-limit-ser
 import { getConfig } from "@app/lib/config/env";
 
 export const injectRateLimits = fp(async (server) => {
-  server.decorateRequest("rateLimits", null);
+  server.decorateRequest("rateLimits");
   server.addHook("onRequest", async (req) => {
     const appCfg = getConfig();
 
@@ -32,7 +32,9 @@ export const injectRateLimits = fp(async (server) => {
       publicEndpointLimit: instanceRateLimiterConfig.publicEndpointLimit,
       authRateLimit: instanceRateLimiterConfig.authRateLimit,
       inviteUserRateLimit: instanceRateLimiterConfig.inviteUserRateLimit,
-      mfaRateLimit: instanceRateLimiterConfig.mfaRateLimit
+      mfaRateLimit: instanceRateLimiterConfig.mfaRateLimit,
+      identityCreationLimit: instanceRateLimiterConfig.identityCreationLimit,
+      projectCreationLimit: instanceRateLimiterConfig.projectCreationLimit
     };
   });
 });

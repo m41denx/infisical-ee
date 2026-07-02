@@ -16,7 +16,6 @@ import {
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { ProjectPermissionIdentityActions, ProjectPermissionSub } from "@app/ee/services/permission/project-permission";
 import { getConfig } from "@app/lib/config/env";
-import { crypto } from "@app/lib/crypto";
 import {
   BadRequestError,
   ForbiddenRequestError,
@@ -24,12 +23,13 @@ import {
   PermissionBoundaryError,
   UnauthorizedError
 } from "@app/lib/errors";
-import { extractIPDetails, isValidIpOrCidr } from "@app/lib/ip";
+import { extractIPDetails, isValidIpOrCidr, TIp } from "@app/lib/ip";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 
-import { ActorType, AuthTokenType } from "../auth/auth-type";
-import { TIdentityDALFactory } from "../identity/identity-dal";
+import { ActorType } from "../auth/auth-type";
 import { TIdentityAccessTokenDALFactory } from "../identity-access-token/identity-access-token-dal";
-import { TIdentityAccessTokenJwtPayload } from "../identity-access-token/identity-access-token-types";
+import { TIdentityAccessTokenServiceFactory } from "../identity-access-token/identity-access-token-service";
 import { TMembershipIdentityDALFactory } from "../membership-identity/membership-identity-dal";
 import { TOrgDALFactory } from "../org/org-dal";
 import { validateIdentityUpdateForSuperAdminPrivileges } from "../super-admin/super-admin-fns";
@@ -47,7 +47,6 @@ import {
 } from "./identity-token-auth-types";
 
 type TIdentityTokenAuthServiceFactoryDep = {
-  identityDAL: Pick<TIdentityDALFactory, "findById">;
   identityTokenAuthDAL: Pick<
     TIdentityTokenAuthDALFactory,
     "transaction" | "create" | "findOne" | "updateById" | "delete"
@@ -57,18 +56,22 @@ type TIdentityTokenAuthServiceFactoryDep = {
     TIdentityAccessTokenDALFactory,
     "create" | "find" | "update" | "findById" | "findOne" | "updateById" | "delete"
   >;
+  identityAccessTokenService: Pick<
+    TIdentityAccessTokenServiceFactory,
+    "issueIdentityAccessToken" | "revokeTokensForIdentityAuthMethod" | "markPerTokenRevocation"
+  >;
   permissionService: Pick<TPermissionServiceFactory, "getOrgPermission" | "getProjectPermission">;
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
-  orgDAL: Pick<TOrgDALFactory, "findById">;
+  orgDAL: Pick<TOrgDALFactory, "findById" | "findOne" | "findEffectiveOrgMembership">;
 };
 
 export type TIdentityTokenAuthServiceFactory = ReturnType<typeof identityTokenAuthServiceFactory>;
 
 export const identityTokenAuthServiceFactory = ({
-  identityDAL,
   identityTokenAuthDAL,
   membershipIdentityDAL,
   identityAccessTokenDAL,
+  identityAccessTokenService,
   permissionService,
   licenseService,
   orgDAL
@@ -385,7 +388,10 @@ export const identityTokenAuthServiceFactory = ({
         scope: OrganizationActionScope.Any
       });
 
-      const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(identityMembershipOrg.scopeOrgId);
+      const { shouldUseNewPrivilegeSystem } = await requestMemoize(
+        requestMemoKeys.orgFindById(identityMembershipOrg.scopeOrgId),
+        () => orgDAL.findById(identityMembershipOrg.scopeOrgId)
+      );
       const permissionBoundary = validatePrivilegeChangeOperation(
         shouldUseNewPrivilegeSystem,
         OrgPermissionIdentityActions.RevokeAuth,
@@ -414,6 +420,15 @@ export const identityTokenAuthServiceFactory = ({
 
       return { ...deletedTokenAuth?.[0], orgId: identityMembershipOrg.scopeOrgId };
     });
+
+    // Detaching the auth method must invalidate any tokens already issued
+    // through it; without this, leaked tokens authenticate up to MAX_AGE
+    // even after the admin pulled the auth method.
+    await identityAccessTokenService.revokeTokensForIdentityAuthMethod({
+      identityId,
+      authMethod: IdentityAuthMethod.TOKEN_AUTH
+    });
+
     return revokedIdentityTokenAuth;
   };
 
@@ -424,7 +439,8 @@ export const identityTokenAuthServiceFactory = ({
     actorAuthMethod,
     actorOrgId,
     name,
-    isActorSuperAdmin
+    isActorSuperAdmin,
+    organizationSlug
   }: TCreateTokenAuthTokenDTO) => {
     await validateIdentityUpdateForSuperAdminPrivileges(identityId, isActorSuperAdmin);
 
@@ -436,6 +452,9 @@ export const identityTokenAuthServiceFactory = ({
       identityId
     });
     if (!identityMembershipOrg) throw new NotFoundError({ message: `Failed to find identity with ID ${identityId}` });
+    if (identityMembershipOrg.identity.orgId !== actorOrgId) {
+      throw new ForbiddenRequestError({ message: "Sub organization not authorized to access this identity" });
+    }
 
     if (!identityMembershipOrg.identity.authMethods.includes(IdentityAuthMethod.TOKEN_AUTH)) {
       throw new BadRequestError({
@@ -478,7 +497,10 @@ export const identityTokenAuthServiceFactory = ({
         scope: OrganizationActionScope.Any
       });
 
-      const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(identityMembershipOrg.scopeOrgId);
+      const { shouldUseNewPrivilegeSystem } = await requestMemoize(
+        requestMemoKeys.orgFindById(identityMembershipOrg.scopeOrgId),
+        () => orgDAL.findById(identityMembershipOrg.scopeOrgId)
+      );
       const permissionBoundary = validatePrivilegeChangeOperation(
         shouldUseNewPrivilegeSystem,
         OrgPermissionIdentityActions.CreateToken,
@@ -500,10 +522,51 @@ export const identityTokenAuthServiceFactory = ({
 
     const identityTokenAuth = await identityTokenAuthDAL.findOne({ identityId });
 
-    const identity = await identityDAL.findById(identityTokenAuth.identityId);
-    if (!identity) throw new UnauthorizedError({ message: "Identity not found" });
+    const { identity } = identityMembershipOrg;
 
-    const identityAccessToken = await identityTokenAuthDAL.transaction(async (tx) => {
+    const org = await requestMemoize(requestMemoKeys.orgFindById(identity.orgId), () =>
+      orgDAL.findById(identity.orgId)
+    );
+    const isSubOrgIdentity = Boolean(org.rootOrgId);
+
+    // If the identity is a sub-org identity, then the scope is always the org.id, and if it's a root org identity, then we need to resolve the scope if a organizationSlug is specified
+    let subOrganizationId = isSubOrgIdentity ? org.id : null;
+
+    if (organizationSlug && org.slug !== organizationSlug) {
+      if (!isSubOrgIdentity) {
+        const subOrg = await orgDAL.findOne({ rootOrgId: org.id, slug: organizationSlug });
+
+        if (!subOrg) {
+          throw new NotFoundError({ message: `Sub organization with slug ${organizationSlug} not found` });
+        }
+
+        const subOrgMembership = await orgDAL.findEffectiveOrgMembership({
+          actorType: ActorType.IDENTITY,
+          actorId: identity.id,
+          orgId: subOrg.id
+        });
+
+        if (!subOrgMembership) {
+          throw new UnauthorizedError({
+            message: `Identity not authorized to access sub organization ${organizationSlug}`
+          });
+        }
+
+        subOrganizationId = subOrg.id;
+      }
+    }
+
+    const subOrgDetails =
+      subOrganizationId && subOrganizationId !== org.id ? await orgDAL.findById(subOrganizationId) : null;
+    const tokenScopeOrg = subOrgDetails ?? org;
+    const tokenRootOrgId = tokenScopeOrg.rootOrgId ?? tokenScopeOrg.id;
+    const tokenParentOrgId = tokenScopeOrg.parentOrgId ?? tokenRootOrgId;
+
+    // Token Auth is the only auth method that materializes a real PG row at
+    // issuance time — its tokens are admin-managed and listed in the UI, so
+    // we hand the helper a transaction so the row insert and the
+    // membership-update happen atomically.
+    const { accessToken, identityAccessToken } = await identityTokenAuthDAL.transaction(async (tx) => {
       await membershipIdentityDAL.update(
         identity.projectId
           ? {
@@ -520,37 +583,24 @@ export const identityTokenAuthServiceFactory = ({
         { lastLoginAuthMethod: IdentityAuthMethod.TOKEN_AUTH, lastLoginTime: new Date() },
         tx
       );
-      const newToken = await identityAccessTokenDAL.create(
-        {
-          identityId: identityTokenAuth.identityId,
-          isAccessTokenRevoked: false,
-          accessTokenTTL: identityTokenAuth.accessTokenTTL,
-          accessTokenMaxTTL: identityTokenAuth.accessTokenMaxTTL,
-          accessTokenNumUses: 0,
-          accessTokenNumUsesLimit: identityTokenAuth.accessTokenNumUsesLimit,
-          name,
-          authMethod: IdentityAuthMethod.TOKEN_AUTH
-        },
-        tx
-      );
-      return newToken;
-    });
 
-    const appCfg = getConfig();
-    const accessToken = crypto.jwt().sign(
-      {
-        identityId: identityTokenAuth.identityId,
-        identityAccessTokenId: identityAccessToken.id,
-        authTokenType: AuthTokenType.IDENTITY_ACCESS_TOKEN
-      } as TIdentityAccessTokenJwtPayload,
-      appCfg.AUTH_SECRET,
-      // akhilmhdh: for non-expiry tokens you should not even set the value, including undefined. Even for undefined jsonwebtoken throws error
-      Number(identityAccessToken.accessTokenTTL) === 0
-        ? undefined
-        : {
-            expiresIn: Number(identityAccessToken.accessTokenTTL)
-          }
-    );
+      return identityAccessTokenService.issueIdentityAccessToken({
+        identityId: identity.id,
+        identityName: identity.name,
+        authMethod: IdentityAuthMethod.TOKEN_AUTH,
+        orgId: tokenScopeOrg.id,
+        rootOrgId: tokenRootOrgId,
+        parentOrgId: tokenParentOrgId,
+        subOrganizationId,
+        accessTokenTTL: Number(identityTokenAuth.accessTokenTTL),
+        accessTokenMaxTTL: Number(identityTokenAuth.accessTokenMaxTTL),
+        accessTokenNumUsesLimit: Number(identityTokenAuth.accessTokenNumUsesLimit),
+        // Token Auth schema has no accessTokenPeriod column.
+        accessTokenPeriod: 0,
+        accessTokenTrustedIps: identityTokenAuth.accessTokenTrustedIps as TIp[],
+        persistToPg: { tx, name }
+      });
+    });
 
     return { accessToken, identityTokenAuth, identityAccessToken, identity };
   };
@@ -621,48 +671,61 @@ export const identityTokenAuthServiceFactory = ({
 
   const getTokenAuthTokenById = async ({
     tokenId,
-    identityId,
-    isActorSuperAdmin,
     actorId,
     actor,
     actorAuthMethod,
     actorOrgId
   }: TGetTokenAuthTokenByIdDTO) => {
-    await validateIdentityUpdateForSuperAdminPrivileges(identityId, isActorSuperAdmin);
+    const foundToken = await identityAccessTokenDAL.findOne({
+      [`${TableName.IdentityAccessToken}.id` as "id"]: tokenId,
+      [`${TableName.IdentityAccessToken}.authMethod` as "authMethod"]: IdentityAuthMethod.TOKEN_AUTH
+    });
+    if (!foundToken) throw new NotFoundError({ message: `Token with ID ${tokenId} not found` });
 
     const identityMembershipOrg = await membershipIdentityDAL.getIdentityById({
       scopeData: {
         scope: AccessScope.Organization,
         orgId: actorOrgId
       },
-      identityId
+      identityId: foundToken.identityId
     });
-    if (!identityMembershipOrg) throw new NotFoundError({ message: `Failed to find identity with ID ${identityId}` });
+    if (!identityMembershipOrg) {
+      throw new NotFoundError({ message: `Failed to find identity with ID ${foundToken.identityId}` });
+    }
 
     if (!identityMembershipOrg.identity.authMethods.includes(IdentityAuthMethod.TOKEN_AUTH)) {
       throw new BadRequestError({
         message: "The identity does not have Token Auth"
       });
     }
-    const { permission } = await permissionService.getOrgPermission({
-      scope: OrganizationActionScope.Any,
-      actor,
-      actorId,
-      orgId: identityMembershipOrg.scopeOrgId,
-      actorAuthMethod,
-      actorOrgId
-    });
-    ForbiddenError.from(permission).throwUnlessCan(OrgPermissionIdentityActions.Read, OrgPermissionSubjects.Identity);
 
-    const token = await identityAccessTokenDAL.findOne({
-      [`${TableName.IdentityAccessToken}.id` as "id"]: tokenId,
-      [`${TableName.IdentityAccessToken}.authMethod` as "authMethod"]: IdentityAuthMethod.TOKEN_AUTH,
-      [`${TableName.IdentityAccessToken}.identityId` as "identityId"]: identityId
-    });
+    if (identityMembershipOrg.identity.projectId) {
+      const { permission } = await permissionService.getProjectPermission({
+        actionProjectType: ActionProjectType.Any,
+        actor,
+        actorId,
+        projectId: identityMembershipOrg.identity.projectId,
+        actorAuthMethod,
+        actorOrgId
+      });
 
-    if (!token) throw new NotFoundError({ message: `Token with ID ${tokenId} not found` });
+      ForbiddenError.from(permission).throwUnlessCan(
+        ProjectPermissionIdentityActions.Read,
+        subject(ProjectPermissionSub.Identity, { identityId: identityMembershipOrg.identity.id })
+      );
+    } else {
+      const { permission } = await permissionService.getOrgPermission({
+        scope: OrganizationActionScope.Any,
+        actor,
+        actorId,
+        orgId: identityMembershipOrg.scopeOrgId,
+        actorAuthMethod,
+        actorOrgId
+      });
+      ForbiddenError.from(permission).throwUnlessCan(OrgPermissionIdentityActions.Read, OrgPermissionSubjects.Identity);
+    }
 
-    return { token, identityMembershipOrg };
+    return { token: foundToken, identityMembershipOrg };
   };
 
   const updateTokenAuthToken = async ({
@@ -731,7 +794,10 @@ export const identityTokenAuthServiceFactory = ({
         actorOrgId,
         scope: OrganizationActionScope.Any
       });
-      const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(identityMembershipOrg.scopeOrgId);
+      const { shouldUseNewPrivilegeSystem } = await requestMemoize(
+        requestMemoKeys.orgFindById(identityMembershipOrg.scopeOrgId),
+        () => orgDAL.findById(identityMembershipOrg.scopeOrgId)
+      );
       const permissionBoundary = validatePrivilegeChangeOperation(
         shouldUseNewPrivilegeSystem,
         OrgPermissionIdentityActions.CreateToken,
@@ -833,6 +899,25 @@ export const identityTokenAuthServiceFactory = ({
         isAccessTokenRevoked: true
       }
     );
+
+    const appCfg = getConfig();
+    // maxTTL > 0: the latest possible JWT exp is createdAt + maxTTL regardless of MAX_AGE.
+    // A JWT at createdAt + (maxTTL - MAX_AGE) gets a full MAX_AGE-bounded TTL, expiring at
+    // createdAt + maxTTL. Using min(maxTTL, MAX_AGE) clips the marker too early when maxTTL > MAX_AGE.
+    //
+    // maxTTL == 0: no budget cap, so a JWT renewed just before revocation can expire up to MAX_AGE
+    // after the revocation time (revokedAt), not after createdAt.
+    let expiresAt: Date;
+    if (identityAccessToken.accessTokenMaxTTL > 0) {
+      expiresAt = new Date(identityAccessToken.createdAt.getTime() + identityAccessToken.accessTokenMaxTTL * 1000);
+    } else {
+      expiresAt = new Date(Date.now() + appCfg.MAX_MACHINE_IDENTITY_TOKEN_AGE * 1000);
+    }
+    await identityAccessTokenService.markPerTokenRevocation({
+      tokenId: identityAccessToken.id,
+      identityId: identityAccessToken.identityId,
+      expiresAt
+    });
 
     return { revokedToken };
   };

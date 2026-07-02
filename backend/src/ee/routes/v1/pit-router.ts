@@ -6,11 +6,13 @@ import { removeTrailingSlash } from "@app/lib/fn";
 import { isValidFolderName } from "@app/lib/validator";
 import { readLimit, secretsLimit } from "@app/server/config/rateLimiter";
 import { SecretNameSchema } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { booleanSchema } from "@app/server/routes/sanitizedSchemas";
 import { AuthMode } from "@app/services/auth/auth-type";
 import { commitChangesResponseSchema, resourceChangeSchema } from "@app/services/folder-commit/folder-commit-schemas";
-import { ResourceMetadataSchema } from "@app/services/resource-metadata/resource-metadata-schema";
+import { ResourceMetadataWithEncryptionSchema } from "@app/services/resource-metadata/resource-metadata-schema";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 const commitHistoryItemSchema = z.object({
   id: z.string(),
@@ -314,6 +316,19 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
         }
       });
 
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.SecretRollbackPerformed,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          projectId: req.body.projectId,
+          environment: req.body.environment,
+          commitId: req.params.commitId,
+          deepRollback: req.body.deepRollback,
+          totalChanges: result.totalChanges || 0
+        }
+      });
+
       return result;
     }
   });
@@ -365,6 +380,19 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretRevertPerformed,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            projectId: req.body.projectId,
+            commitId: req.params.commitId,
+            changesReverted: result.changesReverted
+          }
+        })
+        .catch(() => {});
 
       return result;
     }
@@ -446,7 +474,7 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
                   secretComment: z.string().trim().optional().default(""),
                   skipMultilineEncoding: z.boolean().optional(),
                   metadata: z.record(z.string()).optional(),
-                  secretMetadata: ResourceMetadataSchema.optional(),
+                  secretMetadata: ResourceMetadataWithEncryptionSchema.optional(),
                   tagIds: z.string().array().optional()
                 })
               )
@@ -466,7 +494,7 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
                     .nullish()
                     .transform((val) => (val === null ? false : val)),
                   metadata: z.record(z.string()).optional(),
-                  secretMetadata: ResourceMetadataSchema.optional(),
+                  secretMetadata: ResourceMetadataWithEncryptionSchema.optional(),
                   tagIds: z.string().array().optional()
                 })
               )
@@ -569,6 +597,24 @@ export const registerPITRouter = async (server: FastifyZodProvider) => {
           projectId: req.body.projectId,
           event
         });
+      }
+
+      const foldersToCreate = req.body.changes.folders?.create;
+      if (foldersToCreate && foldersToCreate.length > 0) {
+        await Promise.all(
+          foldersToCreate.map((folder) =>
+            server.services.telemetry.sendPostHogEvents({
+              event: PostHogEventTypes.SecretFolderCreated,
+              distinctId: getTelemetryDistinctId(req),
+              organizationId: req.permission.orgId,
+              properties: {
+                projectId: req.body.projectId,
+                environment: req.body.environment,
+                folderName: folder.folderName
+              }
+            })
+          )
+        );
       }
 
       return { message: "success" };

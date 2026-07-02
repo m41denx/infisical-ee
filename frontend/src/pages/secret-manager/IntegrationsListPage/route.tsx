@@ -3,6 +3,7 @@ import { zodValidator } from "@tanstack/zod-adapter";
 import { z } from "zod";
 
 import { projectKeys } from "@app/hooks/api";
+import { AppConnection } from "@app/hooks/api/appConnections/enums";
 import { TIntegration } from "@app/hooks/api/integrations/types";
 import { fetchWorkspaceIntegrations } from "@app/hooks/api/projects/queries";
 import {
@@ -19,7 +20,8 @@ const IntegrationsListPageQuerySchema = z.object({
   selectedTab: z.nativeEnum(IntegrationsListPageTabs).optional(),
   addSync: z.nativeEnum(SecretSync).optional(),
   connectionId: z.string().optional(),
-  connectionName: z.string().optional()
+  connectionName: z.string().optional(),
+  addConnectionApp: z.nativeEnum(AppConnection).optional()
 });
 
 export const Route = createFileRoute(
@@ -65,7 +67,7 @@ export const Route = createFileRoute(
             orgId,
             projectId
           },
-          search: { selectedTab: IntegrationsListPageTabs.SecretSyncs }
+          search: { selectedTab: IntegrationsListPageTabs.AppConnections }
         });
       }
 
@@ -80,13 +82,14 @@ export const Route = createFileRoute(
         });
       }
 
+      // Default to App Connections tab if no existing syncs or integrations
       throw redirect({
         to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
         params: {
           orgId,
           projectId
         },
-        search: { selectedTab: IntegrationsListPageTabs.SecretSyncs }
+        search: { selectedTab: IntegrationsListPageTabs.AppConnections }
       });
     }
 

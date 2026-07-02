@@ -1,12 +1,16 @@
+import fs from "fs";
 import knex, { Knex } from "knex";
+import oracledb from "oracledb";
 
 import { verifyHostInputValidity } from "@app/ee/services/dynamic-secret/dynamic-secret-fns";
 import { TGatewayServiceFactory } from "@app/ee/services/gateway/gateway-service";
+import { TGatewayPoolServiceFactory } from "@app/ee/services/gateway-pool/gateway-pool-service";
 import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
 import {
   TSqlCredentialsRotationGeneratedCredentials,
   TSqlCredentialsRotationWithConnection
 } from "@app/ee/services/secret-rotation-v2/shared/sql-credentials/sql-credentials-rotation-types";
+import { getConfig } from "@app/lib/config/env";
 import { BadRequestError, DatabaseError } from "@app/lib/errors";
 import { GatewayProxyProtocol, withGatewayProxy } from "@app/lib/gateway";
 import { withGatewayV2Proxy } from "@app/lib/gateway-v2/gateway-v2";
@@ -79,13 +83,47 @@ const getConnectionConfig = ({
   }
 };
 
+// if TNS_ADMIN is set and the directory exists, we assume it's a wallet connection for OracleDB
+const isOracleWalletConnection = (app: AppConnection): boolean => {
+  const { TNS_ADMIN } = getConfig();
+
+  return app === AppConnection.OracleDB && !!TNS_ADMIN && fs.existsSync(TNS_ADMIN);
+};
+
+const getOracleWalletKnexClient = (
+  credentials: Pick<TSqlConnection["credentials"], "username" | "password" | "database">
+): Knex => {
+  if (oracledb.thin) {
+    try {
+      oracledb.initOracleClient();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new BadRequestError({
+        message: `Failed to initialize Oracle client: ${errorMessage}. See documentation for instructions: https://infisical.com/docs/integrations/app-connections/oracledb#mutual-tls-wallet`
+      });
+    }
+  }
+  return knex({
+    client: SQL_CONNECTION_CLIENT_MAP[AppConnection.OracleDB],
+    connection: {
+      user: credentials.username,
+      password: credentials.password,
+      connectString: credentials.database
+    }
+  });
+};
+
 export const getSqlConnectionClient = async (appConnection: Pick<TSqlConnection, "credentials" | "app">) => {
   const {
     app,
     credentials: { host: baseHost, database, port, password, username }
   } = appConnection;
 
-  const [host] = await verifyHostInputValidity(baseHost);
+  if (isOracleWalletConnection(app)) {
+    return getOracleWalletKnexClient({ username, password, database });
+  }
+
+  const [host] = await verifyHostInputValidity({ host: baseHost, isDynamicSecret: false });
 
   const client = knex({
     client: SQL_CONNECTION_CLIENT_MAP[app],
@@ -107,33 +145,57 @@ export const executeWithPotentialGateway = async <T>(
   config: TSqlConnectionConfig,
   gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">,
   gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">,
-  operation: (client: Knex) => Promise<T>
+  operation: (client: Knex) => Promise<T>,
+  gatewayPoolService?: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">
 ): Promise<T> => {
-  const { credentials, app, gatewayId } = config;
+  const { credentials, app, gatewayId: directGatewayId, gatewayPoolId } = config;
+
+  if (gatewayPoolId && !gatewayPoolService) {
+    throw new BadRequestError({
+      message: "Pool-backed connections require gatewayPoolService at the call site"
+    });
+  }
+  const gatewayId =
+    gatewayPoolId && gatewayPoolService
+      ? await gatewayPoolService.resolveEffectiveGatewayId({ gatewayId: directGatewayId, gatewayPoolId })
+      : directGatewayId;
 
   if (gatewayId && gatewayService && gatewayV2Service) {
-    const [targetHost] = await verifyHostInputValidity(credentials.host, true);
+    const [targetHost] = await verifyHostInputValidity({
+      host: credentials.host,
+      isGateway: true,
+      isDynamicSecret: false
+    });
     const platformConnectionDetails = await gatewayV2Service.getPlatformConnectionDetailsByGatewayId({
       gatewayId,
       targetHost,
       targetPort: credentials.port
     });
 
+    const createClient = (proxyPort: number): Knex => {
+      const { database, username, password } = credentials;
+      if (isOracleWalletConnection(app)) {
+        return getOracleWalletKnexClient({ username, password, database });
+      }
+
+      return knex({
+        client: SQL_CONNECTION_CLIENT_MAP[app],
+        connection: {
+          database: credentials.database,
+          port: proxyPort,
+          host: "localhost",
+          user: credentials.username,
+          password: credentials.password,
+          connectionTimeoutMillis: EXTERNAL_REQUEST_TIMEOUT,
+          ...getConnectionConfig({ app, credentials })
+        }
+      });
+    };
+
     if (platformConnectionDetails) {
       return withGatewayV2Proxy(
         async (proxyPort) => {
-          const client = knex({
-            client: SQL_CONNECTION_CLIENT_MAP[app],
-            connection: {
-              database: credentials.database,
-              port: proxyPort,
-              host: "localhost",
-              user: credentials.username,
-              password: credentials.password,
-              connectionTimeoutMillis: EXTERNAL_REQUEST_TIMEOUT,
-              ...getConnectionConfig({ app, credentials })
-            }
-          });
+          const client = createClient(proxyPort);
           try {
             return await operation(client);
           } finally {
@@ -150,22 +212,10 @@ export const executeWithPotentialGateway = async <T>(
     }
 
     const relayDetails = await gatewayService.fnGetGatewayClientTlsByGatewayId(gatewayId);
-    const [relayHost, relayPort] = relayDetails.relayAddress.split(":");
 
     return withGatewayProxy(
       async (proxyPort) => {
-        const client = knex({
-          client: SQL_CONNECTION_CLIENT_MAP[app],
-          connection: {
-            database: credentials.database,
-            port: proxyPort,
-            host: "localhost",
-            user: credentials.username,
-            password: credentials.password,
-            connectionTimeoutMillis: EXTERNAL_REQUEST_TIMEOUT,
-            ...getConnectionConfig({ app, credentials })
-          }
-        });
+        const client = createClient(proxyPort);
         try {
           return await operation(client);
         } finally {
@@ -173,18 +223,10 @@ export const executeWithPotentialGateway = async <T>(
         }
       },
       {
+        relayDetails,
         protocol: GatewayProxyProtocol.Tcp,
         targetHost: app === AppConnection.Postgres ? targetHost : credentials.host,
-        targetPort: credentials.port,
-        relayHost,
-        relayPort: Number(relayPort),
-        identityId: relayDetails.identityId,
-        orgId: relayDetails.orgId,
-        tlsOptions: {
-          ca: relayDetails.certChain,
-          cert: relayDetails.certificate,
-          key: relayDetails.privateKey.toString()
-        }
+        targetPort: credentials.port
       }
     );
   }
@@ -218,6 +260,20 @@ export const validateSqlConnectionCredentials = async (
   }
 };
 
+// PlanetScale requires the connection username in `<user>.<branch>` form so its proxy can route to
+// the correct branch, but the underlying DB role is just `<user>`. Strip the branch suffix for
+// role-level statements (ALTER USER / ALTER LOGIN). Only applies to PlanetScale hosts so that
+// legitimate dotted usernames on other providers are left untouched.
+const PLANETSCALE_HOST_SUFFIX = ".psdb.cloud";
+
+export const getRoleUsernameForHost = (username: string, host: string) => {
+  const isPlanetScaleHost = host.toLowerCase().endsWith(PLANETSCALE_HOST_SUFFIX);
+  if (isPlanetScaleHost && username.includes(".")) {
+    return username.slice(0, username.indexOf("."));
+  }
+  return username;
+};
+
 export const SQL_CONNECTION_ALTER_LOGIN_STATEMENT: Record<
   TSqlCredentialsRotationWithConnection["connection"]["app"],
   (credentials: TSqlCredentialsRotationGeneratedCredentials[number]) => [string, Knex.RawBinding]
@@ -241,8 +297,10 @@ export const transferSqlConnectionCredentialsToPlatform = async (
   try {
     return await executeWithPotentialGateway(config, gatewayService, gatewayV2Service, (client) => {
       return client.transaction(async (tx) => {
+        const filteredUsername = getRoleUsernameForHost(credentials.username, credentials.host);
+
         await tx.raw(
-          ...SQL_CONNECTION_ALTER_LOGIN_STATEMENT[app]({ username: credentials.username, password: newPassword })
+          ...SQL_CONNECTION_ALTER_LOGIN_STATEMENT[app]({ username: filteredUsername, password: newPassword })
         );
         return callback({
           ...credentials,

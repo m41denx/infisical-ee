@@ -1,5 +1,6 @@
 import { TDbClient } from "@app/db";
 import { AccessScope, AccessScopeData, IdentitiesSchema, TableName } from "@app/db/schemas";
+import { sanitizeSqlLikeString } from "@app/lib/fn";
 import { ormify, selectAllTableCols, sqlNestRelationships } from "@app/lib/knex";
 
 import { buildAuthMethods } from "../identity/identity-fns";
@@ -43,6 +44,7 @@ export const identityV2DALFactory = (db: TDbClient) => {
       )
       .leftJoin(TableName.IdentityLdapAuth, `${TableName.Identity}.id`, `${TableName.IdentityLdapAuth}.identityId`)
       .leftJoin(TableName.IdentityJwtAuth, `${TableName.Identity}.id`, `${TableName.IdentityJwtAuth}.identityId`)
+      .leftJoin(TableName.IdentitySpiffeAuth, `${TableName.Identity}.id`, `${TableName.IdentitySpiffeAuth}.identityId`)
       .where(`${TableName.Identity}.id`, identityId)
       .where(`${TableName.Identity}.orgId`, scopeData.orgId)
       .where((qb) => {
@@ -68,7 +70,8 @@ export const identityV2DALFactory = (db: TDbClient) => {
         db.ref("id").as("tokenId").withSchema(TableName.IdentityTokenAuth),
         db.ref("id").as("jwtId").withSchema(TableName.IdentityJwtAuth),
         db.ref("id").as("ldapId").withSchema(TableName.IdentityLdapAuth),
-        db.ref("id").as("tlsCertId").withSchema(TableName.IdentityTlsCertAuth)
+        db.ref("id").as("tlsCertId").withSchema(TableName.IdentityTlsCertAuth),
+        db.ref("id").as("spiffeId").withSchema(TableName.IdentitySpiffeAuth)
       );
 
     if (!doc) return doc;
@@ -89,7 +92,8 @@ export const identityV2DALFactory = (db: TDbClient) => {
           jwtId,
           ociId,
           ldapId,
-          tlsCertId
+          tlsCertId,
+          spiffeId
         } = el;
         return {
           ...IdentitiesSchema.parse(el),
@@ -105,7 +109,8 @@ export const identityV2DALFactory = (db: TDbClient) => {
             jwtId,
             ldapId,
             ociId,
-            tlsCertId
+            tlsCertId,
+            spiffeId
           })
         };
       },
@@ -129,11 +134,8 @@ export const identityV2DALFactory = (db: TDbClient) => {
     scopeData: AccessScopeData,
     filter: { limit?: number; offset?: number; search?: string } = {}
   ) => {
-    const query = db
+    const baseQuery = db
       .replicaNode()(TableName.Identity)
-      .leftJoin(TableName.IdentityMetadata, (queryBuilder) => {
-        void queryBuilder.on(`${TableName.Identity}.id`, `${TableName.IdentityMetadata}.identityId`);
-      })
       .where(`${TableName.Identity}.orgId`, scopeData.orgId)
       .where((qb) => {
         if (scopeData.scope === AccessScope.Project) {
@@ -141,21 +143,28 @@ export const identityV2DALFactory = (db: TDbClient) => {
         } else {
           void qb.whereNull(`${TableName.Identity}.projectId`);
         }
+      });
+
+    if (filter.search)
+      void baseQuery.whereILike(`${TableName.Identity}.name`, `%${sanitizeSqlLikeString(filter.search)}%`);
+
+    const countQuery = baseQuery.clone().count(`${TableName.Identity}.id as count`).first<{ count: string }>();
+
+    const dataQuery = baseQuery
+      .leftJoin(TableName.IdentityMetadata, (queryBuilder) => {
+        void queryBuilder.on(`${TableName.Identity}.id`, `${TableName.IdentityMetadata}.identityId`);
       })
       .select(
         selectAllTableCols(TableName.Identity),
         db.ref("id").withSchema(TableName.IdentityMetadata).as("metadataId"),
         db.ref("key").withSchema(TableName.IdentityMetadata).as("metadataKey"),
         db.ref("value").withSchema(TableName.IdentityMetadata).as("metadataValue")
-      )
-      .select(db.raw(`count(distinct ??) over () as ??`, [`${TableName.Identity}.id`, "count"]));
+      );
 
-    if (filter.limit) void query.limit(filter.limit);
-    if (filter.offset) void query.offset(filter.offset || 0);
+    if (filter.limit) void dataQuery.limit(filter.limit);
+    if (filter.offset) void dataQuery.offset(filter.offset || 0);
 
-    if (filter.search) void query.whereILike(`${TableName.Identity}.name`, `%${filter.search}%`);
-
-    const docs = await query;
+    const [countResult, docs] = await Promise.all([countQuery, dataQuery]);
 
     const formattedDoc = sqlNestRelationships({
       data: docs,
@@ -174,7 +183,7 @@ export const identityV2DALFactory = (db: TDbClient) => {
       ]
     });
 
-    return { docs: formattedDoc, count: Number((docs?.[0] as unknown as { count: number })?.count) };
+    return { docs: formattedDoc, count: Number(countResult?.count ?? 0) };
   };
 
   return { ...orm, listIdentities, getIdentityById };

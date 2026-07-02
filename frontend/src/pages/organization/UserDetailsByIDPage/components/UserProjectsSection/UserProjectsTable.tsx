@@ -1,26 +1,23 @@
 import { useMemo } from "react";
-import {
-  faArrowDown,
-  faArrowUp,
-  faFolder,
-  faMagnifyingGlass,
-  faSearch
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { ChevronDownIcon, PlusIcon } from "lucide-react";
+import { twMerge } from "tailwind-merge";
 
+import { Lottie } from "@app/components/v2";
 import {
-  EmptyState,
-  IconButton,
+  Button,
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
   Input,
   Pagination,
   Table,
-  TableContainer,
-  TableSkeleton,
-  TBody,
-  Th,
-  THead,
-  Tr
-} from "@app/components/v2";
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@app/components/v3";
 import { useOrganization } from "@app/context";
 import {
   getUserTablePreference,
@@ -30,24 +27,32 @@ import {
 import { usePagination, useResetPageHelper } from "@app/hooks";
 import { useGetOrgMembershipProjectMemberships } from "@app/hooks/api";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 import { UserProjectRow } from "./UserProjectRow";
 
 type Props = {
   membershipId: string;
+  username: string;
   handlePopUpOpen: (
-    popUpName: keyof UsePopUpState<["removeUserFromProject"]>,
+    popUpName: keyof UsePopUpState<["removeUserFromProject", "addUserToProject"]>,
     data?: object
   ) => void;
+  canAddToProject: boolean;
 };
 
 enum UserProjectsOrderBy {
   Name = "Name"
 }
 
-export const UserProjectsTable = ({ membershipId, handlePopUpOpen }: Props) => {
-  const { currentOrg } = useOrganization();
+export const UserProjectsTable = ({
+  membershipId,
+  username,
+  handlePopUpOpen,
+  canAddToProject
+}: Props) => {
+  const { currentOrg, isSubOrganization } = useOrganization();
   const orgId = currentOrg?.id || "";
   const {
     search,
@@ -73,9 +78,16 @@ export const UserProjectsTable = ({ membershipId, handlePopUpOpen }: Props) => {
     membershipId
   );
 
+  const visibleProjectMemberships = useMemo(
+    () =>
+      projectMemberships?.filter(
+        (membership) => membership.project.type !== ProjectType.CertificateManager
+      ),
+    [projectMemberships]
+  );
   const filteredProjectMemberships = useMemo(
     () =>
-      projectMemberships
+      visibleProjectMemberships
         ?.filter((membership) =>
           membership.project.name.toLowerCase().includes(search.trim().toLowerCase())
         )
@@ -87,7 +99,7 @@ export const UserProjectsTable = ({ membershipId, handlePopUpOpen }: Props) => {
             .toLowerCase()
             .localeCompare(membershipTwo.project.name.toLowerCase());
         }),
-    [projectMemberships, orderDirection, search]
+    [visibleProjectMemberships, orderDirection, search]
   );
 
   useResetPageHelper({
@@ -96,71 +108,92 @@ export const UserProjectsTable = ({ membershipId, handlePopUpOpen }: Props) => {
     setPage
   });
 
+  if (isPending) {
+    return (
+      <div className="flex h-40 w-full items-center justify-center">
+        <Lottie icon="infisical_loading_white" isAutoPlay className="w-16" />
+      </div>
+    );
+  }
+
   return (
-    <div>
+    <>
       <Input
+        className="mb-4"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
         placeholder="Search projects..."
       />
-      <TableContainer className="mt-4">
+      {filteredProjectMemberships.length ? (
         <Table>
-          <THead>
-            <Tr>
-              <Th className="w-2/3">
-                <div className="flex items-center">
-                  Name
-                  <IconButton
-                    variant="plain"
-                    className="ml-2"
-                    ariaLabel="sort"
-                    onClick={toggleOrderDirection}
-                  >
-                    <FontAwesomeIcon
-                      icon={orderDirection === OrderByDirection.DESC ? faArrowUp : faArrowDown}
-                    />
-                  </IconButton>
-                </div>
-              </Th>
-              <Th>Role</Th>
-              <Th className="w-5" />
-            </Tr>
-          </THead>
-          <TBody>
-            {isPending && <TableSkeleton columns={3} innerKey="user-project-memberships" />}
-            {!isPending &&
-              filteredProjectMemberships.slice(offset, perPage * page).map((membership) => {
-                return (
-                  <UserProjectRow
-                    key={`user-project-membership-${membership.id}`}
-                    membership={membership}
-                    handlePopUpOpen={handlePopUpOpen}
-                  />
-                );
-              })}
-          </TBody>
+          <TableHeader>
+            <TableRow>
+              <TableHead onClick={toggleOrderDirection} className="w-2/3">
+                Name
+                <ChevronDownIcon
+                  className={twMerge(
+                    orderDirection === OrderByDirection.DESC && "rotate-180",
+                    "transition-transform"
+                  )}
+                />
+              </TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead className="w-5" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filteredProjectMemberships.slice(offset, perPage * page).map((membership) => {
+              return (
+                <UserProjectRow
+                  key={`user-project-membership-${membership.id}`}
+                  membership={membership}
+                  handlePopUpOpen={handlePopUpOpen}
+                />
+              );
+            })}
+          </TableBody>
         </Table>
-        {Boolean(filteredProjectMemberships.length) && (
-          <Pagination
-            count={filteredProjectMemberships.length}
-            page={page}
-            perPage={perPage}
-            onChangePage={setPage}
-            onChangePerPage={handlePerPageChange}
-          />
-        )}
-        {!isPending && !filteredProjectMemberships?.length && (
-          <EmptyState
-            title={
-              projectMemberships.length
-                ? "No projects match search..."
-                : "This user has not been assigned to any projects"
-            }
-            icon={projectMemberships.length ? faSearch : faFolder}
-          />
-        )}
-      </TableContainer>
-    </div>
+      ) : (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>
+              {visibleProjectMemberships.length
+                ? "No projects match this search"
+                : "This user is not a member of any projects"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {visibleProjectMemberships.length
+                ? "Adjust search filters to view project memberships."
+                : "Assign this user to a project."}
+            </EmptyDescription>
+            {!visibleProjectMemberships.length && canAddToProject && (
+              <EmptyContent>
+                <Button
+                  variant={isSubOrganization ? "sub-org" : "org"}
+                  size="xs"
+                  onClick={() =>
+                    handlePopUpOpen("addUserToProject", {
+                      username
+                    })
+                  }
+                >
+                  <PlusIcon />
+                  Add to Project
+                </Button>
+              </EmptyContent>
+            )}
+          </EmptyHeader>
+        </Empty>
+      )}
+      {Boolean(filteredProjectMemberships.length) && (
+        <Pagination
+          count={filteredProjectMemberships.length}
+          page={page}
+          perPage={perPage}
+          onChangePage={setPage}
+          onChangePerPage={handlePerPageChange}
+        />
+      )}
+    </>
   );
 };

@@ -2,6 +2,7 @@ import { useCallback } from "react";
 
 import { createNotification } from "@app/components/notifications";
 import { DeleteActionModal } from "@app/components/v2";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@app/components/v3";
 import { useRemoveUserFromGroup } from "@app/hooks/api";
 import { OrgUser } from "@app/hooks/api/users/types";
 import { usePopUp } from "@app/hooks/usePopUp";
@@ -19,30 +20,35 @@ export const UserGroupsSection = ({ orgMembership }: Props) => {
 
   const { mutateAsync: removeUserFromGroup } = useRemoveUserFromGroup();
 
-  const handleRemoveUserFromGroup = useCallback(async (groupId: string, groupSlug: string) => {
-    await removeUserFromGroup({
-      groupId,
-      slug: groupSlug,
-      username: orgMembership.user.username
-    });
+  const handleRemoveUserFromGroup = useCallback(
+    async (groupId: string, groupSlug: string) => {
+      await removeUserFromGroup({
+        groupId,
+        slug: groupSlug,
+        username: orgMembership.user.username
+      });
 
-    createNotification({
-      type: "success",
-      text: "User removed from group successfully"
-    });
+      createNotification({
+        type: "success",
+        text: "User removed from group successfully"
+      });
 
-    handlePopUpClose("removeUserFromGroup");
-  }, []);
+      handlePopUpClose("removeUserFromGroup");
+    },
+    [orgMembership, handlePopUpClose, createNotification]
+  );
 
   return (
     <>
-      <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-        <div className="mb-4 flex items-center justify-between border-b border-mineshaft-400 pb-4">
-          <h3 className="text-lg font-medium text-mineshaft-100">Groups</h3>
-        </div>
-
-        <UserGroupsTable orgMembership={orgMembership} handlePopUpOpen={handlePopUpOpen} />
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Groups</CardTitle>
+          <CardDescription>Manage user group memberships</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <UserGroupsTable orgMembership={orgMembership} handlePopUpOpen={handlePopUpOpen} />
+        </CardContent>
+      </Card>
 
       <DeleteActionModal
         isOpen={popUp.removeUserFromGroup.isOpen}

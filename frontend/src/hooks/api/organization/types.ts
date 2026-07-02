@@ -3,6 +3,11 @@ import { IdentityMembershipOrg } from "@app/hooks/api/identities/types";
 
 import { MfaMethod } from "../auth/types";
 
+export type TSecretShareBrandConfig = {
+  primaryColor?: string;
+  secondaryColor?: string;
+} | null;
+
 export type Organization = {
   id: string;
   name: string;
@@ -21,6 +26,7 @@ export type Organization = {
   allowSecretSharingOutsideOrganization?: boolean;
   userTokenExpiration?: string;
   userRole: string;
+  userJoinedAt: string;
   secretsProductEnabled: boolean;
   pkiProductEnabled: boolean;
   kmsProductEnabled: boolean;
@@ -30,6 +36,9 @@ export type Organization = {
   maxSharedSecretLifetime: number;
   maxSharedSecretViewLimit: number | null;
   blockDuplicateSecretSyncDestinations: boolean;
+  parentOrgId: string | null;
+  rootOrgId: string | null;
+  secretShareBrandConfig?: TSecretShareBrandConfig;
 };
 
 export type UpdateOrgDTO = {
@@ -54,6 +63,7 @@ export type UpdateOrgDTO = {
   maxSharedSecretViewLimit?: number | null;
   maxSharedSecretLifetime?: number;
   blockDuplicateSecretSyncDestinations?: boolean;
+  secretShareBrandConfig?: TSecretShareBrandConfig;
 };
 
 export type BillingDetails = {
@@ -161,10 +171,39 @@ export type TOrgIdentitiesList = {
 
 export enum OrgIdentityOrderBy {
   Name = "name",
-  Role = "role"
+  Role = "role",
+  LastLogin = "lastLogin"
 }
 
 export enum OrgMembershipStatus {
   Invited = "invited",
   Accepted = "accepted"
 }
+
+export type TOrgProductStats = {
+  secretManager: {
+    secretsCount: number;
+    environmentsCount: number;
+    projectsCount: number;
+  };
+  certificateManager: {
+    certificatesCount: number;
+    certificateAuthoritiesCount: number;
+    signersCount: number;
+  };
+  kms: {
+    keysCount: number;
+    clientsCount: number;
+    projectsCount: number;
+  };
+  secretScanning: {
+    dataSourcesCount: number;
+    resourcesCount: number;
+    projectsCount: number;
+  };
+  pam: {
+    accountsCount: number;
+    resourcesCount: number;
+    projectsCount: number;
+  };
+};

@@ -12,16 +12,22 @@ import { getConfig } from "@app/lib/config/env";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 import { ms } from "@app/lib/ms";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { ActorType } from "@app/services/auth/auth-type";
 import { TIdentityDALFactory } from "@app/services/identity/identity-dal";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { KmsDataKey } from "@app/services/kms/kms-types";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 import { TSecretFolderDALFactory } from "@app/services/secret-folder/secret-folder-dal";
+import { convertDynamicSecretProviderToValidationRuleProvider } from "@app/services/secret-validation-rule/secret-validation-rule-fns";
+import { TSecretValidationRuleServiceFactory } from "@app/services/secret-validation-rule/secret-validation-rule-service";
+import { SecretValidationRuleType } from "@app/services/secret-validation-rule/secret-validation-rule-types";
 import { TUserDALFactory } from "@app/services/user/user-dal";
 
 import { TDynamicSecretDALFactory } from "../dynamic-secret/dynamic-secret-dal";
 import { DynamicSecretProviders, TDynamicProviderFns } from "../dynamic-secret/providers/models";
+import { toSafeUsername } from "../dynamic-secret/providers/templateUtils";
 import { TDynamicSecretLeaseDALFactory } from "./dynamic-secret-lease-dal";
 import { TDynamicSecretLeaseQueueServiceFactory } from "./dynamic-secret-lease-queue";
 import {
@@ -42,6 +48,7 @@ type TDynamicSecretLeaseServiceFactoryDep = {
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
   userDAL: Pick<TUserDALFactory, "findById">;
   identityDAL: TIdentityDALFactory;
+  secretValidationRuleService: Pick<TSecretValidationRuleServiceFactory, "findConstraintsForGeneratedSecret">;
 };
 
 export const dynamicSecretLeaseServiceFactory = ({
@@ -55,7 +62,8 @@ export const dynamicSecretLeaseServiceFactory = ({
   licenseService,
   kmsService,
   userDAL,
-  identityDAL
+  identityDAL,
+  secretValidationRuleService
 }: TDynamicSecretLeaseServiceFactoryDep): TDynamicSecretLeaseServiceFactory => {
   const extractEmailUsername = (email: string) => {
     const regex = new RE2(/^([^@]+)/);
@@ -144,22 +152,43 @@ export const dynamicSecretLeaseServiceFactory = ({
     try {
       const identity: { name: string } = { name: "" };
       if (actor === ActorType.USER) {
-        const user = await userDAL.findById(actorId);
+        const user = await requestMemoize(requestMemoKeys.userFindById(actorId), () => userDAL.findById(actorId));
         if (user) {
-          identity.name = extractEmailUsername(user.username);
+          identity.name = toSafeUsername(extractEmailUsername(user.username));
         }
-      } else if (actor === ActorType.Machine) {
-        const machineIdentity = await identityDAL.findById(actorId);
+      } else if (actor === ActorType.IDENTITY) {
+        const machineIdentity = await requestMemoize(requestMemoKeys.identityFindById(actorId), () =>
+          identityDAL.findById(actorId)
+        );
         if (machineIdentity) {
-          identity.name = machineIdentity.name;
+          identity.name = toSafeUsername(machineIdentity.name);
         }
       }
+      const ruleProvider = convertDynamicSecretProviderToValidationRuleProvider(
+        dynamicSecretCfg.type as DynamicSecretProviders
+      );
+
+      let passwordValidation;
+      if (ruleProvider) {
+        const matched = await secretValidationRuleService.findConstraintsForGeneratedSecret({
+          projectId,
+          envId: folder.envId,
+          secretPath: path,
+          type: SecretValidationRuleType.DynamicSecrets,
+          provider: ruleProvider
+        });
+        if (matched.constraints.length) {
+          passwordValidation = matched;
+        }
+      }
+
       result = await selectedProvider.create({
         inputs: decryptedStoredInput,
         expireAt: expireAt.getTime(),
         usernameTemplate: dynamicSecretCfg.usernameTemplate,
         identity,
-        metadata: { projectId },
+        dynamicSecret: dynamicSecretCfg,
+        metadata: { projectId, passwordValidation },
         config
       });
     } catch (error: unknown) {
@@ -179,7 +208,14 @@ export const dynamicSecretLeaseServiceFactory = ({
     });
 
     await dynamicSecretQueueService.setLeaseRevocation(dynamicSecretLease.id, dynamicSecretCfg.id, expireAt);
-    return { lease: dynamicSecretLease, dynamicSecret: dynamicSecretCfg, data };
+    return {
+      lease: dynamicSecretLease,
+      dynamicSecret: dynamicSecretCfg,
+      data,
+      projectId,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   const renewLease: TDynamicSecretLeaseServiceFactory["renewLease"] = async ({
@@ -277,7 +313,13 @@ export const dynamicSecretLeaseServiceFactory = ({
       expireAt,
       externalEntityId: entityId
     });
-    return updatedDynamicSecretLease;
+    return {
+      lease: updatedDynamicSecretLease,
+      dynamicSecret: dynamicSecretCfg,
+      projectId,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   const revokeLease: TDynamicSecretLeaseServiceFactory["revokeLease"] = async ({
@@ -364,12 +406,24 @@ export const dynamicSecretLeaseServiceFactory = ({
       });
       // queue a job to retry the revocation at a later time
       await dynamicSecretQueueService.queueFailedRevocation(dynamicSecretLease.id, dynamicSecretCfg.id);
-      return updatedDynamicSecretLease;
+      return {
+        lease: updatedDynamicSecretLease,
+        dynamicSecret: dynamicSecretCfg,
+        projectId,
+        environment: environmentSlug,
+        secretPath: path
+      };
     }
 
     await dynamicSecretQueueService.unsetLeaseRevocation(dynamicSecretLease.id);
     const deletedDynamicSecretLease = await dynamicSecretLeaseDAL.deleteById(dynamicSecretLease.id);
-    return deletedDynamicSecretLease;
+    return {
+      lease: deletedDynamicSecretLease,
+      dynamicSecret: dynamicSecretCfg,
+      projectId,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   const listLeases: TDynamicSecretLeaseServiceFactory["listLeases"] = async ({
@@ -417,7 +471,13 @@ export const dynamicSecretLeaseServiceFactory = ({
     );
 
     const dynamicSecretLeases = await dynamicSecretLeaseDAL.find({ dynamicSecretId: dynamicSecretCfg.id });
-    return dynamicSecretLeases;
+    return {
+      leases: dynamicSecretLeases,
+      dynamicSecret: dynamicSecretCfg,
+      projectId,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   const getLeaseDetails: TDynamicSecretLeaseServiceFactory["getLeaseDetails"] = async ({
@@ -469,7 +529,13 @@ export const dynamicSecretLeaseServiceFactory = ({
       })
     );
 
-    return dynamicSecretLease;
+    return {
+      lease: dynamicSecretLease,
+      dynamicSecret: dynamicSecretCfg,
+      projectId,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   return {

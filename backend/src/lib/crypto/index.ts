@@ -1,5 +1,11 @@
+export {
+  deriveSecretValueBlindIndexKey,
+  generateSecretValueBlindIndex,
+  generateSecretValueBlindIndexFromKmsKey
+} from "./blind-index";
 export { crypto, SymmetricKeySize } from "./cryptography";
 export { buildSecretBlindIndexFromName } from "./encryption";
+export { rsaPkcs1Decrypt, rsaPkcs1Encrypt, rsaSign, rsaVerify } from "./rsa";
 export {
   decryptIntegrationAuths,
   decryptSecretApprovals,

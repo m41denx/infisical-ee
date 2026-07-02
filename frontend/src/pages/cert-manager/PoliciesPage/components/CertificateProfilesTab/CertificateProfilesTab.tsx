@@ -1,13 +1,22 @@
 import { useState } from "react";
-import { faPlus } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { PlusIcon } from "lucide-react";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
-import { Button, DeleteActionModal } from "@app/components/v2";
-import { useProjectPermission } from "@app/context";
+import { ProjectPermissionCan } from "@app/components/permissions";
+import { DeleteActionModal } from "@app/components/v2";
 import {
-  ProjectPermissionActions,
+  Button,
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  DocumentationLinkBadge
+} from "@app/components/v3";
+import {
+  ProjectPermissionCertificateProfileActions,
   ProjectPermissionSub
 } from "@app/context/ProjectPermissionContext/types";
 import { usePopUp } from "@app/hooks";
@@ -16,42 +25,30 @@ import {
   useDeleteCertificateProfile
 } from "@app/hooks/api/certificateProfiles";
 
+import { PkiDocsUrls } from "../../../pki-docs-urls";
 import { CreateProfileModal } from "./CreateProfileModal";
 import { ProfileList } from "./ProfileList";
-import { RevealAcmeEabSecretModal } from "./RevealAcmeEabSecretModal";
 
 export const CertificateProfilesTab = () => {
-  const { permission } = useProjectPermission();
-
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [isRevealProfileAcmeEabSecretModalOpen, setIsRevealProfileAcmeEabSecretModalOpen] =
-    useState(false);
   const [selectedProfile, setSelectedProfile] = useState<TCertificateProfileWithDetails | null>(
     null
   );
-  const { popUp, handlePopUpOpen, handlePopUpToggle } = usePopUp(["upgradePlan"] as const);
+  const { popUp, handlePopUpToggle } = usePopUp(["upgradePlan"] as const);
 
   const deleteProfile = useDeleteCertificateProfile();
-
-  const canCreateProfile = permission.can(
-    ProjectPermissionActions.Create,
-    ProjectPermissionSub.CertificateAuthorities
-  );
-
-  const handleCreateProfile = () => {
-    setIsCreateModalOpen(true);
-  };
 
   const handleEditProfile = (profile: TCertificateProfileWithDetails) => {
     setSelectedProfile(profile);
     setIsEditModalOpen(true);
   };
 
-  const handleRevealProfileAcmeEabSecret = (profile: TCertificateProfileWithDetails) => {
+  const handleCloneProfile = (profile: TCertificateProfileWithDetails) => {
     setSelectedProfile(profile);
-    setIsRevealProfileAcmeEabSecretModalOpen(true);
+    setIsCloneModalOpen(true);
   };
 
   const handleDeleteProfile = (profile: TCertificateProfileWithDetails) => {
@@ -74,39 +71,43 @@ export const CertificateProfilesTab = () => {
   };
 
   return (
-    <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-mineshaft-100">Certificate Profiles</h2>
-          <p className="text-sm text-bunker-300">
-            Unified certificate issuance configurations combining CA, template, and enrollment
-            method
-          </p>
-        </div>
-
-        {canCreateProfile && (
-          <Button
-            colorSchema="primary"
-            type="button"
-            leftIcon={<FontAwesomeIcon icon={faPlus} />}
-            onClick={handleCreateProfile}
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          Certificate Profiles
+          <DocumentationLinkBadge href={PkiDocsUrls.settings.profiles} />
+        </CardTitle>
+        <CardDescription>
+          Reusable presets for issuing certificates. Each profile combines a certificate authority
+          (who signs the certificate) with a policy (the rules and settings applied).
+        </CardDescription>
+        <CardAction>
+          <ProjectPermissionCan
+            I={ProjectPermissionCertificateProfileActions.Create}
+            a={ProjectPermissionSub.CertificateProfiles}
           >
-            Create Profile
-          </Button>
-        )}
-      </div>
+            {(isAllowed) => (
+              <Button
+                variant="project"
+                isDisabled={!isAllowed}
+                onClick={() => setIsCreateModalOpen(true)}
+              >
+                <PlusIcon />
+                Create Profile
+              </Button>
+            )}
+          </ProjectPermissionCan>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <ProfileList
+          onEditProfile={handleEditProfile}
+          onCloneProfile={handleCloneProfile}
+          onDeleteProfile={handleDeleteProfile}
+        />
+      </CardContent>
 
-      <ProfileList
-        onEditProfile={handleEditProfile}
-        onRevealProfileAcmeEabSecret={handleRevealProfileAcmeEabSecret}
-        onDeleteProfile={handleDeleteProfile}
-      />
-
-      <CreateProfileModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        handlePopUpOpen={handlePopUpOpen}
-      />
+      <CreateProfileModal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} />
       <UpgradePlanModal
         isOpen={popUp.upgradePlan.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
@@ -122,21 +123,19 @@ export const CertificateProfilesTab = () => {
               setIsEditModalOpen(false);
               setSelectedProfile(null);
             }}
-            handlePopUpOpen={handlePopUpOpen}
             profile={selectedProfile}
             mode="edit"
           />
 
-          {selectedProfile.enrollmentType === "acme" && (
-            <RevealAcmeEabSecretModal
-              isOpen={isRevealProfileAcmeEabSecretModalOpen}
-              onClose={() => {
-                setIsRevealProfileAcmeEabSecretModalOpen(false);
-                setSelectedProfile(null);
-              }}
-              profile={selectedProfile}
-            />
-          )}
+          <CreateProfileModal
+            isOpen={isCloneModalOpen}
+            onClose={() => {
+              setIsCloneModalOpen(false);
+              setSelectedProfile(null);
+            }}
+            profile={selectedProfile}
+            mode="clone"
+          />
 
           <DeleteActionModal
             isOpen={isDeleteModalOpen}
@@ -152,6 +151,6 @@ export const CertificateProfilesTab = () => {
           />
         </>
       )}
-    </div>
+    </Card>
   );
 };

@@ -5,7 +5,19 @@ import { apiRequest } from "@app/config/request";
 import { organizationKeys } from "../organization/queries";
 import { userKeys } from "../users/query-keys";
 import { groupKeys } from "./queries";
-import { TGroup } from "./types";
+import { TGroup, TGroupMachineIdentity } from "./types";
+
+const invalidateAllAudits = (queryClient: ReturnType<typeof useQueryClient>) => {
+  queryClient.invalidateQueries({
+    predicate: (query) => {
+      const key = query.queryKey;
+      return (
+        Array.isArray(key) &&
+        (key[1] === "membership-permission-audit" || key[1] === "identity-permission-audit")
+      );
+    }
+  });
+};
 
 export const useCreateGroup = () => {
   const queryClient = useQueryClient();
@@ -47,6 +59,8 @@ export const useUpdateGroup = () => {
       name?: string;
       slug?: string;
       role?: string;
+      /** Pass to invalidate this org's group list (e.g. current org when editing role in sub-org) */
+      organizationId?: string;
     }) => {
       const { data: group } = await apiRequest.patch<TGroup>(`/api/v1/groups/${id}`, {
         name,
@@ -56,9 +70,14 @@ export const useUpdateGroup = () => {
 
       return group;
     },
-    onSuccess: ({ orgId, id: groupId }) => {
-      queryClient.invalidateQueries({ queryKey: organizationKeys.getOrgGroups(orgId) });
-      queryClient.invalidateQueries({ queryKey: groupKeys.getGroupById(groupId) });
+    onSuccess: (group, variables) => {
+      queryClient.invalidateQueries({ queryKey: organizationKeys.getOrgGroups(group.orgId) });
+      if (variables.organizationId && variables.organizationId !== group.orgId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgGroups(variables.organizationId)
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: groupKeys.getGroupById(group.id) });
     }
   });
 };
@@ -66,14 +85,25 @@ export const useUpdateGroup = () => {
 export const useDeleteGroup = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id }: { id: string }) => {
+    mutationFn: async ({
+      id
+    }: {
+      id: string;
+      /** Pass to invalidate this org's group list (e.g. current org when unlinking in sub-org) */
+      organizationId?: string;
+    }) => {
       const { data: group } = await apiRequest.delete<TGroup>(`/api/v1/groups/${id}`);
 
       return group;
     },
-    onSuccess: ({ orgId, id: groupId }) => {
-      queryClient.invalidateQueries({ queryKey: organizationKeys.getOrgGroups(orgId) });
-      queryClient.invalidateQueries({ queryKey: groupKeys.getGroupById(groupId) });
+    onSuccess: (group, variables) => {
+      queryClient.invalidateQueries({ queryKey: organizationKeys.getOrgGroups(group.orgId) });
+      if (variables.organizationId && variables.organizationId !== group.orgId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgGroups(variables.organizationId)
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: groupKeys.getGroupById(group.id) });
     }
   });
 };
@@ -95,6 +125,8 @@ export const useAddUserToGroup = () => {
     },
     onSuccess: (_, { slug }) => {
       queryClient.invalidateQueries({ queryKey: groupKeys.forGroupUserMemberships(slug) });
+      queryClient.invalidateQueries({ queryKey: groupKeys.forGroupMembers(slug) });
+      invalidateAllAudits(queryClient);
     }
   });
 };
@@ -119,6 +151,58 @@ export const useRemoveUserFromGroup = () => {
     onSuccess: (_, { slug, username }) => {
       queryClient.invalidateQueries({ queryKey: groupKeys.forGroupUserMemberships(slug) });
       queryClient.invalidateQueries({ queryKey: userKeys.listUserGroupMemberships(username) });
+      queryClient.invalidateQueries({ queryKey: groupKeys.forGroupMembers(slug) });
+      invalidateAllAudits(queryClient);
+    }
+  });
+};
+
+export const useAddIdentityToGroup = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      groupId,
+      identityId
+    }: {
+      groupId: string;
+      identityId: string;
+      slug: string;
+    }) => {
+      const { data } = await apiRequest.post<Pick<TGroupMachineIdentity, "id" | "name">>(
+        `/api/v1/groups/${groupId}/machine-identities/${identityId}`
+      );
+
+      return data;
+    },
+    onSuccess: (_, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: groupKeys.forGroupIdentitiesMemberships(slug) });
+      queryClient.invalidateQueries({ queryKey: groupKeys.forGroupMembers(slug) });
+      invalidateAllAudits(queryClient);
+    }
+  });
+};
+
+export const useRemoveIdentityFromGroup = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      groupId,
+      identityId
+    }: {
+      groupId: string;
+      identityId: string;
+      slug: string;
+    }) => {
+      const { data } = await apiRequest.delete<Pick<TGroupMachineIdentity, "id" | "name">>(
+        `/api/v1/groups/${groupId}/machine-identities/${identityId}`
+      );
+
+      return data;
+    },
+    onSuccess: (_, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: groupKeys.forGroupIdentitiesMemberships(slug) });
+      queryClient.invalidateQueries({ queryKey: groupKeys.forGroupMembers(slug) });
+      invalidateAllAudits(queryClient);
     }
   });
 };

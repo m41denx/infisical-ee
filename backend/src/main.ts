@@ -2,6 +2,7 @@
 // If you rename the import, update the Dockerfile.fips.standalone-infisical file as well.
 import "./lib/telemetry/instrumentation";
 
+import axios from "axios";
 import dotenv from "dotenv";
 
 import { initializeHsmModule } from "@app/ee/services/hsm/hsm-fns";
@@ -11,10 +12,14 @@ import { runMigrations } from "./auto-start-migrations";
 import { initAuditLogDbConnection, initDbConnection } from "./db";
 import { hsmServiceFactory } from "./ee/services/hsm/hsm-service";
 import { keyStoreFactory } from "./keystore/keystore";
+import { buildClickHouseFromConfig } from "./lib/config/clickhouse";
 import { formatSmtpConfig, getDatabaseCredentials, getHsmConfig, initEnvConfig } from "./lib/config/env";
 import { buildRedisFromConfig } from "./lib/config/redis";
+import { axiosResponseInterceptor } from "./lib/config/request";
 import { removeTemporaryBaseDirectory } from "./lib/files";
 import { initLogger } from "./lib/logger";
+import { CustomLogger } from "./lib/logger/logger";
+import { registerInfrastructureMetrics } from "./lib/telemetry/metrics";
 import { queueServiceFactory } from "./queue";
 import { main } from "./server/app";
 import { bootstrapCheck } from "./server/boot-strap-check";
@@ -24,10 +29,15 @@ import { superAdminDALFactory } from "./services/super-admin/super-admin-dal";
 
 dotenv.config();
 
+const setupAxiosResponseInterceptor = (logger: CustomLogger) => {
+  axios.interceptors.response.use((response) => axiosResponseInterceptor(response, logger));
+};
+
 const run = async () => {
   const logger = initLogger();
   await removeTemporaryBaseDirectory();
 
+  setupAxiosResponseInterceptor(logger);
   const hsmConfig = getHsmConfig(logger);
 
   const hsmModule = initializeHsmModule(hsmConfig);
@@ -48,9 +58,16 @@ const run = async () => {
     readReplicas: databaseCredentials.readReplicas
   });
 
+  // Register connection-pool and entity-count observable gauges. No-ops when telemetry is disabled.
+  registerInfrastructureMetrics(db);
+
   const superAdminDAL = superAdminDALFactory(db);
   const kmsRootConfigDAL = kmsRootConfigDALFactory(db);
   const envConfig = await initEnvConfig(hsmService, kmsRootConfigDAL, superAdminDAL, logger);
+
+  logger.info(
+    `Running Infisical ${envConfig.INFISICAL_PLATFORM_VERSION ? `v${envConfig.INFISICAL_PLATFORM_VERSION}` : "Development Mode"}`
+  );
 
   const auditLogDb = envConfig.AUDIT_LOGS_DB_CONNECTION_URI
     ? initAuditLogDbConnection({
@@ -59,16 +76,17 @@ const run = async () => {
       })
     : undefined;
 
-  await runMigrations({ applicationDb: db, auditLogDb, logger });
+  const clickhouse = buildClickHouseFromConfig(envConfig);
+  await runMigrations({
+    applicationDb: db,
+    auditLogDb,
+    clickhouseClient: clickhouse,
+    logger
+  });
 
   const smtp = smtpServiceFactory(formatSmtpConfig());
 
-  const queue = queueServiceFactory(envConfig, {
-    dbConnectionUrl: envConfig.DB_CONNECTION_URI,
-    dbRootCert: envConfig.DB_ROOT_CERT
-  });
-
-  await queue.initialize();
+  const queue = queueServiceFactory(envConfig);
 
   const keyValueStoreDAL = keyValueStoreDALFactory(db);
   const keyStore = keyStoreFactory(envConfig, keyValueStoreDAL);
@@ -85,8 +103,10 @@ const run = async () => {
     queue,
     keyStore,
     redis,
+    clickhouse,
     envConfig
   });
+
   const bootstrap = await bootstrapCheck({ db });
 
   // eslint-disable-next-line

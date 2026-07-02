@@ -30,8 +30,12 @@ export const registerBitbucketConnectionRouter = async (server: FastifyZodProvid
       rateLimit: readLimit
     },
     schema: {
+      operationId: "listBitbucketWorkspaces",
       params: z.object({
         connectionId: z.string().uuid()
+      }),
+      querystring: z.object({
+        search: z.string().trim().optional()
       }),
       response: {
         200: z.object({
@@ -42,10 +46,15 @@ export const registerBitbucketConnectionRouter = async (server: FastifyZodProvid
     onRequest: verifyAuth([AuthMode.JWT]),
     handler: async (req) => {
       const {
-        params: { connectionId }
+        params: { connectionId },
+        query: { search }
       } = req;
 
-      const workspaces = await server.services.appConnection.bitbucket.listWorkspaces(connectionId, req.permission);
+      const workspaces = await server.services.appConnection.bitbucket.listWorkspaces(
+        connectionId,
+        req.permission,
+        search
+      );
 
       return { workspaces };
     }
@@ -58,11 +67,13 @@ export const registerBitbucketConnectionRouter = async (server: FastifyZodProvid
       rateLimit: readLimit
     },
     schema: {
+      operationId: "listBitbucketRepositories",
       params: z.object({
         connectionId: z.string().uuid()
       }),
       querystring: z.object({
-        workspaceSlug: z.string().min(1).max(255)
+        workspaceSlug: z.string().min(1).max(255),
+        search: z.string().trim().optional()
       }),
       response: {
         200: z.object({
@@ -74,12 +85,13 @@ export const registerBitbucketConnectionRouter = async (server: FastifyZodProvid
     handler: async (req) => {
       const {
         params: { connectionId },
-        query: { workspaceSlug }
+        query: { workspaceSlug, search }
       } = req;
 
       const repositories = await server.services.appConnection.bitbucket.listRepositories(
         { connectionId, workspaceSlug },
-        req.permission
+        req.permission,
+        search
       );
 
       return { repositories };
@@ -93,6 +105,7 @@ export const registerBitbucketConnectionRouter = async (server: FastifyZodProvid
       rateLimit: readLimit
     },
     schema: {
+      operationId: "listBitbucketEnvironments",
       params: z.object({
         connectionId: z.string().uuid()
       }),

@@ -1,28 +1,52 @@
 export enum ExternalMigrationProviders {
   Vault = "vault",
-  EnvKey = "env-key"
+  EnvKey = "env-key",
+  Doppler = "doppler"
 }
 
-export enum VaultImportStatus {
+export type TDopplerProject = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+};
+
+export type TDopplerEnvironment = {
+  id: string;
+  slug: string;
+  name: string;
+  project: string;
+};
+
+export type TDopplerConfig = {
+  name: string;
+  root: boolean;
+  locked: boolean;
+  environment: string;
+  project: string;
+};
+
+export type TImportDopplerSecretsDTO = {
+  connectionId: string;
+  dopplerProject: string;
+  dopplerEnvironment: string;
+  targetProjectId: string;
+  targetEnvironment: string;
+  targetSecretPath: string;
+};
+
+export enum ExternalMigrationImportStatus {
   Imported = "imported",
   ApprovalRequired = "approval-required"
 }
-
-export type TVaultExternalMigrationConfig = {
-  id: string;
-  orgId: string;
-  namespace: string;
-  connectionId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
 
 export type TImportVaultSecretsDTO = {
   projectId: string;
   environment: string;
   secretPath: string;
   vaultNamespace: string;
-  vaultSecretPath: string;
+  vaultSecretPaths: string[];
+  connectionId: string;
 };
 
 export type VaultKubernetesAuthRole = {
@@ -68,5 +92,41 @@ export type VaultKubernetesRole = {
   config: {
     kubernetes_host: string;
     kubernetes_ca_cert?: string;
+  };
+};
+
+export type VaultDatabaseRole = {
+  name: string;
+  mountPath: string;
+  db_name: string;
+  default_ttl?: number;
+  max_ttl?: number;
+  creation_statements?: string[];
+  revocation_statements?: string[];
+  renew_statements?: string[];
+  config: {
+    connection_details: {
+      connection_url?: string;
+      hosts?: string;
+      tls_ca?: string;
+      username?: string;
+    };
+    plugin_name: string;
+  };
+};
+
+export type VaultLdapRole = {
+  name: string;
+  mountPath: string;
+  default_ttl?: number;
+  max_ttl?: number;
+  creation_ldif?: string;
+  deletion_ldif?: string;
+  rollback_ldif?: string;
+  username_template?: string;
+  config: {
+    binddn: string;
+    url: string;
+    certificate?: string;
   };
 };

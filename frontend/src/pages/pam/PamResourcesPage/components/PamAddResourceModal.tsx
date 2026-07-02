@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { Dispatch, SetStateAction, useState } from "react";
 
-import { Modal, ModalContent } from "@app/components/v2";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@app/components/v3";
 import { PamResourceType, TPamResource } from "@app/hooks/api/pam";
 
+import { SshCaSetupModal } from "../../components/SshCaSetupModal";
 import { PamResourceForm } from "./PamResourceForm";
 import { ResourceTypeSelect } from "./ResourceTypeSelect";
 
@@ -14,17 +15,22 @@ type Props = {
 };
 
 type ContentProps = {
-  onComplete: (resource: TPamResource) => void;
+  closeSheet: (resource?: TPamResource) => void;
   projectId: string;
+  selectedResourceType: PamResourceType | null;
+  setSelectedResourceType: Dispatch<SetStateAction<PamResourceType | null>>;
 };
 
-const Content = ({ onComplete, projectId }: ContentProps) => {
-  const [selectedResourceType, setSelectedResourceType] = useState<PamResourceType | null>(null);
-
+const Content = ({
+  closeSheet,
+  projectId,
+  selectedResourceType,
+  setSelectedResourceType
+}: ContentProps) => {
   if (selectedResourceType) {
     return (
       <PamResourceForm
-        onComplete={onComplete}
+        closeSheet={closeSheet}
         onBack={() => setSelectedResourceType(null)}
         resourceType={selectedResourceType}
         projectId={projectId}
@@ -36,17 +42,54 @@ const Content = ({ onComplete, projectId }: ContentProps) => {
 };
 
 export const PamAddResourceModal = ({ isOpen, onOpenChange, projectId, onComplete }: Props) => {
+  const [selectedResourceType, setSelectedResourceType] = useState<PamResourceType | null>(null);
+  const [caSetupModalResourceId, setCaSetupModalResourceId] = useState<string | null>(null);
+
+  const handleCaSetupModalClose = () => {
+    setCaSetupModalResourceId(null);
+  };
+
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
-      <ModalContent className="max-w-2xl" title="Add Resource" subTitle="Select a resource to add.">
-        <Content
-          projectId={projectId}
-          onComplete={(resource) => {
-            if (onComplete) onComplete(resource);
-            onOpenChange(false);
-          }}
+    <>
+      <Sheet
+        open={isOpen}
+        onOpenChange={(e) => {
+          onOpenChange(e);
+          setSelectedResourceType(null);
+        }}
+      >
+        <SheetContent className="flex h-full max-h-full flex-col gap-y-0 sm:max-w-lg">
+          <SheetHeader className="border-b">
+            <SheetTitle>Create Resource</SheetTitle>
+            <SheetDescription>
+              {selectedResourceType
+                ? "Input resource connection details"
+                : "Select a resource type"}
+            </SheetDescription>
+          </SheetHeader>
+          <Content
+            projectId={projectId}
+            closeSheet={(resource) => {
+              if (resource && onComplete) onComplete(resource);
+              onOpenChange(false);
+              setSelectedResourceType(null);
+
+              if (resource?.resourceType === PamResourceType.SSH) {
+                setCaSetupModalResourceId(resource.id);
+              }
+            }}
+            selectedResourceType={selectedResourceType}
+            setSelectedResourceType={setSelectedResourceType}
+          />
+        </SheetContent>
+      </Sheet>
+      {caSetupModalResourceId && (
+        <SshCaSetupModal
+          isOpen={Boolean(caSetupModalResourceId)}
+          onOpenChange={handleCaSetupModalClose}
+          resourceId={caSetupModalResourceId}
         />
-      </ModalContent>
-    </Modal>
+      )}
+    </>
   );
 };

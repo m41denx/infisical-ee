@@ -5,8 +5,12 @@ import { request } from "@app/lib/config/request";
 import { BadRequestError } from "@app/lib/errors";
 import { blockLocalAndPrivateIpAddresses } from "@app/lib/validator";
 
-import { AUDIT_LOG_STREAM_TIMEOUT } from "../../audit-log/audit-log-queue";
-import { TLogStreamFactoryStreamLog, TLogStreamFactoryValidateCredentials } from "../audit-log-stream-types";
+import { AUDIT_LOG_STREAM_BATCH_TIMEOUT, AUDIT_LOG_STREAM_TIMEOUT } from "../../audit-log/audit-log-queue";
+import {
+  TLogStreamFactoryBatchStreamLog,
+  TLogStreamFactoryGetProviderBatchLimit,
+  TLogStreamFactoryValidateCredentials
+} from "../audit-log-stream-types";
 import { TSplunkProviderCredentials } from "./splunk-provider-types";
 
 function createPayload(event: Record<string, unknown>) {
@@ -50,8 +54,7 @@ export const SplunkProviderFactory = () => {
     await request
       .post(url, createPayload({ ping: "ok" }), {
         headers: streamHeaders,
-        timeout: AUDIT_LOG_STREAM_TIMEOUT,
-        signal: AbortSignal.timeout(AUDIT_LOG_STREAM_TIMEOUT)
+        timeout: AUDIT_LOG_STREAM_TIMEOUT
       })
       .catch((err) => {
         throw new BadRequestError({ message: `Failed to connect with Splunk: ${(err as Error)?.message}` });
@@ -60,7 +63,12 @@ export const SplunkProviderFactory = () => {
     return credentials;
   };
 
-  const streamLog: TLogStreamFactoryStreamLog<TSplunkProviderCredentials> = async ({ credentials, auditLog }) => {
+  const batchStreamLog: TLogStreamFactoryBatchStreamLog<TSplunkProviderCredentials> = async ({
+    credentials,
+    auditLogs
+  }) => {
+    if (auditLogs.length === 0) return;
+
     const { hostname, token } = credentials;
 
     const url = await createSplunkUrl(hostname);
@@ -70,15 +78,22 @@ export const SplunkProviderFactory = () => {
       Authorization: `Splunk ${token}`
     };
 
-    await request.post(url, createPayload(auditLog), {
+    const body = auditLogs.map((auditLog) => JSON.stringify(createPayload(auditLog))).join("");
+
+    await request.post(url, body, {
       headers: streamHeaders,
-      timeout: AUDIT_LOG_STREAM_TIMEOUT,
-      signal: AbortSignal.timeout(AUDIT_LOG_STREAM_TIMEOUT)
+      timeout: AUDIT_LOG_STREAM_BATCH_TIMEOUT
     });
   };
 
+  const getProviderBatchLimit: TLogStreamFactoryGetProviderBatchLimit = () => ({
+    maxLogs: 400,
+    maxBytes: 700 * 1024
+  });
+
   return {
     validateCredentials,
-    streamLog
+    batchStreamLog,
+    getProviderBatchLimit
   };
 };

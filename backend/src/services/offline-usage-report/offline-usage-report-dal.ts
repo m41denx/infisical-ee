@@ -108,7 +108,9 @@ export const offlineUsageReportDALFactory = (db: TDbClient) => {
       .select("p.id as projectId")
       .count("s.id as count")
       .leftJoin(`${TableName.SecretFolder} as sf`, "s.folderId", "sf.id")
-      .leftJoin(`${TableName.Environment} as e`, "sf.envId", "e.id")
+      .leftJoin(`${TableName.Environment} as e`, function joinActiveEnvForFolder() {
+        this.on("sf.envId", "e.id").andOnNull("e.deleteAfter");
+      })
       .leftJoin(`${TableName.Project} as p`, "e.projectId", "p.id")
       .where("p.type", ProjectType.SecretManager)
       .groupBy("p.id")
@@ -143,7 +145,9 @@ export const offlineUsageReportDALFactory = (db: TDbClient) => {
       .select("p.id as projectId", "p.name as projectName")
       .count("s.id as secretCount")
       .leftJoin(`${TableName.SecretFolder} as sf`, "s.folderId", "sf.id")
-      .leftJoin(`${TableName.Environment} as e`, "sf.envId", "e.id")
+      .leftJoin(`${TableName.Environment} as e`, function joinActiveEnvForFolder() {
+        this.on("sf.envId", "e.id").andOnNull("e.deleteAfter");
+      })
       .leftJoin(`${TableName.Project} as p`, "e.projectId", "p.id")
       .where("p.type", ProjectType.SecretManager)
       .groupBy("p.id", "p.name")
@@ -183,16 +187,14 @@ export const offlineUsageReportDALFactory = (db: TDbClient) => {
 
   const getSecretRotationMetrics = async () => {
     // Check both v1 and v2 secret rotation tables
-    const [v1RotationsResult, v2RotationsResult] = await Promise.all([
-      db.from(TableName.SecretRotation).count("* as count").first() as Promise<{ count: string } | undefined>,
-      db.from(TableName.SecretRotationV2).count("* as count").first() as Promise<{ count: string } | undefined>
-    ]);
+    const v2RotationsResult = (await db.from(TableName.SecretRotationV2).count("* as count").first()) as
+      | { count: string }
+      | undefined;
 
-    const totalV1Rotations = parseInt(v1RotationsResult?.count || "0", 10);
-    const totalV2Rotations = parseInt(v2RotationsResult?.count || "0", 10);
+    const totalSecretRotations = parseInt(v2RotationsResult?.count || "0", 10);
 
     return {
-      totalSecretRotations: totalV1Rotations + totalV2Rotations
+      totalSecretRotations
     };
   };
 

@@ -140,6 +140,11 @@ The Infisical Agent Injector supports the following annotations:
     This will ensure that no new leases are created except those initially created in the init container. The sidecar container will register the leases created in the init container and start managing them from that point onwards.
   </Accordion>
 
+  <Accordion title="org.infisical.com/agent-image">
+    Specify a custom agent image to use for the agent sidecar / init container(s). Example: `infisical/cli:0.43.32`.
+    If not specified, the most recent stable version of the Infisical Agent will be used.
+  </Accordion>
+
   <Accordion title="org.infisical.com/agent-revoke-on-shutdown">
     Whether to revoke all managed dynamic secret leases and machine identity access tokens on shutdown. Defaults to `false`.
     
@@ -196,6 +201,83 @@ The Infisical Agent Injector supports the following annotations:
     The minimum ephemeral storage request for the agent containers. Doesn't have an explicit default value. The default value will conform to the default ephemeral storage request for the pod.
   </Accordion>
 
+<Accordion title="org.infisical.com/agent-set-security-context">
+  Whether to set a security context on the injected agent containers. Defaults to `false`.
+  
+  When set to `true`, the agent containers will be configured with a hardened security context. The default security context applied is:
+
+    ```yaml
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      privileged: false
+      readOnlyRootFilesystem: true
+      runAsGroup: 2000
+      runAsNonRoot: true
+      runAsUser: 1000
+    ```
+
+    You can customize individual security context settings using the other `agent-security-context-*` annotations.
+  </Accordion>
+
+  <Accordion title="org.infisical.com/agent-security-context-run-as-user">
+    The user ID to run the agent containers as. Defaults to `1000`.
+  
+    If set to `0`, `runAsNonRoot` will automatically be set to `false` to allow the container to run as root.
+
+    <Note>
+      This annotation is only applicable when `org.infisical.com/agent-set-security-context` is set to `true`.
+    </Note>
+  </Accordion>
+
+  <Accordion title="org.infisical.com/agent-security-context-run-as-group">
+    The group ID to run the agent containers as. Defaults to `2000`.
+  
+    If set to `0`, `runAsNonRoot` will automatically be set to `false` to allow the container to run as the root group.
+
+    <Note>
+      This annotation is only applicable when `org.infisical.com/agent-set-security-context` is set to `true`.
+    </Note>
+  </Accordion>
+
+  <Accordion title="org.infisical.com/agent-security-context-read-only-root-filesystem">
+    Whether to mount the root filesystem as read-only. Defaults to `true`.
+
+    <Tip>
+      This setting only applies to Linux-based pods.
+      Windows containers do not support read-only root filesystems.
+    </Tip>
+
+    <Note>
+      This annotation is only applicable when `org.infisical.com/agent-set-security-context` is set to `true`.
+    </Note>
+  </Accordion>
+
+  <Accordion title="org.infisical.com/agent-security-context-privileged">
+    Whether to run the agent containers in privileged mode. Defaults to `false`.
+  
+    <Warning>
+      Running containers in privileged mode grants full access to the host and should only be used when absolutely necessary.
+    </Warning>
+
+    <Note>
+      This annotation is only applicable when `org.infisical.com/agent-set-security-context` is set to `true`.
+    </Note>
+  </Accordion>
+
+  <Accordion title="org.infisical.com/agent-security-context-allow-privilege-escalation">
+    Whether to allow privilege escalation for the agent containers. Defaults to `false`.
+  
+    When set to `false`, the container cannot gain more privileges than its parent process. This is a recommended security hardening measure.
+
+    <Note>
+      This annotation is only applicable when `org.infisical.com/agent-set-security-context` is set to `true`.
+    </Note>
+  </Accordion>
+
+
 </AccordionGroup>
 
 ## ConfigMap Configuration
@@ -225,14 +307,15 @@ The entire config needs to be of string format and needs to be assigned to the `
 </Accordion>
 
 <Accordion title="infisical.auth.type">
-  The authentication type to use to connect to Infisical. Currently only the `kubernetes` authentication type is supported.
-  You can refer to our [Kubernetes Auth](/documentation/platform/identities/kubernetes-auth) documentation for more information on how to create a machine identity for Kubernetes Auth.
-  Please note that the pod's default service account will be used to authenticate with Infisical.
+  The authentication type to use to connect to Infisical. Supported types: `kubernetes`, `ldap-auth`, and `aws-iam`.
+  - For `kubernetes`: The pod's default service account will be used to authenticate with Infisical. See [Kubernetes Auth](/documentation/platform/identities/kubernetes-auth).
+  - For `ldap-auth`: LDAP credentials are used. See [LDAP Auth](/documentation/platform/identities/ldap-auth).
+  - For `aws-iam`: The pod's AWS credential chain (IRSA or instance profile) is used to authenticate. See [AWS Auth](/documentation/platform/identities/aws-auth).
 </Accordion>
 
 
 <Accordion title="infisical.auth.config.identity-id">
-  The ID of the machine identity to use for Kubernetes or LDAP authentication. This field is required if the `infisical.auth.type` is set to `kubernetes`.
+  The ID of the machine identity to use for authentication. This field is required when `infisical.auth.type` is set to `kubernetes`, `ldap-auth`, or `aws-iam`.
 </Accordion>
 
 <Accordion title="infisical.auth.config.username">
@@ -303,7 +386,7 @@ The templates hold an array of templates that will be rendered and injected into
 
 
 ### Authentication
-The Infisical Agent Injector supports Machine Identity [Kubernetes Auth](/documentation/platform/identities/kubernetes-auth) and [LDAP Auth](/documentation/platform/identities/ldap-auth) authentication.
+The Infisical Agent Injector supports Machine Identity [Kubernetes Auth](/documentation/platform/identities/kubernetes-auth), [LDAP Auth](/documentation/platform/identities/ldap-auth), and [AWS Auth](/documentation/platform/identities/aws-auth) authentication.
 
 
 <AccordionGroup>
@@ -374,6 +457,45 @@ The Infisical Agent Injector supports Machine Identity [Kubernetes Auth](/docume
               identity-id: "<your-infisical-machine-identity-id>"
               username: "<your-ldap-username>"
               password: "<your-ldap-password>"
+        templates:
+          - destination-path: "/path/to/save/secrets/file.txt"
+            template-content: |
+              {{- with secret "<your-project-id>" "dev" "/" }}
+              {{- range . }}
+              {{ .Key }}={{ .Value }}
+              {{- end }}
+              {{- end }}
+    ```
+
+    ```bash
+    kubectl apply -f config-map.yaml
+    ```
+
+  </Accordion>
+  <Accordion title="AWS IAM Auth">
+    To configure AWS IAM Auth, you need to set the `auth.type` field to `aws-iam` and set the `auth.config.identity-id` to the ID of the machine identity you wish to use for authentication. The pod must run in an AWS environment (e.g., EKS with IRSA or EC2 with instance profile) so that the agent can use the pod's ambient AWS credential chain to authenticate with Infisical.
+
+    ```yaml
+    auth:
+      type: "aws-iam"
+      config:
+        identity-id: "<your-infisical-machine-identity-id>"
+    ```
+
+    ### Example ConfigMap
+    ```yaml config-map.yaml
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: demo-config-map
+    data:
+      config.yaml: |
+        infisical:
+          address: "https://app.infisical.com"
+          auth:
+            type: "aws-iam"
+            config:
+              identity-id: "<your-infisical-machine-identity-id>"
         templates:
           - destination-path: "/path/to/save/secrets/file.txt"
             template-content: |

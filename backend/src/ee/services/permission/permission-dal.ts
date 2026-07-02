@@ -7,10 +7,12 @@ import {
   AccessScopeData,
   MembershipRolesSchema,
   MembershipsSchema,
+  RESOURCE_SCOPE,
   TableName,
   TMemberships,
   TRoles
 } from "@app/db/schemas";
+import { generateCacheKeyFromData } from "@app/lib/crypto/cache";
 import { DatabaseError } from "@app/lib/errors";
 import { selectAllTableCols, sqlNestRelationships } from "@app/lib/knex";
 import { ActorType } from "@app/services/auth/auth-type";
@@ -34,6 +36,7 @@ interface TPermissionDataReturn extends TMemberships {
     temporaryAccessStartTime?: Date | null | undefined;
     temporaryAccessEndTime?: Date | null | undefined;
     customRoleSlug?: string | null | undefined;
+    customRoleName?: string | null | undefined;
   }[];
   additionalPrivileges: {
     id: string;
@@ -77,6 +80,7 @@ export interface TPermissionDALFactory {
         temporaryAccessEndTime: Date | null | undefined;
         isTemporary: boolean;
       }[];
+      id: string;
       userId: string;
       username: string;
       metadata: {
@@ -166,16 +170,55 @@ export interface TPermissionDALFactory {
     actorType: ActorType.IDENTITY | ActorType.USER;
     tx?: Knex;
   }) => Promise<TPermissionDataReturn[]>;
+  getResourceMembership: (dto: {
+    projectId: string;
+    resourceType: string;
+    resourceId: string;
+    actorId: string;
+    actorType: ActorType.IDENTITY | ActorType.USER;
+    tx?: Knex;
+  }) => Promise<TResourceMembershipReturn[]>;
+  getPermissionFingerprint: (dto: {
+    projectId: string;
+    orgId: string;
+    actorId: string;
+    actorType: ActorType.IDENTITY | ActorType.USER;
+  }) => Promise<string>;
+}
+
+interface TResourceMembershipReturn extends TMemberships {
+  roles: {
+    id: string;
+    role: string;
+    permissions?: unknown;
+    customRoleId?: string | null;
+    customRoleSlug?: string | null;
+    isTemporary: boolean;
+    temporaryMode?: string | null;
+    temporaryRange?: string | null;
+    temporaryAccessStartTime?: Date | null;
+    temporaryAccessEndTime?: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }[];
 }
 
 export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
   const getPermission: TPermissionDALFactory["getPermission"] = async ({ scopeData, tx, actorId, actorType }) => {
     try {
-      // akhilmhdh: when group has another group like sub group we would need recursively go down
-      const userGroupSubquery = (tx || db)(TableName.Groups)
-        .leftJoin(TableName.UserGroupMembership, `${TableName.UserGroupMembership}.groupId`, `${TableName.Groups}.id`)
-        .where(`${TableName.Groups}.orgId`, scopeData.orgId)
+      const conn = tx || db;
+      const userGroupSubquery = conn(TableName.Groups)
+        .join(TableName.UserGroupMembership, `${TableName.UserGroupMembership}.groupId`, `${TableName.Groups}.id`)
         .where(`${TableName.UserGroupMembership}.userId`, actorId)
+        .select(db.ref("id").withSchema(TableName.Groups));
+
+      const identityGroupSubquery = conn(TableName.Groups)
+        .join(
+          TableName.IdentityGroupMembership,
+          `${TableName.IdentityGroupMembership}.groupId`,
+          `${TableName.Groups}.id`
+        )
+        .where(`${TableName.IdentityGroupMembership}.identityId`, actorId)
         .select(db.ref("id").withSchema(TableName.Groups));
 
       const docs = await (tx || db)
@@ -184,18 +227,20 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
         .join(TableName.Organization, `${TableName.Membership}.scopeOrgId`, `${TableName.Organization}.id`)
         .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
         .leftJoin(TableName.AdditionalPrivilege, (qb) => {
+          // Match the privilege against the request's actor literal, not against
+          // Membership.actor*Id. Group-derived memberships have actorUserId/actorIdentityId
+          // NULL, so the column-to-column predicate dropped privileges for any user
+          // whose only project access is via a group.
           if (actorType === ActorType.IDENTITY) {
-            qb.on(`${TableName.Membership}.actorIdentityId`, `${TableName.AdditionalPrivilege}.actorIdentityId`);
+            qb.on(`${TableName.AdditionalPrivilege}.actorIdentityId`, db.raw("?", [actorId]));
           } else {
-            qb.on(`${TableName.Membership}.actorUserId`, `${TableName.AdditionalPrivilege}.actorUserId`);
+            qb.on(`${TableName.AdditionalPrivilege}.actorUserId`, db.raw("?", [actorId]));
           }
 
           if (scopeData.scope === AccessScope.Organization) {
             qb.andOn(`${TableName.Membership}.scopeOrgId`, `${TableName.AdditionalPrivilege}.orgId`);
           } else if (scopeData.scope === AccessScope.Project) {
             qb.andOn(`${TableName.Membership}.scopeProjectId`, `${TableName.AdditionalPrivilege}.projectId`);
-          } else {
-            qb.andOn(`${TableName.Membership}.scopeNamespaceId`, `${TableName.AdditionalPrivilege}.namespaceId`);
           }
         })
         .leftJoin(TableName.IdentityMetadata, (queryBuilder) => {
@@ -214,16 +259,14 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
               .where(`${TableName.Membership}.actorUserId`, actorId)
               .orWhereIn(`${TableName.Membership}.actorGroupId`, userGroupSubquery);
           } else if (actorType === ActorType.IDENTITY) {
-            void qb.where(`${TableName.Membership}.actorIdentityId`, actorId);
+            void qb
+              .where(`${TableName.Membership}.actorIdentityId`, actorId)
+              .orWhereIn(`${TableName.Membership}.actorGroupId`, identityGroupSubquery);
           }
         })
         .where((qb) => {
           if (scopeData.scope === AccessScope.Organization) {
             void qb.where(`${TableName.Membership}.scope`, AccessScope.Organization);
-          } else if (scopeData.scope === AccessScope.Namespace) {
-            void qb
-              .where(`${TableName.Membership}.scope`, AccessScope.Namespace)
-              .where(`${TableName.Membership}.scopeNamespaceId`, scopeData.namespaceId);
           } else if (scopeData.scope === AccessScope.Project) {
             void qb
               .where(`${TableName.Membership}.scope`, AccessScope.Project)
@@ -233,6 +276,7 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
         .select(selectAllTableCols(TableName.Membership))
         .select(
           db.ref("slug").withSchema(TableName.Role).as("roleSlug"),
+          db.ref("name").withSchema(TableName.Role).as("roleName"),
           db.ref("permissions").withSchema(TableName.Role).as("customRolePermission"),
           db.ref("id").withSchema(TableName.MembershipRole).as("membershipRoleId"),
           db.ref("role").withSchema(TableName.MembershipRole).as("membershipRole"),
@@ -318,6 +362,7 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
             label: "roles" as const,
             mapper: ({
               roleSlug,
+              roleName,
               customRolePermission,
               membershipRoleId,
               membershipRole,
@@ -333,6 +378,7 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
               role: membershipRole,
               permissions: customRolePermission,
               customRoleSlug: roleSlug,
+              customRoleName: roleName,
               temporaryRange: membershipRoleTemporaryRange,
               temporaryMode: membershipRoleTemporaryMode,
               temporaryAccessStartTime: membershipRoleTemporaryAccessStartTime,
@@ -357,6 +403,107 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
       return data;
     } catch (error) {
       throw new DatabaseError({ error, name: "Get Permission" });
+    }
+  };
+
+  const getResourceMembership: TPermissionDALFactory["getResourceMembership"] = async ({
+    projectId,
+    resourceType,
+    resourceId,
+    actorId,
+    actorType,
+    tx
+  }) => {
+    try {
+      const conn = tx || db.replicaNode();
+
+      const userGroupSubquery = conn(TableName.UserGroupMembership).where("userId", actorId).select("groupId");
+      const identityGroupSubquery = conn(TableName.IdentityGroupMembership)
+        .where("identityId", actorId)
+        .select("groupId");
+
+      const docs = await conn(TableName.Membership)
+        .join(TableName.MembershipRole, `${TableName.Membership}.id`, `${TableName.MembershipRole}.membershipId`)
+        .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
+        .where(`${TableName.Membership}.scope`, RESOURCE_SCOPE)
+        .where(`${TableName.Membership}.scopeProjectId`, projectId)
+        .where(`${TableName.Membership}.scopeResourceType`, resourceType)
+        .where(`${TableName.Membership}.scopeResourceId`, resourceId)
+        .where((qb) => {
+          if (actorType === ActorType.USER) {
+            void qb
+              .where(`${TableName.Membership}.actorUserId`, actorId)
+              .orWhereIn(`${TableName.Membership}.actorGroupId`, userGroupSubquery);
+          } else {
+            void qb
+              .where(`${TableName.Membership}.actorIdentityId`, actorId)
+              .orWhereIn(`${TableName.Membership}.actorGroupId`, identityGroupSubquery);
+          }
+        })
+        .select(selectAllTableCols(TableName.Membership))
+        .select(
+          db.ref("id").withSchema(TableName.MembershipRole).as("membershipRoleId"),
+          db.ref("role").withSchema(TableName.MembershipRole).as("membershipRole"),
+          db.ref("customRoleId").withSchema(TableName.MembershipRole).as("membershipCustomRoleId"),
+          db.ref("isTemporary").withSchema(TableName.MembershipRole).as("membershipRoleIsTemporary"),
+          db.ref("temporaryMode").withSchema(TableName.MembershipRole).as("membershipRoleTemporaryMode"),
+          db.ref("temporaryRange").withSchema(TableName.MembershipRole).as("membershipRoleTemporaryRange"),
+          db
+            .ref("temporaryAccessStartTime")
+            .withSchema(TableName.MembershipRole)
+            .as("membershipRoleTemporaryAccessStartTime"),
+          db
+            .ref("temporaryAccessEndTime")
+            .withSchema(TableName.MembershipRole)
+            .as("membershipRoleTemporaryAccessEndTime"),
+          db.ref("createdAt").withSchema(TableName.MembershipRole).as("membershipRoleCreatedAt"),
+          db.ref("updatedAt").withSchema(TableName.MembershipRole).as("membershipRoleUpdatedAt"),
+          db.ref("slug").withSchema(TableName.Role).as("customRoleSlug"),
+          db.ref("permissions").withSchema(TableName.Role).as("customRolePermissions")
+        );
+
+      const data = sqlNestRelationships({
+        data: docs,
+        key: "id",
+        parentMapper: (el) => MembershipsSchema.parse(el),
+        childrenMapper: [
+          {
+            key: "membershipRoleId",
+            label: "roles" as const,
+            mapper: ({
+              membershipRoleId,
+              membershipRole,
+              membershipCustomRoleId,
+              membershipRoleIsTemporary,
+              membershipRoleTemporaryMode,
+              membershipRoleTemporaryRange,
+              membershipRoleTemporaryAccessStartTime,
+              membershipRoleTemporaryAccessEndTime,
+              membershipRoleCreatedAt,
+              membershipRoleUpdatedAt,
+              customRoleSlug,
+              customRolePermissions
+            }) => ({
+              id: membershipRoleId,
+              role: membershipRole,
+              customRoleId: membershipCustomRoleId,
+              customRoleSlug: customRoleSlug as string | null | undefined,
+              permissions: customRolePermissions,
+              isTemporary: Boolean(membershipRoleIsTemporary),
+              temporaryMode: membershipRoleTemporaryMode,
+              temporaryRange: membershipRoleTemporaryRange,
+              temporaryAccessStartTime: membershipRoleTemporaryAccessStartTime,
+              temporaryAccessEndTime: membershipRoleTemporaryAccessEndTime,
+              createdAt: membershipRoleCreatedAt,
+              updatedAt: membershipRoleUpdatedAt
+            })
+          }
+        ]
+      });
+
+      return data as TResourceMembershipReturn[];
+    } catch (error) {
+      throw new DatabaseError({ error, name: "Get Resource Membership" });
     }
   };
 
@@ -468,7 +615,8 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
   ) => {
     const userGroupSubquery = db(TableName.Groups)
       .leftJoin(TableName.UserGroupMembership, `${TableName.UserGroupMembership}.groupId`, `${TableName.Groups}.id`)
-      .where(`${TableName.Groups}.orgId`, orgId)
+      .join(TableName.Membership, `${TableName.Groups}.id`, `${TableName.Membership}.actorGroupId`)
+      .where(`${TableName.Membership}.scopeOrgId`, orgId)
       .select(db.ref("id").withSchema(TableName.Groups));
 
     try {
@@ -480,8 +628,8 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
         .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
         .leftJoin(TableName.AdditionalPrivilege, (qb) => {
           qb.on(`${TableName.Membership}.actorUserId`, `${TableName.AdditionalPrivilege}.actorUserId`).andOn(
-            `${TableName.Membership}.scopeOrgId`,
-            `${TableName.AdditionalPrivilege}.orgId`
+            `${TableName.Membership}.scopeProjectId`,
+            `${TableName.AdditionalPrivilege}.projectId`
           );
         })
         .leftJoin(TableName.IdentityMetadata, (queryBuilder) => {
@@ -502,6 +650,7 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
         })
         .select(
           db.ref("id").withSchema(TableName.Users).as("userId"),
+          db.ref("id").withSchema(TableName.Membership).as("membershipId"),
           db.ref("username").withSchema(TableName.Users).as("username"),
           db.ref("slug").withSchema(TableName.Role).as("roleSlug"),
           db.ref("permissions").withSchema(TableName.Role).as("customRolePermission"),
@@ -546,10 +695,11 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
       const userPermissions = sqlNestRelationships({
         data: docs,
         key: "userId",
-        parentMapper: ({ username, userId }) => ({
+        parentMapper: ({ username, userId, membershipId }) => ({
           userId,
           projectId,
-          username
+          username,
+          id: membershipId
         }),
         childrenMapper: [
           {
@@ -653,14 +803,24 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
     orgId: string
   ) => {
     try {
+      const identityGroupSubquery = db(TableName.Groups)
+        .leftJoin(
+          TableName.IdentityGroupMembership,
+          `${TableName.IdentityGroupMembership}.groupId`,
+          `${TableName.Groups}.id`
+        )
+        .join(TableName.Membership, `${TableName.Groups}.id`, `${TableName.Membership}.actorGroupId`)
+        .where(`${TableName.Membership}.scopeOrgId`, orgId)
+        .select(db.ref("id").withSchema(TableName.Groups));
+
       const docs = await db
         .replicaNode()(TableName.Membership)
         .join(TableName.MembershipRole, `${TableName.Membership}.id`, `${TableName.MembershipRole}.membershipId`)
         .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
         .leftJoin(TableName.AdditionalPrivilege, (qb) => {
           qb.on(`${TableName.Membership}.actorIdentityId`, `${TableName.AdditionalPrivilege}.actorIdentityId`).andOn(
-            `${TableName.Membership}.scopeOrgId`,
-            `${TableName.AdditionalPrivilege}.orgId`
+            `${TableName.Membership}.scopeProjectId`,
+            `${TableName.AdditionalPrivilege}.projectId`
           );
         })
         .join(TableName.Identity, `${TableName.Identity}.id`, `${TableName.Membership}.actorIdentityId`)
@@ -668,7 +828,11 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
           void queryBuilder.on(`${TableName.Membership}.actorIdentityId`, `${TableName.IdentityMetadata}.identityId`);
         })
         .where(`${TableName.Membership}.scopeOrgId`, orgId)
-        .whereNotNull(`${TableName.Membership}.actorIdentityId`)
+        .where((qb) => {
+          void qb
+            .whereNotNull(`${TableName.Membership}.actorIdentityId`)
+            .orWhereIn(`${TableName.Membership}.actorGroupId`, identityGroupSubquery);
+        })
         .where(`${TableName.Membership}.scope`, AccessScope.Project)
         .where(`${TableName.Membership}.scopeProjectId`, projectId)
         .select(selectAllTableCols(TableName.MembershipRole))
@@ -779,10 +943,121 @@ export const permissionDALFactory = (db: TDbClient): TPermissionDALFactory => {
     }
   };
 
+  // Lightweight permission fingerprint for ETag validation.
+  // Same tables/joins/WHERE as getPermission but selects only IDs + timestamps,
+  // then hashes in JS. The CASE expressions make the hash flip at temporary access expiry.
+  // Includes both project-scoped AND org-scoped memberships so that org-level
+  // permission changes (e.g. SSO bypass grant/revoke) also invalidate the cache.
+  const getPermissionFingerprint: TPermissionDALFactory["getPermissionFingerprint"] = async ({
+    projectId,
+    orgId,
+    actorId,
+    actorType
+  }) => {
+    try {
+      const groupTable =
+        actorType === ActorType.USER ? TableName.UserGroupMembership : TableName.IdentityGroupMembership;
+      const groupActorField = actorType === ActorType.USER ? "userId" : "identityId";
+
+      const groupSubquery = db
+        .replicaNode()(TableName.Groups)
+        .join(groupTable, `${groupTable}.groupId`, `${TableName.Groups}.id`)
+        .where(`${groupTable}.${groupActorField}`, actorId)
+        .select(db.ref("id").withSchema(TableName.Groups));
+
+      const rows = await db
+        .replicaNode()(TableName.Membership)
+        .join(TableName.MembershipRole, `${TableName.Membership}.id`, `${TableName.MembershipRole}.membershipId`)
+        .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
+        .leftJoin(TableName.AdditionalPrivilege, (qb) => {
+          // Match by literal actor id, not Membership.actor*Id — see getPermission for the
+          // group-derived membership rationale. Read and fingerprint must stay aligned, or
+          // the cache will think nothing changed and serve stale abilities.
+          const privActorCol =
+            actorType === ActorType.IDENTITY
+              ? `${TableName.AdditionalPrivilege}.actorIdentityId`
+              : `${TableName.AdditionalPrivilege}.actorUserId`;
+          qb.on(privActorCol, db.raw("?", [actorId])).andOn(
+            `${TableName.Membership}.scopeProjectId`,
+            `${TableName.AdditionalPrivilege}.projectId`
+          );
+        })
+        .leftJoin(TableName.IdentityMetadata, (qb) => {
+          if (actorType === ActorType.IDENTITY) {
+            qb.on(`${TableName.IdentityMetadata}.identityId`, `${TableName.Membership}.actorIdentityId`);
+          } else {
+            void qb
+              .on(`${TableName.IdentityMetadata}.userId`, db.raw("?", [actorId]))
+              .andOn(`${TableName.Membership}.scopeOrgId`, `${TableName.IdentityMetadata}.orgId`);
+          }
+        })
+        .leftJoin(TableName.Project, `${TableName.Membership}.scopeProjectId`, `${TableName.Project}.id`)
+        .where(`${TableName.Membership}.scopeOrgId`, orgId)
+        .where((scopeQb) => {
+          void scopeQb
+            .where((inner) => {
+              void inner
+                .where(`${TableName.Membership}.scope`, AccessScope.Project)
+                .where(`${TableName.Membership}.scopeProjectId`, projectId);
+            })
+            .orWhere((inner) => {
+              void inner
+                .where(`${TableName.Membership}.scope`, RESOURCE_SCOPE)
+                .where(`${TableName.Membership}.scopeProjectId`, projectId);
+            })
+            .orWhere(`${TableName.Membership}.scope`, AccessScope.Organization);
+        })
+        .where((qb) => {
+          const directCol =
+            actorType === ActorType.USER
+              ? `${TableName.Membership}.actorUserId`
+              : `${TableName.Membership}.actorIdentityId`;
+          void qb.where(directCol, actorId).orWhereIn(`${TableName.Membership}.actorGroupId`, groupSubquery);
+        })
+        .select(
+          db.ref("id").withSchema(TableName.Membership).as("mId"),
+          // Track isActive/status rather than updatedAt: every login bumps Membership.updatedAt
+          // (lastLoginTime/lastLoginAuthMethod), which would needlessly bust the fingerprint/ETag on
+          // every auth. isActive/status are the membership columns that actually gate permissions.
+          db.ref("isActive").withSchema(TableName.Membership).as("mActive"),
+          db.ref("status").withSchema(TableName.Membership).as("mStatus"),
+          // project soft-delete state — flips the fingerprint when the project is soft-deleted
+          db.ref("deleteAfter").withSchema(TableName.Project).as("pDel"),
+          db.ref("id").withSchema(TableName.MembershipRole).as("rId"),
+          db.ref("updatedAt").withSchema(TableName.MembershipRole).as("rUp"),
+          db.ref("updatedAt").withSchema(TableName.Role).as("crUp"),
+          db.ref("id").withSchema(TableName.AdditionalPrivilege).as("pId"),
+          db.ref("updatedAt").withSchema(TableName.AdditionalPrivilege).as("pUp"),
+          db.ref("id").withSchema(TableName.IdentityMetadata).as("imId"),
+          db.ref("updatedAt").withSchema(TableName.IdentityMetadata).as("imUp"),
+          db.raw(
+            `CASE WHEN "${TableName.MembershipRole}"."isTemporary" AND NOW() >= "${TableName.MembershipRole}"."temporaryAccessEndTime" THEN true ELSE false END AS "rExp"`
+          ),
+          db.raw(
+            `CASE WHEN "${TableName.AdditionalPrivilege}"."isTemporary" AND NOW() >= "${TableName.AdditionalPrivilege}"."temporaryAccessEndTime" THEN true ELSE false END AS "pExp"`
+          )
+        )
+        // deterministic row order — Postgres doesn't guarantee ordering without it, and an unstable
+        // order would flip the hashed fingerprint between calls, silently breaking ETag/cache hits.
+        .orderBy([
+          { column: `${TableName.Membership}.id` },
+          { column: `${TableName.MembershipRole}.id` },
+          { column: `${TableName.AdditionalPrivilege}.id` },
+          { column: `${TableName.IdentityMetadata}.id` }
+        ]);
+
+      return generateCacheKeyFromData(rows);
+    } catch (error) {
+      throw new DatabaseError({ error, name: "GetPermissionFingerprint" });
+    }
+  };
+
   return {
     getProjectUserPermissions,
     getProjectIdentityPermissions,
     getProjectGroupPermissions,
-    getPermission
+    getPermission,
+    getResourceMembership,
+    getPermissionFingerprint
   };
 };

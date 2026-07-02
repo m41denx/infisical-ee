@@ -1,25 +1,21 @@
 import { useMemo } from "react";
-import {
-  faArrowDown,
-  faArrowUp,
-  faMagnifyingGlass,
-  faSearch,
-  faUser
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { ChevronDownIcon } from "lucide-react";
+import { twMerge } from "tailwind-merge";
 
+import { Lottie } from "@app/components/v2";
 import {
-  EmptyState,
-  IconButton,
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
   Input,
   Pagination,
   Table,
-  TableContainer,
-  TBody,
-  Th,
-  THead,
-  Tr
-} from "@app/components/v2";
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@app/components/v3";
 import {
   getUserTablePreference,
   PreferenceKey,
@@ -85,37 +81,39 @@ export const UserGroupsTable = ({ handlePopUpOpen, orgMembership }: Props) => {
     setPage
   });
 
+  if (isPending) {
+    return (
+      <div className="flex h-40 w-full items-center justify-center">
+        <Lottie icon="infisical_loading_white" isAutoPlay className="w-16" />
+      </div>
+    );
+  }
+
   return (
-    <div>
+    <>
       <Input
+        className="mb-4"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
         placeholder="Search groups..."
       />
-      <TableContainer className="mt-4">
+      {filteredGroupMemberships.length ? (
         <Table>
-          <THead>
-            <Tr>
-              <Th className="w-full">
-                <div className="flex items-center">
-                  Name
-                  <IconButton
-                    variant="plain"
-                    className="ml-2"
-                    ariaLabel="sort"
-                    onClick={toggleOrderDirection}
-                  >
-                    <FontAwesomeIcon
-                      icon={orderDirection === OrderByDirection.DESC ? faArrowUp : faArrowDown}
-                    />
-                  </IconButton>
-                </div>
-              </Th>
-              <Th className="w-5" />
-            </Tr>
-          </THead>
-          <TBody>
+          <TableHeader>
+            <TableRow>
+              <TableHead onClick={toggleOrderDirection} className="w-full">
+                Name
+                <ChevronDownIcon
+                  className={twMerge(
+                    orderDirection === OrderByDirection.DESC && "rotate-180",
+                    "transition-transform"
+                  )}
+                />
+              </TableHead>
+              <TableHead className="w-5" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {filteredGroupMemberships.slice(offset, perPage * page).map((group) => (
               <UserGroupsRow
                 key={`user-group-${group.id}`}
@@ -123,28 +121,33 @@ export const UserGroupsTable = ({ handlePopUpOpen, orgMembership }: Props) => {
                 handlePopUpOpen={handlePopUpOpen}
               />
             ))}
-          </TBody>
+          </TableBody>
         </Table>
-        {Boolean(filteredGroupMemberships.length) && (
-          <Pagination
-            count={filteredGroupMemberships.length}
-            page={page}
-            perPage={perPage}
-            onChangePage={setPage}
-            onChangePerPage={handlePerPageChange}
-          />
-        )}
-        {!isPending && !filteredGroupMemberships?.length && (
-          <EmptyState
-            title={
-              groupMemberships.length
-                ? "No groups match search..."
-                : "This user has not been assigned to any groups"
-            }
-            icon={groupMemberships.length ? faSearch : faUser}
-          />
-        )}
-      </TableContainer>
-    </div>
+      ) : (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>
+              {groupMemberships.length
+                ? "No groups match this search"
+                : "This user has not been assigned to any groups"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {groupMemberships.length
+                ? "Adjust search filters to view group memberships."
+                : "Assign this user to a group from the group access control page."}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+      {Boolean(filteredGroupMemberships.length) && (
+        <Pagination
+          count={filteredGroupMemberships.length}
+          page={page}
+          perPage={perPage}
+          onChangePage={setPage}
+          onChangePerPage={handlePerPageChange}
+        />
+      )}
+    </>
   );
 };

@@ -3,11 +3,12 @@ import * as x509 from "@peculiar/x509";
 import { z } from "zod";
 
 import { OrganizationActionScope } from "@app/db/schemas";
-import { KeyStorePrefixes, PgSqlLock, TKeyStoreFactory } from "@app/keystore/keystore";
+import { KeyStorePrefixes, KeyStoreTtls, PgSqlLock, TKeyStoreFactory } from "@app/keystore/keystore";
 import { getConfig } from "@app/lib/config/env";
 import { crypto } from "@app/lib/crypto/cryptography";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { pingGatewayAndVerify } from "@app/lib/gateway";
+import { TGatewayV1RelayDetails } from "@app/lib/gateway/types";
 import { alphaNumericNanoId } from "@app/lib/nanoid";
 import { getTurnCredentials } from "@app/lib/turn/credentials";
 import { ActorAuthMethod, ActorType } from "@app/services/auth/auth-type";
@@ -84,8 +85,6 @@ export const gatewayServiceFactory = ({
   };
 
   const getGatewayRelayDetails = async (actorId: string, actorOrgId: string, actorAuthMethod: ActorAuthMethod) => {
-    const TURN_CRED_EXPIRY = 10 * 60; // 10 minutes
-
     const envCfg = getConfig();
     await $validateOrgAccessToGateway(actorOrgId, actorId, actorAuthMethod);
     const { encryptor, decryptor } = await kmsService.createCipherPairWithDataKey({
@@ -113,7 +112,7 @@ export const gatewayServiceFactory = ({
       const el = getTurnCredentials(actorId, envCfg.GATEWAY_RELAY_AUTH_SECRET);
       await keyStore.setItemWithExpiry(
         KeyStorePrefixes.GatewayIdentityCredential(actorId),
-        TURN_CRED_EXPIRY,
+        KeyStoreTtls.GatewayRelayCredentialInSeconds,
         encryptor({
           plainText: Buffer.from(JSON.stringify({ username: el.username, password: el.password }))
         }).cipherTextBlob.toString("hex")
@@ -567,7 +566,7 @@ export const gatewayServiceFactory = ({
     return gateway;
   };
 
-  const fnGetGatewayClientTlsByGatewayId = async (gatewayId: string) => {
+  const fnGetGatewayClientTlsByGatewayId = async (gatewayId: string): Promise<TGatewayV1RelayDetails> => {
     const gateway = await gatewayDAL.findById(gatewayId);
     if (!gateway) throw new NotFoundError({ message: `Gateway with ID ${gatewayId} not found.` });
 
@@ -607,11 +606,19 @@ export const gatewayServiceFactory = ({
       type: "pkcs8"
     });
 
+    const relayAddress = orgKmsDecryptor({ cipherTextBlob: gateway.relayAddress }).toString();
+
+    const [relayHost, relayPort] = relayAddress.split(":");
+
     return {
-      relayAddress: orgKmsDecryptor({ cipherTextBlob: gateway.relayAddress }).toString(),
-      privateKey: clientSkObj.export({ type: "pkcs8", format: "pem" }),
-      certificate: clientCert.toString("pem"),
-      certChain: `${gatewayCaCert.toString("pem")}\n${rootCaCert.toString("pem")}`.trim(),
+      relayAddress,
+      relayHost,
+      relayPort: Number(relayPort),
+      tlsOptions: {
+        key: clientSkObj.export({ type: "pkcs8", format: "pem" }).toString(),
+        cert: clientCert.toString("pem"),
+        ca: `${gatewayCaCert.toString("pem")}\n${rootCaCert.toString("pem")}`.trim()
+      },
       identityId: gateway.identityId,
       orgId: orgGatewayConfig.orgId
     };

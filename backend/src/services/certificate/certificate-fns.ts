@@ -5,8 +5,28 @@ import RE2 from "re2";
 import { crypto } from "@app/lib/crypto/cryptography";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 
+import { extractDnParts } from "../certificate-authority/certificate-authority-fns";
 import { getProjectKmsCertificateKeyId } from "../project/project-fns";
-import { CrlReason, TGetCertificateCredentialsDTO } from "./certificate-types";
+import {
+  CertKeyAlgorithm,
+  CrlReason,
+  TCertificateFingerprints,
+  TCertificateSubject,
+  TGetCertificateCredentialsDTO,
+  TParsedCertificateBody
+} from "./certificate-types";
+
+export const keySizeToAlgorithms = (keySize: number): string[] => {
+  const map: Record<number, string[]> = {
+    2048: [CertKeyAlgorithm.RSA_2048],
+    3072: [CertKeyAlgorithm.RSA_3072],
+    4096: [CertKeyAlgorithm.RSA_4096],
+    256: [CertKeyAlgorithm.ECDSA_P256],
+    384: [CertKeyAlgorithm.ECDSA_P384],
+    521: [CertKeyAlgorithm.ECDSA_P521]
+  };
+  return map[keySize] ?? [];
+};
 
 export const revocationReasonToCrlCode = (crlReason: CrlReason) => {
   switch (crlReason) {
@@ -89,21 +109,22 @@ export const getCertificateCredentials = async ({
     cipherTextBlob: certificateSecret.encryptedPrivateKey
   });
 
+  const certPrivateKey = decryptedPrivateKey.toString("utf-8");
+
+  let certPublicKey = "";
   try {
     const skObj = crypto.nativeCrypto.createPrivateKey({ key: decryptedPrivateKey, format: "pem", type: "pkcs8" });
-    const certPrivateKey = skObj.export({ format: "pem", type: "pkcs8" }).toString();
-
     const pkObj = crypto.nativeCrypto.createPublicKey(skObj);
-    const certPublicKey = pkObj.export({ format: "pem", type: "spki" }).toString();
-
-    return {
-      certificateSecret,
-      certPrivateKey,
-      certPublicKey
-    };
-  } catch (error) {
-    throw new BadRequestError({ message: `Failed to process private key for certificate with ID '${certId}'` });
+    certPublicKey = pkObj.export({ format: "pem", type: "spki" }).toString();
+  } catch {
+    // Key type not supported by the current OpenSSL version
   }
+
+  return {
+    certificateSecret,
+    certPrivateKey,
+    certPublicKey
+  };
 };
 
 export const generatePkcs12FromCertificate = async ({
@@ -122,6 +143,15 @@ export const generatePkcs12FromCertificate = async ({
   try {
     if (!password || password.trim() === "") {
       throw new BadRequestError({ message: "Password is required for PKCS12 keystore generation" });
+    }
+
+    // node-forge doesn't support PQC keys
+    try {
+      crypto.nativeCrypto.createPrivateKey({ key: privateKey, format: "pem", type: "pkcs8" });
+    } catch {
+      throw new BadRequestError({
+        message: "PKCS#12 export is not supported for this key type. Use PEM format instead."
+      });
     }
 
     const cert = forge.pki.certificateFromPem(certificate);
@@ -150,8 +180,111 @@ export const generatePkcs12FromCertificate = async ({
 
     return Buffer.from(p12Der, "binary");
   } catch (error) {
+    if (error instanceof BadRequestError) throw error;
     throw new BadRequestError({
       message: `Failed to generate PKCS12 keystore: ${error instanceof Error ? error.message : "Unknown error"}`
     });
   }
+};
+
+/**
+ * Format a raw hex digest as an upper-cased, colon-delimited fingerprint (e.g., "1A:2F:73:...").
+ */
+export const formatFingerprint = (hash: string) =>
+  new RE2(".{2}", "g").match(hash.toUpperCase())?.join(":") ?? hash.toUpperCase();
+
+export enum CertificateThumbprintAlgorithm {
+  SHA1 = "sha1",
+  SHA256 = "sha256"
+}
+
+/**
+ * Normalize a user-supplied certificate thumbprint into the colon-delimited fingerprint format
+ * stored on the certificate (e.g., "1A:2F:..."). Accepts thumbprints with or without colons,
+ * whitespace, or other separators, in any case. Returns the matching algorithm based on digest
+ * length (40 hex chars => SHA-1, 64 hex chars => SHA-256).
+ */
+export const normalizeThumbprint = (thumbprint: string) => {
+  const hex = thumbprint.replace(new RE2("[^a-fA-F0-9]", "g"), "");
+
+  let algorithm: CertificateThumbprintAlgorithm;
+  if (hex.length === 40) {
+    algorithm = CertificateThumbprintAlgorithm.SHA1;
+  } else if (hex.length === 64) {
+    algorithm = CertificateThumbprintAlgorithm.SHA256;
+  } else {
+    throw new BadRequestError({
+      message: "Invalid thumbprint. Expected a SHA-1 (40 hex characters) or SHA-256 (64 hex characters) digest"
+    });
+  }
+
+  return { algorithm, fingerprint: formatFingerprint(hex) };
+};
+
+/**
+ * Parse and extract subject, fingerprints, and basicConstraints from a decrypted certificate.
+ * Returns empty object on failure (graceful degradation).
+ */
+export const parseCertificateBody = (decryptedCertificate: Buffer): TParsedCertificateBody => {
+  try {
+    const certObj = new x509.X509Certificate(decryptedCertificate);
+
+    // Extract subject DN attributes directly from the x509 Name object
+    const parsedDn = extractDnParts(certObj.subjectName);
+    const subject: TCertificateSubject = {
+      commonName: parsedDn.commonName,
+      organization: parsedDn.organization,
+      organizationalUnit: parsedDn.ou,
+      country: parsedDn.country,
+      state: parsedDn.province,
+      locality: parsedDn.locality
+    };
+
+    // Calculate fingerprints and format with colons (e.g., "1A:2F:73:...")
+    const rawData = Buffer.from(certObj.rawData);
+    const fingerprints: TCertificateFingerprints = {
+      sha256: formatFingerprint(crypto.nativeCrypto.createHash("sha256").update(rawData).digest("hex")),
+      sha1: formatFingerprint(crypto.nativeCrypto.createHash("sha1").update(rawData).digest("hex"))
+    };
+
+    // Extract basicConstraints extension
+    let basicConstraints: { isCA: boolean; pathLength?: number } | undefined;
+    const basicConstraintsExt = certObj.getExtension(x509.BasicConstraintsExtension);
+    if (basicConstraintsExt) {
+      basicConstraints = {
+        isCA: basicConstraintsExt.ca,
+        pathLength: basicConstraintsExt.pathLength
+      };
+    }
+
+    return { subject, fingerprints, basicConstraints };
+  } catch {
+    // If we can't parse the certificate, return empty object (graceful degradation)
+    return {};
+  }
+};
+
+/**
+ * Extract certificate fields including subject attributes, fingerprints, and basic constraints.
+ * Returns all parsed fields as separate properties.
+ */
+export const extractCertificateFields = (decryptedCertificate: Buffer) => {
+  const parsed = parseCertificateBody(decryptedCertificate);
+
+  return {
+    // Subject attributes
+    subjectOrganization: parsed.subject?.organization ?? null,
+    subjectOrganizationalUnit: parsed.subject?.organizationalUnit ?? null,
+    subjectCountry: parsed.subject?.country ?? null,
+    subjectState: parsed.subject?.state ?? null,
+    subjectLocality: parsed.subject?.locality ?? null,
+
+    // Fingerprints
+    fingerprintSha256: parsed.fingerprints?.sha256 ?? null,
+    fingerprintSha1: parsed.fingerprints?.sha1 ?? null,
+
+    // Basic constraints
+    isCA: parsed.basicConstraints?.isCA ?? null,
+    pathLength: parsed.basicConstraints?.pathLength ?? null
+  };
 };

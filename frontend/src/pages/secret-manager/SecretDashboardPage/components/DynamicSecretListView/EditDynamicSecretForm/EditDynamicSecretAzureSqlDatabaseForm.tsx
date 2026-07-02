@@ -1,6 +1,7 @@
 import { Controller, useForm } from "react-hook-form";
+import { faQuestionCircle } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
 import ms from "ms";
 import { z } from "zod";
 
@@ -16,15 +17,14 @@ import {
   FormControl,
   Input,
   SecretInput,
-  Select,
-  SelectItem,
   Switch,
   TextArea,
   Tooltip
 } from "@app/components/v2";
+import { GatewayPicker } from "@app/components/v3/platform/GatewayPicker";
 import { OrgPermissionSubjects } from "@app/context";
 import { OrgGatewayPermissionActions } from "@app/context/OrgPermissionContext/types";
-import { gatewaysQueryKeys, useUpdateDynamicSecret } from "@app/hooks/api";
+import { useUpdateDynamicSecret } from "@app/hooks/api";
 import { TDynamicSecret } from "@app/hooks/api/dynamicSecret/types";
 import { slugSchema } from "@app/lib/schemas";
 
@@ -66,7 +66,9 @@ const formSchema = z.object({
       renewStatement: z.string().optional(),
       ca: z.string().optional(),
       sslEnabled: z.boolean().optional(),
-      gatewayId: z.string().optional()
+      sslRejectUnauthorized: z.boolean().optional(),
+      gatewayId: z.string().optional().nullable(),
+      gatewayPoolId: z.string().optional().nullable()
     })
     .partial(),
   defaultTTL: z.string().superRefine((val, ctx) => {
@@ -130,6 +132,7 @@ export const EditDynamicSecretAzureSqlDatabaseForm = ({
     control,
     formState: { isSubmitting },
     handleSubmit,
+    setValue,
     watch
   } = useForm<TForm>({
     resolver: zodResolver(formSchema),
@@ -149,8 +152,9 @@ export const EditDynamicSecretAzureSqlDatabaseForm = ({
   });
 
   const updateDynamicSecret = useUpdateDynamicSecret();
-  const { data: gateways, isPending: isGatewaysLoading } = useQuery(gatewaysQueryKeys.list());
   const sslEnabled = watch("inputs.sslEnabled");
+  const inputsGatewayId = watch("inputs.gatewayId");
+  const inputsGatewayPoolId = watch("inputs.gatewayPoolId");
 
   const handleUpdateDynamicSecret = async ({
     inputs,
@@ -247,47 +251,30 @@ export const EditDynamicSecretAzureSqlDatabaseForm = ({
                 a={OrgPermissionSubjects.Gateway}
               >
                 {(isAllowed) => (
-                  <Controller
-                    control={control}
-                    name="inputs.gatewayId"
-                    render={({ field: { value, onChange }, fieldState: { error } }) => (
-                      <FormControl
-                        isError={Boolean(error?.message)}
-                        errorText={error?.message}
-                        label="Gateway"
-                      >
-                        <Tooltip
-                          isDisabled={isAllowed}
-                          content="Restricted access. You don't have permission to attach gateways to resources."
-                        >
-                          <div>
-                            <Select
-                              isDisabled={!isAllowed}
-                              value={value}
-                              onValueChange={onChange}
-                              className="w-full border border-mineshaft-500"
-                              dropdownContainerClassName="max-w-none"
-                              isLoading={isGatewaysLoading}
-                              placeholder="Default: Internet Gateway"
-                              position="popper"
-                            >
-                              <SelectItem
-                                value={null as unknown as string}
-                                onClick={() => onChange(undefined)}
-                              >
-                                Internet Gateway
-                              </SelectItem>
-                              {gateways?.map((el) => (
-                                <SelectItem value={el.id} key={el.id}>
-                                  {el.name}
-                                </SelectItem>
-                              ))}
-                            </Select>
-                          </div>
-                        </Tooltip>
-                      </FormControl>
-                    )}
-                  />
+                  <FormControl label="Gateway">
+                    <Tooltip
+                      isDisabled={isAllowed}
+                      content="Restricted access. You don't have permission to attach gateways to resources."
+                    >
+                      <div>
+                        <GatewayPicker
+                          isDisabled={!isAllowed}
+                          value={{
+                            gatewayId: inputsGatewayId ?? null,
+                            gatewayPoolId: inputsGatewayPoolId ?? null
+                          }}
+                          onChange={({ gatewayId: newGwId, gatewayPoolId: newPoolId }) => {
+                            setValue("inputs.gatewayId", newGwId ?? null, {
+                              shouldDirty: true
+                            });
+                            setValue("inputs.gatewayPoolId", newPoolId ?? null, {
+                              shouldDirty: true
+                            });
+                          }}
+                        />
+                      </div>
+                    </Tooltip>
+                  </FormControl>
                 )}
               </OrgPermissionCan>
             </div>
@@ -389,23 +376,60 @@ export const EditDynamicSecretAzureSqlDatabaseForm = ({
                   />
                 </div>
                 {sslEnabled && (
-                  <Controller
-                    control={control}
-                    name="inputs.ca"
-                    render={({ field, fieldState: { error } }) => (
-                      <FormControl
-                        isOptional
-                        label="CA (SSL)"
-                        isError={Boolean(error?.message)}
-                        errorText={error?.message}
-                      >
-                        <SecretInput
-                          {...field}
-                          containerClassName="text-bunker-300 hover:border-primary-400/50 border border-mineshaft-600 bg-mineshaft-900 px-2 py-1.5"
-                        />
-                      </FormControl>
-                    )}
-                  />
+                  <>
+                    <Controller
+                      control={control}
+                      name="inputs.ca"
+                      render={({ field, fieldState: { error } }) => (
+                        <FormControl
+                          isOptional
+                          label="CA (SSL)"
+                          isError={Boolean(error?.message)}
+                          errorText={error?.message}
+                        >
+                          <SecretInput
+                            {...field}
+                            containerClassName="text-bunker-300 hover:border-primary-400/50 border border-mineshaft-600 bg-mineshaft-900 px-2 py-1.5"
+                          />
+                        </FormControl>
+                      )}
+                    />
+                    <Controller
+                      name="inputs.sslRejectUnauthorized"
+                      control={control}
+                      render={({ field: { value, onChange }, fieldState: { error } }) => (
+                        <FormControl isError={Boolean(error?.message)} errorText={error?.message}>
+                          <Switch
+                            className="bg-mineshaft-400/50 shadow-inner data-[state=checked]:bg-green/80"
+                            id="ssl-reject-unauthorized"
+                            thumbClassName="bg-mineshaft-800"
+                            isChecked={value}
+                            onCheckedChange={onChange}
+                          >
+                            <p className="w-full">
+                              SSL Reject Unauthorized
+                              <Tooltip
+                                className="max-w-md"
+                                content={
+                                  <p>
+                                    If enabled, the server certificate will be verified against the
+                                    list of supplied CAs. Disable this option if you are using a
+                                    self-signed certificate.
+                                  </p>
+                                }
+                              >
+                                <FontAwesomeIcon
+                                  icon={faQuestionCircle}
+                                  size="sm"
+                                  className="ml-1"
+                                />
+                              </Tooltip>
+                            </p>
+                          </Switch>
+                        </FormControl>
+                      )}
+                    />
+                  </>
                 )}
                 <Accordion type="multiple" className="mb-2 w-full bg-mineshaft-700">
                   <AccordionItem value="advanced">

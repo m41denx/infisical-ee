@@ -1,3 +1,14 @@
+export enum SubscriptionPlanTypes {
+  Starter = "starter",
+  Pro = "pro",
+  ProAnnual = "pro-annual",
+  Team = "team",
+  TeamAnnual = "team-annual",
+  Enterprise = "enterprise",
+  OnPrem = "one-prem",
+  OnPremEnterprise = "one-prem-enterprise"
+}
+
 export type SubscriptionPlan = {
   id: string;
   membersUsed: number;
@@ -17,7 +28,7 @@ export type SubscriptionPlan = {
   ipAllowlisting: boolean;
   rbac: boolean;
   secretVersioning: boolean;
-  slug: string;
+  slug: SubscriptionPlanTypes;
   secretApproval: boolean;
   secretRotation: boolean;
   tier: number;
@@ -46,10 +57,13 @@ export type SubscriptionPlan = {
   caCrl: boolean;
   instanceUserManagement: boolean;
   gateway: boolean;
+  gatewayPool: boolean;
   externalKms: boolean;
   pkiEst: boolean;
   pkiAcme: boolean;
   pkiLegacyTemplates: boolean;
+  pkiPqc: boolean;
+  kmsPqc: boolean;
   enforceMfa: boolean;
   enforceGoogleSSO: boolean;
   projectTemplates: boolean;
@@ -62,5 +76,8 @@ export type SubscriptionPlan = {
   cardDeclinedReason?: string;
   cardDeclinedDays?: number;
   machineIdentityAuthTemplates: boolean;
-  pam: boolean;
+  secretShareExternalBranding: boolean;
+  emailDomainVerification: boolean;
+  honeyTokens: boolean;
+  honeyTokenLimit: number;
 };

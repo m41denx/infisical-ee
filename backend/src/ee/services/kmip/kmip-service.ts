@@ -1,18 +1,24 @@
 import { ForbiddenError } from "@casl/ability";
 import * as x509 from "@peculiar/x509";
+import RE2 from "re2";
 
 import { ActionProjectType, OrganizationActionScope } from "@app/db/schemas";
+import { PgSqlLock } from "@app/keystore/keystore";
 import { crypto } from "@app/lib/crypto/cryptography";
-import { BadRequestError, InternalServerError, NotFoundError } from "@app/lib/errors";
+import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
 import { isValidIp } from "@app/lib/ip";
 import { ms } from "@app/lib/ms";
 import { isFQDN } from "@app/lib/validator/validate-url";
+import { ActorType } from "@app/services/auth/auth-type";
 import { constructPemChainFromCerts } from "@app/services/certificate/certificate-fns";
 import { CertExtendedKeyUsage, CertKeyAlgorithm, CertKeyUsage } from "@app/services/certificate/certificate-types";
 import {
+  createDistinguishedName,
   createSerialNumber,
+  extractDnParts,
   keyAlgorithmToAlgCfg
 } from "@app/services/certificate-authority/certificate-authority-fns";
+import { extractAlgorithmsFromCSR } from "@app/services/certificate-common/certificate-csr-utils";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { KmsDataKey } from "@app/services/kms/kms-types";
 
@@ -30,12 +36,37 @@ import {
   TDeleteKmipClientDTO,
   TGenerateOrgKmipServerCertificateDTO,
   TGetKmipClientDTO,
-  TGetOrgKmipDTO,
   TListKmipClientsByProjectIdDTO,
   TRegisterServerDTO,
-  TSetupOrgKmipDTO,
   TUpdateKmipClientDTO
 } from "./kmip-types";
+
+// Serials are stored as fixed 40-char lowercase hex (crypto.randomBytes(20).toString("hex")), but the
+// daemon sends them derived from a Go big.Int in differing forms (decimal for client, hex for server,
+// leading zeros dropped). Reduce any representation to the canonical stored form via BigInt. For an
+// all-digit input the base is ambiguous, so emit both the decimal and hex readings as candidates.
+const normalizeSerialNumberCandidates = (raw: string): string[] => {
+  const value = raw.trim();
+  const candidates = new Set<string>();
+  const toCanonical = (n: bigint) => n.toString(16).padStart(40, "0");
+
+  if (new RE2(/^[0-9a-fA-F]+$/).test(value)) {
+    try {
+      candidates.add(toCanonical(BigInt(`0x${value}`)));
+    } catch {
+      // not a valid hex serial
+    }
+  }
+  if (new RE2(/^[0-9]+$/).test(value)) {
+    try {
+      candidates.add(toCanonical(BigInt(value)));
+    } catch {
+      // not a valid decimal serial
+    }
+  }
+
+  return [...candidates];
+};
 
 type TKmipServiceFactoryDep = {
   kmipClientDAL: TKmipClientDALFactory;
@@ -58,6 +89,199 @@ export const kmipServiceFactory = ({
   kmipOrgServerCertificateDAL,
   licenseService
 }: TKmipServiceFactoryDep) => {
+  const DEFAULT_CA_KEY_ALGORITHM = CertKeyAlgorithm.RSA_2048;
+
+  /**
+   * Initializes and returns the KMIP PKI CA hierarchy for an organization.
+   * If the org config already exists, returns it. Otherwise, creates the full PKI hierarchy
+   * (Root CA, Server Intermediate CA, Client Intermediate CA) within a transaction with advisory lock.
+   */
+  const $getOrgKmipCAs = async (orgId: string, caKeyAlgorithm: CertKeyAlgorithm = DEFAULT_CA_KEY_ALGORITHM) => {
+    const { encryptor: orgKmsEncryptor, decryptor: orgKmsDecryptor } = await kmsService.createCipherPairWithDataKey({
+      type: KmsDataKey.Organization,
+      orgId
+    });
+
+    const kmipOrgConfig = await kmipOrgConfigDAL.transaction(async (tx) => {
+      const existingConfig = await kmipOrgConfigDAL.findOne({ orgId }, tx);
+      if (existingConfig) return existingConfig;
+
+      // Acquire advisory lock to prevent race conditions during initialization
+      await tx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.OrgKmipInit(orgId)]);
+
+      // Double-check after acquiring lock
+      const configAfterLock = await kmipOrgConfigDAL.findOne({ orgId }, tx);
+      if (configAfterLock) return configAfterLock;
+
+      const alg = keyAlgorithmToAlgCfg(caKeyAlgorithm);
+
+      // generate root CA
+      const rootCaSerialNumber = createSerialNumber();
+      const rootCaKeys = await crypto.nativeCrypto.subtle.generateKey(alg, true, ["sign", "verify"]);
+      const rootCaSkObj = crypto.nativeCrypto.KeyObject.from(rootCaKeys.privateKey);
+      const rootCaIssuedAt = new Date();
+      const rootCaExpiration = new Date(new Date().setFullYear(new Date().getFullYear() + 20));
+
+      const rootCaCert = await x509.X509CertificateGenerator.createSelfSigned({
+        name: `CN=KMIP Root CA,OU=${orgId}`,
+        serialNumber: rootCaSerialNumber,
+        notBefore: rootCaIssuedAt,
+        notAfter: rootCaExpiration,
+        signingAlgorithm: alg,
+        keys: rootCaKeys,
+        extensions: [
+          // eslint-disable-next-line no-bitwise
+          new x509.KeyUsagesExtension(x509.KeyUsageFlags.keyCertSign | x509.KeyUsageFlags.cRLSign, true),
+          await x509.SubjectKeyIdentifierExtension.create(rootCaKeys.publicKey)
+        ]
+      });
+
+      // generate intermediate server CA
+      const serverIntermediateCaSerialNumber = createSerialNumber();
+      const serverIntermediateCaIssuedAt = new Date();
+      const serverIntermediateCaExpiration = new Date(new Date().setFullYear(new Date().getFullYear() + 10));
+      const serverIntermediateCaKeys = await crypto.nativeCrypto.subtle.generateKey(alg, true, ["sign", "verify"]);
+      const serverIntermediateCaSkObj = crypto.nativeCrypto.KeyObject.from(serverIntermediateCaKeys.privateKey);
+
+      const serverIntermediateCaCert = await x509.X509CertificateGenerator.create({
+        serialNumber: serverIntermediateCaSerialNumber,
+        subject: `CN=KMIP Server Intermediate CA,OU=${orgId}`,
+        issuer: rootCaCert.subject,
+        notBefore: serverIntermediateCaIssuedAt,
+        notAfter: serverIntermediateCaExpiration,
+        signingKey: rootCaKeys.privateKey,
+        publicKey: serverIntermediateCaKeys.publicKey,
+        signingAlgorithm: alg,
+        extensions: [
+          new x509.KeyUsagesExtension(
+            // eslint-disable-next-line no-bitwise
+            x509.KeyUsageFlags.keyCertSign |
+              x509.KeyUsageFlags.cRLSign |
+              x509.KeyUsageFlags.digitalSignature |
+              x509.KeyUsageFlags.keyEncipherment,
+            true
+          ),
+          new x509.BasicConstraintsExtension(true, 0, true),
+          await x509.AuthorityKeyIdentifierExtension.create(rootCaCert, false),
+          await x509.SubjectKeyIdentifierExtension.create(serverIntermediateCaKeys.publicKey)
+        ]
+      });
+
+      // generate intermediate client CA
+      const clientIntermediateCaSerialNumber = createSerialNumber();
+      const clientIntermediateCaIssuedAt = new Date();
+      const clientIntermediateCaExpiration = new Date(new Date().setFullYear(new Date().getFullYear() + 10));
+      const clientIntermediateCaKeys = await crypto.nativeCrypto.subtle.generateKey(alg, true, ["sign", "verify"]);
+      const clientIntermediateCaSkObj = crypto.nativeCrypto.KeyObject.from(clientIntermediateCaKeys.privateKey);
+
+      const clientIntermediateCaCert = await x509.X509CertificateGenerator.create({
+        serialNumber: clientIntermediateCaSerialNumber,
+        subject: `CN=KMIP Client Intermediate CA,OU=${orgId}`,
+        issuer: rootCaCert.subject,
+        notBefore: clientIntermediateCaIssuedAt,
+        notAfter: clientIntermediateCaExpiration,
+        signingKey: rootCaKeys.privateKey,
+        publicKey: clientIntermediateCaKeys.publicKey,
+        signingAlgorithm: alg,
+        extensions: [
+          new x509.KeyUsagesExtension(
+            // eslint-disable-next-line no-bitwise
+            x509.KeyUsageFlags.keyCertSign |
+              x509.KeyUsageFlags.cRLSign |
+              x509.KeyUsageFlags.digitalSignature |
+              x509.KeyUsageFlags.keyEncipherment,
+            true
+          ),
+          new x509.BasicConstraintsExtension(true, 0, true),
+          await x509.AuthorityKeyIdentifierExtension.create(rootCaCert, false),
+          await x509.SubjectKeyIdentifierExtension.create(clientIntermediateCaKeys.publicKey)
+        ]
+      });
+
+      return kmipOrgConfigDAL.create(
+        {
+          orgId,
+          caKeyAlgorithm,
+          rootCaIssuedAt,
+          rootCaExpiration,
+          rootCaSerialNumber,
+          encryptedRootCaCertificate: orgKmsEncryptor({ plainText: Buffer.from(rootCaCert.rawData) }).cipherTextBlob,
+          encryptedRootCaPrivateKey: orgKmsEncryptor({
+            plainText: rootCaSkObj.export({
+              type: "pkcs8",
+              format: "der"
+            })
+          }).cipherTextBlob,
+          serverIntermediateCaIssuedAt,
+          serverIntermediateCaExpiration,
+          serverIntermediateCaSerialNumber,
+          encryptedServerIntermediateCaCertificate: orgKmsEncryptor({
+            plainText: Buffer.from(new Uint8Array(serverIntermediateCaCert.rawData))
+          }).cipherTextBlob,
+          encryptedServerIntermediateCaChain: orgKmsEncryptor({ plainText: Buffer.from(rootCaCert.toString("pem")) })
+            .cipherTextBlob,
+          encryptedServerIntermediateCaPrivateKey: orgKmsEncryptor({
+            plainText: serverIntermediateCaSkObj.export({
+              type: "pkcs8",
+              format: "der"
+            })
+          }).cipherTextBlob,
+          clientIntermediateCaIssuedAt,
+          clientIntermediateCaExpiration,
+          clientIntermediateCaSerialNumber,
+          encryptedClientIntermediateCaCertificate: orgKmsEncryptor({
+            plainText: Buffer.from(new Uint8Array(clientIntermediateCaCert.rawData))
+          }).cipherTextBlob,
+          encryptedClientIntermediateCaChain: orgKmsEncryptor({ plainText: Buffer.from(rootCaCert.toString("pem")) })
+            .cipherTextBlob,
+          encryptedClientIntermediateCaPrivateKey: orgKmsEncryptor({
+            plainText: clientIntermediateCaSkObj.export({
+              type: "pkcs8",
+              format: "der"
+            })
+          }).cipherTextBlob
+        },
+        tx
+      );
+    });
+
+    // Decrypt and return the CA certificates and keys
+    const rootCaCertificate = orgKmsDecryptor({ cipherTextBlob: kmipOrgConfig.encryptedRootCaCertificate });
+    const rootCaPrivateKey = orgKmsDecryptor({ cipherTextBlob: kmipOrgConfig.encryptedRootCaPrivateKey });
+
+    const serverIntermediateCaCertificate = orgKmsDecryptor({
+      cipherTextBlob: kmipOrgConfig.encryptedServerIntermediateCaCertificate
+    });
+    const serverIntermediateCaPrivateKey = orgKmsDecryptor({
+      cipherTextBlob: kmipOrgConfig.encryptedServerIntermediateCaPrivateKey
+    });
+    const serverIntermediateCaChain = orgKmsDecryptor({
+      cipherTextBlob: kmipOrgConfig.encryptedServerIntermediateCaChain
+    });
+
+    const clientIntermediateCaCertificate = orgKmsDecryptor({
+      cipherTextBlob: kmipOrgConfig.encryptedClientIntermediateCaCertificate
+    });
+    const clientIntermediateCaPrivateKey = orgKmsDecryptor({
+      cipherTextBlob: kmipOrgConfig.encryptedClientIntermediateCaPrivateKey
+    });
+    const clientIntermediateCaChain = orgKmsDecryptor({
+      cipherTextBlob: kmipOrgConfig.encryptedClientIntermediateCaChain
+    });
+
+    return {
+      config: kmipOrgConfig,
+      rootCaCertificate,
+      rootCaPrivateKey,
+      serverIntermediateCaCertificate,
+      serverIntermediateCaPrivateKey,
+      serverIntermediateCaChain,
+      clientIntermediateCaCertificate,
+      clientIntermediateCaPrivateKey,
+      clientIntermediateCaChain
+    };
+  };
+
   const createKmipClient = async ({
     actor,
     actorId,
@@ -237,7 +461,8 @@ export const kmipServiceFactory = ({
     actorAuthMethod,
     ttl,
     keyAlgorithm,
-    clientId
+    clientId,
+    csr
   }: TCreateKmipClientCertificateDTO) => {
     const kmipClient = await kmipClientDAL.findById(clientId);
 
@@ -267,24 +492,10 @@ export const kmipServiceFactory = ({
       ProjectPermissionSub.Kmip
     );
 
-    const kmipConfig = await kmipOrgConfigDAL.findOne({
-      orgId: actorOrgId
-    });
+    // Lazily initialize KMIP org config if not already set up
+    const orgKmipCAs = await $getOrgKmipCAs(actorOrgId);
 
-    if (!kmipConfig) {
-      throw new InternalServerError({
-        message: "KMIP has not been configured for the organization"
-      });
-    }
-
-    const { decryptor } = await kmsService.createCipherPairWithDataKey({
-      type: KmsDataKey.Organization,
-      orgId: actorOrgId
-    });
-
-    const caCertObj = new x509.X509Certificate(
-      decryptor({ cipherTextBlob: kmipConfig.encryptedClientIntermediateCaCertificate })
-    );
+    const caCertObj = new x509.X509Certificate(orgKmipCAs.clientIntermediateCaCertificate);
 
     const notBeforeDate = new Date();
     const notAfterDate = new Date(new Date().getTime() + ms(ttl));
@@ -304,28 +515,10 @@ export const kmipServiceFactory = ({
       throw new BadRequestError({ message: "notAfter date is after CA certificate's notAfter date" });
     }
 
-    const alg = keyAlgorithmToAlgCfg(keyAlgorithm);
-    const leafKeys = await crypto.nativeCrypto.subtle.generateKey(alg, true, ["sign", "verify"]);
-
-    const extensions: x509.Extension[] = [
-      new x509.BasicConstraintsExtension(false),
-      await x509.AuthorityKeyIdentifierExtension.create(caCertObj, false),
-      await x509.SubjectKeyIdentifierExtension.create(leafKeys.publicKey),
-      new x509.CertificatePolicyExtension(["2.5.29.32.0"]), // anyPolicy
-      new x509.KeyUsagesExtension(
-        // eslint-disable-next-line no-bitwise
-        x509.KeyUsageFlags[CertKeyUsage.DIGITAL_SIGNATURE] |
-          x509.KeyUsageFlags[CertKeyUsage.KEY_ENCIPHERMENT] |
-          x509.KeyUsageFlags[CertKeyUsage.KEY_AGREEMENT],
-        true
-      ),
-      new x509.ExtendedKeyUsageExtension([x509.ExtendedKeyUsage[CertExtendedKeyUsage.CLIENT_AUTH]], true)
-    ];
-
-    const caAlg = keyAlgorithmToAlgCfg(kmipConfig.caKeyAlgorithm as CertKeyAlgorithm);
+    const caAlg = keyAlgorithmToAlgCfg(orgKmipCAs.config.caKeyAlgorithm as CertKeyAlgorithm);
 
     const caSkObj = crypto.nativeCrypto.createPrivateKey({
-      key: decryptor({ cipherTextBlob: kmipConfig.encryptedClientIntermediateCaPrivateKey }),
+      key: orgKmipCAs.clientIntermediateCaPrivateKey,
       format: "der",
       type: "pkcs8"
     });
@@ -339,28 +532,113 @@ export const kmipServiceFactory = ({
     );
 
     const serialNumber = createSerialNumber();
-    const leafCert = await x509.X509CertificateGenerator.create({
-      serialNumber,
-      subject: `OU=${kmipClient.projectId},CN=${clientId}`,
-      issuer: caCertObj.subject,
-      notBefore: notBeforeDate,
-      notAfter: notAfterDate,
-      signingKey: caPrivateKey,
-      publicKey: leafKeys.publicKey,
-      signingAlgorithm: alg,
-      extensions
-    });
+    let leafCert: x509.X509Certificate;
+    let effectiveKeyAlgorithm: CertKeyAlgorithm;
+    let privateKeyPem: string | undefined;
 
-    const skLeafObj = crypto.nativeCrypto.KeyObject.from(leafKeys.privateKey);
+    if (csr) {
+      // CSR mode - sign the provided CSR
+      const csrObj = new x509.Pkcs10CertificateRequest(csr);
 
-    const rootCaCert = new x509.X509Certificate(decryptor({ cipherTextBlob: kmipConfig.encryptedRootCaCertificate }));
-    const serverIntermediateCaCert = new x509.X509Certificate(
-      decryptor({ cipherTextBlob: kmipConfig.encryptedServerIntermediateCaCertificate })
-    );
+      // Validate CSR signature
+      const isValid = await csrObj.verify();
+      if (!isValid) {
+        throw new BadRequestError({ message: "Invalid CSR signature" });
+      }
+
+      // Extract key algorithm from CSR
+      const { keyAlgorithm: csrKeyAlgorithm } = extractAlgorithmsFromCSR(csr);
+      effectiveKeyAlgorithm = csrKeyAlgorithm;
+
+      // Extract additional subject fields from CSR (O, L, ST, C) and build DN with proper escaping
+      const dn = extractDnParts(csrObj.subjectName);
+      const subject = createDistinguishedName({
+        commonName: clientId,
+        ou: kmipClient.projectId,
+        organization: dn.organization,
+        locality: dn.locality,
+        province: dn.province,
+        country: dn.country
+      });
+
+      const extensions: x509.Extension[] = [
+        new x509.BasicConstraintsExtension(false),
+        await x509.AuthorityKeyIdentifierExtension.create(caCertObj, false),
+        await x509.SubjectKeyIdentifierExtension.create(csrObj.publicKey),
+        new x509.CertificatePolicyExtension(["2.5.29.32.0"]), // anyPolicy
+        new x509.KeyUsagesExtension(
+          // eslint-disable-next-line no-bitwise
+          x509.KeyUsageFlags[CertKeyUsage.DIGITAL_SIGNATURE] |
+            x509.KeyUsageFlags[CertKeyUsage.KEY_ENCIPHERMENT] |
+            x509.KeyUsageFlags[CertKeyUsage.KEY_AGREEMENT],
+          true
+        ),
+        new x509.ExtendedKeyUsageExtension([x509.ExtendedKeyUsage[CertExtendedKeyUsage.CLIENT_AUTH]], true)
+      ];
+
+      leafCert = await x509.X509CertificateGenerator.create({
+        serialNumber,
+        subject,
+        issuer: caCertObj.subject,
+        notBefore: notBeforeDate,
+        notAfter: notAfterDate,
+        signingKey: caPrivateKey,
+        publicKey: csrObj.publicKey,
+        signingAlgorithm: caAlg,
+        extensions
+      });
+    } else {
+      // Managed mode - server generates key pair (existing behavior)
+      if (!keyAlgorithm) {
+        throw new BadRequestError({ message: "keyAlgorithm is required when not providing a CSR" });
+      }
+      effectiveKeyAlgorithm = keyAlgorithm;
+
+      const alg = keyAlgorithmToAlgCfg(keyAlgorithm);
+      const leafKeys = await crypto.nativeCrypto.subtle.generateKey(alg, true, ["sign", "verify"]);
+
+      const skLeafObj = crypto.nativeCrypto.KeyObject.from(leafKeys.privateKey);
+      privateKeyPem = skLeafObj.export({ format: "pem", type: "pkcs8" }) as string;
+
+      const subject = createDistinguishedName({
+        commonName: clientId,
+        ou: kmipClient.projectId
+      });
+
+      const extensions: x509.Extension[] = [
+        new x509.BasicConstraintsExtension(false),
+        await x509.AuthorityKeyIdentifierExtension.create(caCertObj, false),
+        await x509.SubjectKeyIdentifierExtension.create(leafKeys.publicKey),
+        new x509.CertificatePolicyExtension(["2.5.29.32.0"]), // anyPolicy
+        new x509.KeyUsagesExtension(
+          // eslint-disable-next-line no-bitwise
+          x509.KeyUsageFlags[CertKeyUsage.DIGITAL_SIGNATURE] |
+            x509.KeyUsageFlags[CertKeyUsage.KEY_ENCIPHERMENT] |
+            x509.KeyUsageFlags[CertKeyUsage.KEY_AGREEMENT],
+          true
+        ),
+        new x509.ExtendedKeyUsageExtension([x509.ExtendedKeyUsage[CertExtendedKeyUsage.CLIENT_AUTH]], true)
+      ];
+
+      leafCert = await x509.X509CertificateGenerator.create({
+        serialNumber,
+        subject,
+        issuer: caCertObj.subject,
+        notBefore: notBeforeDate,
+        notAfter: notAfterDate,
+        signingKey: caPrivateKey,
+        publicKey: leafKeys.publicKey,
+        signingAlgorithm: alg,
+        extensions
+      });
+    }
+
+    const rootCaCert = new x509.X509Certificate(orgKmipCAs.rootCaCertificate);
+    const serverIntermediateCaCert = new x509.X509Certificate(orgKmipCAs.serverIntermediateCaCertificate);
 
     await kmipClientCertificateDAL.create({
       kmipClientId: clientId,
-      keyAlgorithm,
+      keyAlgorithm: effectiveKeyAlgorithm,
       issuedAt: notBeforeDate,
       expiration: notAfterDate,
       serialNumber
@@ -368,10 +646,10 @@ export const kmipServiceFactory = ({
 
     return {
       serialNumber,
-      privateKey: skLeafObj.export({ format: "pem", type: "pkcs8" }) as string,
       certificate: leafCert.toString("pem"),
       certificateChain: constructPemChainFromCerts([serverIntermediateCaCert, rootCaCert]),
-      projectId: kmipClient.projectId
+      projectId: kmipClient.projectId,
+      ...(privateKeyPem && { privateKey: privateKeyPem })
     };
   };
 
@@ -400,213 +678,6 @@ export const kmipServiceFactory = ({
     };
   };
 
-  const setupOrgKmip = async ({ caKeyAlgorithm, actorOrgId, actor, actorId, actorAuthMethod }: TSetupOrgKmipDTO) => {
-    const { permission } = await permissionService.getOrgPermission({
-      scope: OrganizationActionScope.Any,
-      actor,
-      actorId,
-      orgId: actorOrgId,
-      actorAuthMethod,
-      actorOrgId
-    });
-    ForbiddenError.from(permission).throwUnlessCan(OrgPermissionKmipActions.Setup, OrgPermissionSubjects.Kmip);
-
-    const kmipConfig = await kmipOrgConfigDAL.findOne({
-      orgId: actorOrgId
-    });
-
-    if (kmipConfig) {
-      throw new BadRequestError({
-        message: "KMIP has already been configured for the organization"
-      });
-    }
-
-    const plan = await licenseService.getPlan(actorOrgId);
-    if (!plan.kmip)
-      throw new BadRequestError({
-        message: "Failed to setup KMIP. Upgrade your plan to enterprise."
-      });
-
-    const alg = keyAlgorithmToAlgCfg(caKeyAlgorithm);
-
-    // generate root CA
-    const rootCaSerialNumber = createSerialNumber();
-    const rootCaKeys = await crypto.nativeCrypto.subtle.generateKey(alg, true, ["sign", "verify"]);
-    const rootCaSkObj = crypto.nativeCrypto.KeyObject.from(rootCaKeys.privateKey);
-    const rootCaIssuedAt = new Date();
-    const rootCaExpiration = new Date(new Date().setFullYear(new Date().getFullYear() + 20));
-
-    const rootCaCert = await x509.X509CertificateGenerator.createSelfSigned({
-      name: `CN=KMIP Root CA,OU=${actorOrgId}`,
-      serialNumber: rootCaSerialNumber,
-      notBefore: rootCaIssuedAt,
-      notAfter: rootCaExpiration,
-      signingAlgorithm: alg,
-      keys: rootCaKeys,
-      extensions: [
-        // eslint-disable-next-line no-bitwise
-        new x509.KeyUsagesExtension(x509.KeyUsageFlags.keyCertSign | x509.KeyUsageFlags.cRLSign, true),
-        await x509.SubjectKeyIdentifierExtension.create(rootCaKeys.publicKey)
-      ]
-    });
-
-    // generate intermediate server CA
-    const serverIntermediateCaSerialNumber = createSerialNumber();
-    const serverIntermediateCaIssuedAt = new Date();
-    const serverIntermediateCaExpiration = new Date(new Date().setFullYear(new Date().getFullYear() + 10));
-    const serverIntermediateCaKeys = await crypto.nativeCrypto.subtle.generateKey(alg, true, ["sign", "verify"]);
-    const serverIntermediateCaSkObj = crypto.nativeCrypto.KeyObject.from(serverIntermediateCaKeys.privateKey);
-
-    const serverIntermediateCaCert = await x509.X509CertificateGenerator.create({
-      serialNumber: serverIntermediateCaSerialNumber,
-      subject: `CN=KMIP Server Intermediate CA,OU=${actorOrgId}`,
-      issuer: rootCaCert.subject,
-      notBefore: serverIntermediateCaIssuedAt,
-      notAfter: serverIntermediateCaExpiration,
-      signingKey: rootCaKeys.privateKey,
-      publicKey: serverIntermediateCaKeys.publicKey,
-      signingAlgorithm: alg,
-      extensions: [
-        new x509.KeyUsagesExtension(
-          // eslint-disable-next-line no-bitwise
-          x509.KeyUsageFlags.keyCertSign |
-            x509.KeyUsageFlags.cRLSign |
-            x509.KeyUsageFlags.digitalSignature |
-            x509.KeyUsageFlags.keyEncipherment,
-          true
-        ),
-        new x509.BasicConstraintsExtension(true, 0, true),
-        await x509.AuthorityKeyIdentifierExtension.create(rootCaCert, false),
-        await x509.SubjectKeyIdentifierExtension.create(serverIntermediateCaKeys.publicKey)
-      ]
-    });
-
-    // generate intermediate client CA
-    const clientIntermediateCaSerialNumber = createSerialNumber();
-    const clientIntermediateCaIssuedAt = new Date();
-    const clientIntermediateCaExpiration = new Date(new Date().setFullYear(new Date().getFullYear() + 10));
-    const clientIntermediateCaKeys = await crypto.nativeCrypto.subtle.generateKey(alg, true, ["sign", "verify"]);
-    const clientIntermediateCaSkObj = crypto.nativeCrypto.KeyObject.from(clientIntermediateCaKeys.privateKey);
-
-    const clientIntermediateCaCert = await x509.X509CertificateGenerator.create({
-      serialNumber: clientIntermediateCaSerialNumber,
-      subject: `CN=KMIP Client Intermediate CA,OU=${actorOrgId}`,
-      issuer: rootCaCert.subject,
-      notBefore: clientIntermediateCaIssuedAt,
-      notAfter: clientIntermediateCaExpiration,
-      signingKey: rootCaKeys.privateKey,
-      publicKey: clientIntermediateCaKeys.publicKey,
-      signingAlgorithm: alg,
-      extensions: [
-        new x509.KeyUsagesExtension(
-          // eslint-disable-next-line no-bitwise
-          x509.KeyUsageFlags.keyCertSign |
-            x509.KeyUsageFlags.cRLSign |
-            x509.KeyUsageFlags.digitalSignature |
-            x509.KeyUsageFlags.keyEncipherment,
-          true
-        ),
-        new x509.BasicConstraintsExtension(true, 0, true),
-        await x509.AuthorityKeyIdentifierExtension.create(rootCaCert, false),
-        await x509.SubjectKeyIdentifierExtension.create(clientIntermediateCaKeys.publicKey)
-      ]
-    });
-
-    const { encryptor } = await kmsService.createCipherPairWithDataKey({
-      type: KmsDataKey.Organization,
-      orgId: actorOrgId
-    });
-
-    await kmipOrgConfigDAL.create({
-      orgId: actorOrgId,
-      caKeyAlgorithm,
-      rootCaIssuedAt,
-      rootCaExpiration,
-      rootCaSerialNumber,
-      encryptedRootCaCertificate: encryptor({ plainText: Buffer.from(rootCaCert.rawData) }).cipherTextBlob,
-      encryptedRootCaPrivateKey: encryptor({
-        plainText: rootCaSkObj.export({
-          type: "pkcs8",
-          format: "der"
-        })
-      }).cipherTextBlob,
-      serverIntermediateCaIssuedAt,
-      serverIntermediateCaExpiration,
-      serverIntermediateCaSerialNumber,
-      encryptedServerIntermediateCaCertificate: encryptor({
-        plainText: Buffer.from(new Uint8Array(serverIntermediateCaCert.rawData))
-      }).cipherTextBlob,
-      encryptedServerIntermediateCaChain: encryptor({ plainText: Buffer.from(rootCaCert.toString("pem")) })
-        .cipherTextBlob,
-      encryptedServerIntermediateCaPrivateKey: encryptor({
-        plainText: serverIntermediateCaSkObj.export({
-          type: "pkcs8",
-          format: "der"
-        })
-      }).cipherTextBlob,
-      clientIntermediateCaIssuedAt,
-      clientIntermediateCaExpiration,
-      clientIntermediateCaSerialNumber,
-      encryptedClientIntermediateCaCertificate: encryptor({
-        plainText: Buffer.from(new Uint8Array(clientIntermediateCaCert.rawData))
-      }).cipherTextBlob,
-      encryptedClientIntermediateCaChain: encryptor({ plainText: Buffer.from(rootCaCert.toString("pem")) })
-        .cipherTextBlob,
-      encryptedClientIntermediateCaPrivateKey: encryptor({
-        plainText: clientIntermediateCaSkObj.export({
-          type: "pkcs8",
-          format: "der"
-        })
-      }).cipherTextBlob
-    });
-
-    return {
-      serverCertificateChain: constructPemChainFromCerts([serverIntermediateCaCert, rootCaCert]),
-      clientCertificateChain: constructPemChainFromCerts([clientIntermediateCaCert, rootCaCert])
-    };
-  };
-
-  const getOrgKmip = async ({ actorOrgId, actor, actorId, actorAuthMethod }: TGetOrgKmipDTO) => {
-    await permissionService.getOrgPermission({
-      scope: OrganizationActionScope.Any,
-      actor,
-      actorId,
-      orgId: actorOrgId,
-      actorAuthMethod,
-      actorOrgId
-    });
-
-    const kmipConfig = await kmipOrgConfigDAL.findOne({
-      orgId: actorOrgId
-    });
-
-    if (!kmipConfig) {
-      throw new BadRequestError({
-        message: "KMIP has not been configured for the organization"
-      });
-    }
-
-    const { decryptor } = await kmsService.createCipherPairWithDataKey({
-      type: KmsDataKey.Organization,
-      orgId: actorOrgId
-    });
-
-    const rootCaCert = new x509.X509Certificate(decryptor({ cipherTextBlob: kmipConfig.encryptedRootCaCertificate }));
-    const serverIntermediateCaCert = new x509.X509Certificate(
-      decryptor({ cipherTextBlob: kmipConfig.encryptedServerIntermediateCaCertificate })
-    );
-
-    const clientIntermediateCaCert = new x509.X509Certificate(
-      decryptor({ cipherTextBlob: kmipConfig.encryptedClientIntermediateCaCertificate })
-    );
-
-    return {
-      id: kmipConfig.id,
-      serverCertificateChain: constructPemChainFromCerts([serverIntermediateCaCert, rootCaCert]),
-      clientCertificateChain: constructPemChainFromCerts([clientIntermediateCaCert, rootCaCert])
-    };
-  };
-
   const generateOrgKmipServerCertificate = async ({
     orgId,
     ttl,
@@ -614,30 +685,21 @@ export const kmipServiceFactory = ({
     altNames,
     keyAlgorithm
   }: TGenerateOrgKmipServerCertificateDTO) => {
-    const kmipOrgConfig = await kmipOrgConfigDAL.findOne({
-      orgId
-    });
-
-    if (!kmipOrgConfig) {
-      throw new BadRequestError({
-        message: "KMIP has not been configured for the organization"
-      });
-    }
-
     const plan = await licenseService.getPlan(orgId);
     if (!plan.kmip)
       throw new BadRequestError({
         message: "Failed to generate KMIP server certificate. Upgrade your plan to enterprise."
       });
 
-    const { decryptor, encryptor } = await kmsService.createCipherPairWithDataKey({
+    // Initialize KMIP org config (or return existing one)
+    const orgKmipCAs = await $getOrgKmipCAs(orgId);
+
+    const { encryptor } = await kmsService.createCipherPairWithDataKey({
       type: KmsDataKey.Organization,
       orgId
     });
 
-    const caCertObj = new x509.X509Certificate(
-      decryptor({ cipherTextBlob: kmipOrgConfig.encryptedServerIntermediateCaCertificate })
-    );
+    const caCertObj = new x509.X509Certificate(orgKmipCAs.serverIntermediateCaCertificate);
 
     const notBeforeDate = new Date();
     const notAfterDate = new Date(new Date().getTime() + ms(ttl));
@@ -701,14 +763,12 @@ export const kmipServiceFactory = ({
     const altNamesExtension = new x509.SubjectAlternativeNameExtension(altNamesArray, false);
     extensions.push(altNamesExtension);
 
-    const caAlg = keyAlgorithmToAlgCfg(kmipOrgConfig.caKeyAlgorithm as CertKeyAlgorithm);
+    const caAlg = keyAlgorithmToAlgCfg(orgKmipCAs.config.caKeyAlgorithm as CertKeyAlgorithm);
 
-    const decryptedCaCertChain = decryptor({
-      cipherTextBlob: kmipOrgConfig.encryptedServerIntermediateCaChain
-    }).toString("utf-8");
+    const decryptedCaCertChain = orgKmipCAs.serverIntermediateCaChain.toString("utf-8");
 
     const caSkObj = crypto.nativeCrypto.createPrivateKey({
-      key: decryptor({ cipherTextBlob: kmipOrgConfig.encryptedServerIntermediateCaPrivateKey }),
+      key: orgKmipCAs.serverIntermediateCaPrivateKey,
       format: "der",
       type: "pkcs8"
     });
@@ -767,25 +827,20 @@ export const kmipServiceFactory = ({
     keyAlgorithm,
     hostnamesOrIps
   }: TRegisterServerDTO) => {
-    const { permission } = await permissionService.getOrgPermission({
-      scope: OrganizationActionScope.Any,
-      actor,
-      actorId,
-      orgId: actorOrgId,
-      actorAuthMethod,
-      actorOrgId
-    });
-
-    ForbiddenError.from(permission).throwUnlessCan(OrgPermissionKmipActions.Proxy, OrgPermissionSubjects.Kmip);
-
-    const kmipConfig = await kmipOrgConfigDAL.findOne({
-      orgId: actorOrgId
-    });
-
-    if (!kmipConfig) {
-      throw new BadRequestError({
-        message: "KMIP has not been configured for the organization"
+    // KMIP servers authenticate via their enrollment-based access token, which is itself the
+    // authorization — no org-level permission needed. The legacy machine-identity path still
+    // requires the (deprecated) KMIP proxy permission.
+    if (actor !== ActorType.KMIP_SERVER) {
+      const { permission } = await permissionService.getOrgPermission({
+        scope: OrganizationActionScope.Any,
+        actor,
+        actorId,
+        orgId: actorOrgId,
+        actorAuthMethod,
+        actorOrgId
       });
+
+      ForbiddenError.from(permission).throwUnlessCan(OrgPermissionKmipActions.Proxy, OrgPermissionSubjects.Kmip);
     }
 
     const plan = await licenseService.getPlan(actorOrgId);
@@ -794,20 +849,20 @@ export const kmipServiceFactory = ({
         message: "Failed to register KMIP server. Upgrade your plan to enterprise."
       });
 
+    // Initialize KMIP org config (or return existing one)
+    const orgKmipCAs = await $getOrgKmipCAs(actorOrgId);
+
     const { privateKey, certificate, certificateChain, serialNumber } = await generateOrgKmipServerCertificate({
       orgId: actorOrgId,
       commonName: commonName ?? "kmip-server",
       altNames: hostnamesOrIps,
-      keyAlgorithm: keyAlgorithm ?? (kmipConfig.caKeyAlgorithm as CertKeyAlgorithm),
+      keyAlgorithm: keyAlgorithm ?? (orgKmipCAs.config.caKeyAlgorithm as CertKeyAlgorithm),
       ttl
     });
 
-    const { clientCertificateChain } = await getOrgKmip({
-      actor,
-      actorAuthMethod,
-      actorId,
-      actorOrgId
-    });
+    const rootCaCert = new x509.X509Certificate(orgKmipCAs.rootCaCertificate);
+    const clientIntermediateCaCert = new x509.X509Certificate(orgKmipCAs.clientIntermediateCaCertificate);
+    const clientCertificateChain = constructPemChainFromCerts([clientIntermediateCaCert, rootCaCert]);
 
     return {
       serverCertificateSerialNumber: serialNumber,
@@ -818,6 +873,41 @@ export const kmipServiceFactory = ({
     };
   };
 
+  // Validates that the presented certs were actually issued by this org.
+  // Revocation checking is out of scope until KMIP certs gain a revocation model.
+  const validateKmipSessionCertificates = async ({
+    orgId,
+    kmipClientId,
+    clientCertificateSerialNumber,
+    serverCertificateSerialNumber
+  }: {
+    orgId: string;
+    kmipClientId: string;
+    clientCertificateSerialNumber: string;
+    serverCertificateSerialNumber: string;
+  }) => {
+    const serverCertCandidates = normalizeSerialNumberCandidates(serverCertificateSerialNumber);
+    const [serverCert] = serverCertCandidates.length
+      ? await kmipOrgServerCertificateDAL.find({ orgId, $in: { serialNumber: serverCertCandidates } }, { limit: 1 })
+      : [];
+    if (!serverCert) {
+      throw new ForbiddenRequestError({ message: "Invalid KMIP server certificate" });
+    }
+
+    const clientCertCandidates = normalizeSerialNumberCandidates(clientCertificateSerialNumber);
+    const [clientCert] = clientCertCandidates.length
+      ? await kmipClientCertificateDAL.find({ $in: { serialNumber: clientCertCandidates } }, { limit: 1 })
+      : [];
+    if (!clientCert || clientCert.kmipClientId !== kmipClientId) {
+      throw new ForbiddenRequestError({
+        message: "Client certificate does not match the specified KMIP client"
+      });
+    }
+    if (new Date(clientCert.expiration).getTime() < Date.now()) {
+      throw new ForbiddenRequestError({ message: "Client certificate has expired" });
+    }
+  };
+
   return {
     createKmipClient,
     updateKmipClient,
@@ -825,10 +915,9 @@ export const kmipServiceFactory = ({
     getKmipClient,
     listKmipClientsByProjectId,
     createKmipClientCertificate,
-    setupOrgKmip,
     generateOrgKmipServerCertificate,
-    getOrgKmip,
     getServerCertificateBySerialNumber,
-    registerServer
+    registerServer,
+    validateKmipSessionCertificates
   };
 };

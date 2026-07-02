@@ -3,6 +3,7 @@ import { Job } from "bullmq";
 import { AuditLogInfo } from "@app/ee/services/audit-log/audit-log-types";
 import { QueueJobs } from "@app/queue";
 import { CertificateSyncStatus } from "@app/services/certificate-sync/certificate-sync-enums";
+import { TSyncMetadata } from "@app/services/certificate-sync/certificate-sync-schemas";
 import { ResourceMetadataDTO } from "@app/services/resource-metadata/resource-metadata-schema";
 
 import { TPkiSyncDALFactory } from "./pki-sync-dal";
@@ -17,6 +18,8 @@ export type TPkiSync = {
   destinationConfig: Record<string, unknown>;
   syncOptions: Record<string, unknown>;
   projectId: string;
+  applicationId?: string | null;
+  applicationName?: string | null;
   subscriberId?: string;
   connectionId: string;
   createdAt: Date;
@@ -46,6 +49,7 @@ export type TPkiSync = {
     description?: string;
     version: number;
     gatewayId?: string;
+    gatewayPoolId?: string | null;
     createdAt: Date;
     updatedAt: Date;
     isPlatformManagedCredentials?: boolean;
@@ -63,6 +67,8 @@ export type TPkiSyncWithCredentials = TPkiSync & {
     app: string;
     credentials: Record<string, unknown>;
     orgId: string;
+    gatewayId?: string;
+    gatewayPoolId?: string | null;
   };
 };
 
@@ -80,6 +86,8 @@ export type TCertificateMap = Record<
     caCertificate?: string;
     alternativeNames?: string[];
     certificateId?: string;
+    profileId?: string | null;
+    commonName?: string | null;
   }
 >;
 
@@ -93,14 +101,16 @@ export type TCreatePkiSyncDTO = {
   subscriberId?: string | null;
   connectionId: string;
   projectId: string;
+  applicationId?: string;
   certificateIds?: string[];
   auditLogInfo: AuditLogInfo;
-  resourceMetadata?: ResourceMetadataDTO;
+  resourceInternalMetadata?: ResourceMetadataDTO;
 };
 
 export type TUpdatePkiSyncDTO = {
   id: string;
   projectId?: string;
+  applicationId?: string;
   name?: string;
   description?: string;
   isAutoSyncEnabled?: boolean;
@@ -110,23 +120,26 @@ export type TUpdatePkiSyncDTO = {
   connectionId?: string;
   certificateIds?: string[];
   auditLogInfo: AuditLogInfo;
-  resourceMetadata?: ResourceMetadataDTO;
+  resourceInternalMetadata?: ResourceMetadataDTO;
 };
 
 export type TDeletePkiSyncDTO = {
   id: string;
   projectId?: string;
+  applicationId?: string;
   auditLogInfo: AuditLogInfo;
 };
 
 export type TListPkiSyncsByProjectId = {
   projectId: string;
   certificateId?: string;
+  applicationId?: string | null;
 };
 
 export type TFindPkiSyncByIdDTO = {
   id: string;
   projectId?: string;
+  applicationId?: string;
 };
 
 export type TTriggerPkiSyncSyncCertificatesByIdDTO = {
@@ -168,6 +181,17 @@ export type TListPkiSyncCertificatesDTO = {
   limit?: number;
 };
 
+export type TSetCertificateAsDefaultDTO = {
+  pkiSyncId: string;
+  certificateId: string;
+  auditLogInfo?: AuditLogInfo;
+};
+
+export type TClearDefaultCertificateDTO = {
+  pkiSyncId: string;
+  auditLogInfo?: AuditLogInfo;
+};
+
 export type TPkiSyncCertificate = {
   id: string;
   pkiSyncId: string;
@@ -187,6 +211,7 @@ export type TPkiSyncCertificate = {
   certificateRenewalError?: string;
   pkiSyncName?: string;
   pkiSyncDestination?: string;
+  syncMetadata?: TSyncMetadata;
 };
 
 export type TPkiSyncRaw = NonNullable<Awaited<ReturnType<TPkiSyncDALFactory["findById"]>>>;

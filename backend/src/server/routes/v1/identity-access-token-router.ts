@@ -12,6 +12,7 @@ export const registerIdentityAccessTokenRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      operationId: "renewIdentityAccessToken",
       tags: [ApiDocsTags.UniversalAuth],
       description: "Renew machine identity access token",
       body: z.object({
@@ -27,14 +28,14 @@ export const registerIdentityAccessTokenRouter = async (server: FastifyZodProvid
       }
     },
     handler: async (req) => {
-      const { accessToken, identityAccessToken } = await server.services.identityAccessToken.renewAccessToken({
+      const { accessToken, expiresIn, accessTokenMaxTTL } = await server.services.identityAccessToken.renewAccessToken({
         accessToken: req.body.accessToken
       });
       return {
         accessToken,
         tokenType: "Bearer" as const,
-        expiresIn: identityAccessToken.accessTokenTTL,
-        accessTokenMaxTTL: identityAccessToken.accessTokenMaxTTL
+        expiresIn,
+        accessTokenMaxTTL
       };
     }
   });
@@ -47,6 +48,7 @@ export const registerIdentityAccessTokenRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      operationId: "revokeIdentityAccessToken",
       tags: [ApiDocsTags.UniversalAuth],
       description: "Revoke machine identity access token",
       body: z.object({

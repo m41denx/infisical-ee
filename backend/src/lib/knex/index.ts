@@ -5,6 +5,7 @@ import { Tables } from "knex/types/tables";
 import { TableName } from "@app/db/schemas";
 
 import { DatabaseError } from "../errors";
+import { sanitizeSqlLikeString } from "../fn";
 import { buildDynamicKnexQuery, TKnexDynamicOperator } from "./dynamic";
 
 export * from "./connection";
@@ -23,6 +24,7 @@ export const withTransaction = <K extends object>(db: Knex, dal: K) => ({
 
 export type TFindFilter<R extends object = object> = Partial<R> & {
   $in?: Partial<{ [k in keyof R]: R[k][] }>;
+  $notEqual?: Partial<{ [k in keyof R]: R[k] }>;
   $notNull?: Array<keyof R>;
   $search?: Partial<{ [k in keyof R]: R[k] }>;
   $complex?: TKnexDynamicOperator<R>;
@@ -30,7 +32,7 @@ export type TFindFilter<R extends object = object> = Partial<R> & {
 
 export const buildFindFilter =
   <R extends object = object>(
-    { $in, $notNull, $search, $complex, ...filter }: TFindFilter<R>,
+    { $in, $notNull, $search, $complex, $notEqual, ...filter }: TFindFilter<R>,
     tableName?: TableName,
     excludeKeys?: string[]
   ) =>
@@ -52,6 +54,14 @@ export const buildFindFilter =
       });
     }
 
+    if ($notEqual) {
+      Object.entries($notEqual).forEach(([key, val]) => {
+        if (val) {
+          void bd.whereNot(`${tableName ? `${tableName}.` : ""}${key}`, val as never);
+        }
+      });
+    }
+
     if ($notNull?.length) {
       $notNull.forEach((key) => {
         void bd.whereNotNull(`${tableName ? `${tableName}.` : ""}${key as string}`);
@@ -61,7 +71,7 @@ export const buildFindFilter =
     if ($search) {
       Object.entries($search).forEach(([key, val]) => {
         if (val) {
-          void bd.whereILike(`${tableName ? `${tableName}.` : ""}${key}`, val as never);
+          void bd.whereILike(`${tableName ? `${tableName}.` : ""}${key}`, `%${sanitizeSqlLikeString(val as string)}%`);
         }
       });
     }
@@ -99,7 +109,7 @@ export type TOrmify<Tname extends keyof Tables> = {
   findById: (id: string, tx?: Knex) => Promise<Tables[Tname]["base"]>;
   find: <TCount extends boolean = false, TCountDistinct extends keyof Tables[Tname]["base"] | undefined = undefined>(
     filter: TFindFilter<Tables[Tname]["base"]>,
-    { offset, limit, sort, count, tx, countDistinct }?: TFindOpt<Tables[Tname]["base"], TCount, TCountDistinct>
+    opts?: TFindOpt<Tables[Tname]["base"], TCount, TCountDistinct>
   ) => Promise<TFindReturn<Tname, TCountDistinct extends undefined ? TCount : true>>;
   findOne: (filter: Partial<Tables[Tname]["base"]>, tx?: Knex) => Promise<Tables[Tname]["base"]>;
   create: (data: Tables[Tname]["insert"], tx?: Knex) => Promise<Tables[Tname]["base"]>;

@@ -34,6 +34,7 @@ export type TGenerateKMSDTO = {
   encryptionAlgorithm?: SymmetricKeyAlgorithm | AsymmetricKeyAlgorithm;
   keyUsage?: KmsKeyUsage;
   isReserved?: boolean;
+  isExportable?: boolean;
   name?: string;
   description?: string;
   tx?: Knex;
@@ -91,11 +92,16 @@ export type TGetKeyMaterialDTO = {
   kmsId: string;
 };
 
+export type TGetBulkKeyMaterialDTO = {
+  kmsIds: string[];
+};
+
 export type TImportKeyMaterialDTO = {
   key: Buffer;
-  algorithm: SymmetricKeyAlgorithm;
+  algorithm: SymmetricKeyAlgorithm | AsymmetricKeyAlgorithm;
   name?: string;
   isReserved: boolean;
+  isExportable?: boolean;
   projectId: string;
   orgId: string;
   keyUsage: KmsKeyUsage;

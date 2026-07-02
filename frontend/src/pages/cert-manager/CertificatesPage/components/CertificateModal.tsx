@@ -189,12 +189,11 @@ export const CertificateModal = ({ popUp, handlePopUpToggle, preselectedTemplate
     keyUsages,
     extendedKeyUsages
   }: FormData) => {
-    if (!currentProject?.slug) return;
+    if (!currentProject?.id) return;
 
     const { serialNumber, certificate, certificateChain, privateKey } = await createCertificate({
       caId: !selectedCertTemplate ? caId : undefined,
       certificateTemplateId: selectedCertTemplate ? selectedCertTemplateId : undefined,
-      projectSlug: currentProject.slug,
       pkiCollectionId: collectionId,
       commonName,
       subjectAltNames,
@@ -241,7 +240,7 @@ export const CertificateModal = ({ popUp, handlePopUpToggle, preselectedTemplate
         setCertificateDetails(null);
       }}
     >
-      <ModalContent title={`${cert ? "View" : "Issue"} Certificate`}>
+      <ModalContent title={`${cert ? "View" : "Request"} Certificate`}>
         {!certificateDetails ? (
           <form onSubmit={handleSubmit(onFormSubmit)}>
             <Controller

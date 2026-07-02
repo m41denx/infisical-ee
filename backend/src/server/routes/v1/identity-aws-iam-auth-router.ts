@@ -1,17 +1,22 @@
 import { z } from "zod";
 
-import { IdentityAwsAuthsSchema } from "@app/db/schemas";
+import { IdentityAuthMethod, IdentityAwsAuthsSchema } from "@app/db/schemas";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags, AWS_AUTH } from "@app/lib/api-docs";
+import { UnauthorizedError } from "@app/lib/errors";
+import { logger } from "@app/lib/logger";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { slugSchema } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
-import { AuthMode } from "@app/services/auth/auth-type";
+import { ActorType, AuthMode } from "@app/services/auth/auth-type";
 import { TIdentityTrustedIp } from "@app/services/identity/identity-types";
 import {
   validateAccountIds,
   validatePrincipalArns
 } from "@app/services/identity-aws-auth/identity-aws-auth-validators";
 import { isSuperAdmin } from "@app/services/super-admin/super-admin-fns";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) => {
   server.route({
@@ -22,13 +27,15 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
     },
     schema: {
       hide: false,
+      operationId: "loginWithAwsAuth",
       tags: [ApiDocsTags.AwsAuth],
       description: "Login with AWS Auth for machine identity",
       body: z.object({
         identityId: z.string().trim().describe(AWS_AUTH.LOGIN.identityId),
         iamHttpRequestMethod: z.string().default("POST").describe(AWS_AUTH.LOGIN.iamHttpRequestMethod),
         iamRequestBody: z.string().describe(AWS_AUTH.LOGIN.iamRequestBody),
-        iamRequestHeaders: z.string().describe(AWS_AUTH.LOGIN.iamRequestHeaders)
+        iamRequestHeaders: z.string().describe(AWS_AUTH.LOGIN.iamRequestHeaders),
+        organizationSlug: slugSchema().optional().describe(AWS_AUTH.LOGIN.organizationSlug)
       }),
       response: {
         200: z.object({
@@ -40,28 +47,80 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
       }
     },
     handler: async (req) => {
-      const { identityAwsAuth, accessToken, identityAccessToken, identity } =
-        await server.services.identityAwsAuth.login(req.body);
+      try {
+        const { identityAwsAuth, accessToken, identityAccessToken, identity } =
+          await server.services.identityAwsAuth.login(req.body);
 
-      await server.services.auditLog.createAuditLog({
-        ...req.auditLogInfo,
-        orgId: identity.orgId,
-        event: {
-          type: EventType.LOGIN_IDENTITY_AWS_AUTH,
-          metadata: {
-            identityId: identityAwsAuth.identityId,
-            identityAccessTokenId: identityAccessToken.id,
-            identityAwsAuthId: identityAwsAuth.id
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          actor: {
+            type: ActorType.IDENTITY,
+            metadata: {
+              identityId: identityAwsAuth.identityId,
+              name: identity.name
+            }
+          },
+          orgId: identity.orgId,
+          event: {
+            type: EventType.LOGIN_IDENTITY_AWS_AUTH,
+            metadata: {
+              identityId: identityAwsAuth.identityId,
+              identityAccessTokenId: identityAccessToken.id,
+              identityAwsAuthId: identityAwsAuth.id
+            }
           }
-        }
-      });
+        });
 
-      return {
-        accessToken,
-        tokenType: "Bearer" as const,
-        expiresIn: identityAwsAuth.accessTokenTTL,
-        accessTokenMaxTTL: identityAwsAuth.accessTokenMaxTTL
-      };
+        void server.services.telemetry
+          .sendPostHogEvents({
+            event: PostHogEventTypes.MachineIdentityLogin,
+            distinctId: `identity-${identityAwsAuth.identityId}`,
+            organizationId: identity.orgId,
+            properties: {
+              identityId: identityAwsAuth.identityId,
+              orgId: identity.orgId,
+              authMethod: IdentityAuthMethod.AWS_AUTH
+            }
+          })
+          .catch((error) => {
+            logger.error(error, `Failed to send telemetry event [identityId=${identityAwsAuth.identityId}]`);
+          });
+
+        return {
+          accessToken,
+          tokenType: "Bearer" as const,
+          expiresIn: identityAwsAuth.accessTokenTTL,
+          accessTokenMaxTTL: identityAwsAuth.accessTokenMaxTTL
+        };
+      } catch (error) {
+        if (
+          error instanceof UnauthorizedError &&
+          error.detail?.orgId &&
+          error.detail?.identityId &&
+          error.detail?.identityName
+        ) {
+          await server.services.auditLog.createAuditLog({
+            ...req.auditLogInfo,
+            actor: {
+              type: ActorType.IDENTITY,
+              metadata: {
+                identityId: error.detail.identityId as string,
+                name: error.detail.identityName as string
+              }
+            },
+            orgId: error.detail.orgId as string,
+            event: {
+              type: EventType.LOGIN_IDENTITY_AWS_AUTH_FAILED,
+              metadata: {
+                identityId: error.detail.identityId as string,
+                reasonCode: error.detail.reasonCode as string,
+                message: error.message
+              }
+            }
+          });
+        }
+        throw error;
+      }
     }
   });
 
@@ -74,6 +133,7 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "attachAwsAuth",
       tags: [ApiDocsTags.AwsAuth],
       description: "Attach AWS Auth configuration onto machine identity",
       security: [
@@ -157,6 +217,21 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodAttached,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAwsAuth.orgId,
+          properties: {
+            identityId: identityAwsAuth.identityId,
+            orgId: identityAwsAuth.orgId,
+            authMethod: IdentityAuthMethod.AWS_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAwsAuth.identityId}]`);
+        });
+
       return { identityAwsAuth };
     }
   });
@@ -170,6 +245,7 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "updateAwsAuth",
       tags: [ApiDocsTags.AwsAuth],
       description: "Update AWS Auth configuration on machine identity",
       security: [
@@ -241,6 +317,21 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodUpdated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAwsAuth.orgId,
+          properties: {
+            identityId: identityAwsAuth.identityId,
+            orgId: identityAwsAuth.orgId,
+            authMethod: IdentityAuthMethod.AWS_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAwsAuth.identityId}]`);
+        });
+
       return { identityAwsAuth };
     }
   });
@@ -254,6 +345,7 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getAwsAuth",
       tags: [ApiDocsTags.AwsAuth],
       description: "Retrieve AWS Auth configuration on machine identity",
       security: [
@@ -302,6 +394,7 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "deleteAwsAuth",
       tags: [ApiDocsTags.AwsAuth],
       description: "Delete AWS Auth configuration on machine identity",
       security: [
@@ -337,6 +430,21 @@ export const registerIdentityAwsAuthRouter = async (server: FastifyZodProvider) 
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodRevoked,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAwsAuth.orgId,
+          properties: {
+            identityId: identityAwsAuth.identityId,
+            orgId: identityAwsAuth.orgId,
+            authMethod: IdentityAuthMethod.AWS_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAwsAuth.identityId}]`);
+        });
 
       return { identityAwsAuth };
     }

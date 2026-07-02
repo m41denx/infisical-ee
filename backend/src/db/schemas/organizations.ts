@@ -41,7 +41,9 @@ export const OrganizationsSchema = z.object({
   googleSsoAuthLastUsed: z.date().nullable().optional(),
   parentOrgId: z.string().uuid().nullable().optional(),
   rootOrgId: z.string().uuid().nullable().optional(),
-  blockDuplicateSecretSyncDestinations: z.boolean().default(false)
+  blockDuplicateSecretSyncDestinations: z.boolean().default(false),
+  secretShareBrandConfig: z.unknown().nullable().optional(),
+  defaultCertManagerProjectId: z.string().nullable().optional()
 });
 
 export type TOrganizations = z.infer<typeof OrganizationsSchema>;

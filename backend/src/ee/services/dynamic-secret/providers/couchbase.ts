@@ -1,15 +1,17 @@
 import crypto from "node:crypto";
 
-import axios from "axios";
 import RE2 from "re2";
 
+import { TDynamicSecrets } from "@app/db/schemas";
+import { request } from "@app/lib/config/request";
 import { BadRequestError } from "@app/lib/errors";
 import { sanitizeString } from "@app/lib/fn";
 import { alphaNumericNanoId } from "@app/lib/nanoid";
 import { blockLocalAndPrivateIpAddresses } from "@app/lib/validator/validate-url";
 
+import { ActorIdentityAttributes } from "../../dynamic-secret-lease/dynamic-secret-lease-types";
 import { DynamicSecretCouchbaseSchema, PasswordRequirements, TDynamicProviderFns } from "./models";
-import { compileUsernameTemplate } from "./templateUtils";
+import { generateUsername } from "./templateUtils";
 
 type TCreateCouchbaseUser = {
   name: string;
@@ -102,19 +104,6 @@ const normalizeBucketConfiguration = (
   }));
 };
 
-const generateUsername = (usernameTemplate?: string | null, identity?: { name: string }) => {
-  const randomUsername = alphaNumericNanoId(12);
-  if (!usernameTemplate) return sanitizeCouchbaseUsername(randomUsername);
-
-  const compiledUsername = compileUsernameTemplate({
-    usernameTemplate,
-    randomUsername,
-    identity
-  });
-
-  return sanitizeCouchbaseUsername(compiledUsername);
-};
-
 const generatePassword = (requirements?: PasswordRequirements): string => {
   const {
     length = 12,
@@ -170,7 +159,7 @@ const couchbaseApiRequest = async (
   await blockLocalAndPrivateIpAddresses(url);
 
   try {
-    const response = await axios({
+    const response = await request({
       method: method.toLowerCase() as "get" | "post" | "put" | "delete",
       url,
       headers: {
@@ -178,7 +167,8 @@ const couchbaseApiRequest = async (
         "Content-Type": "application/json"
       },
       data: data || undefined,
-      timeout: 30000
+      timeout: 30000,
+      maxRedirects: 0
     });
 
     return response.data as CouchbaseUserResponse;
@@ -221,15 +211,27 @@ export const CouchbaseProvider = (): TDynamicProviderFns => {
   const create = async ({
     inputs,
     usernameTemplate,
-    identity
+    identity,
+    dynamicSecret
   }: {
     inputs: unknown;
     usernameTemplate?: string | null;
-    identity?: { name: string };
+    identity: ActorIdentityAttributes;
+    dynamicSecret: TDynamicSecrets;
   }) => {
     const providerInputs = await validateProviderInputs(inputs as object);
 
-    const username = generateUsername(usernameTemplate, identity);
+    const username = await generateUsername(
+      usernameTemplate,
+      {
+        decryptedDynamicSecretInputs: inputs,
+        dynamicSecret,
+        identity,
+
+        usernameLength: 12
+      },
+      sanitizeCouchbaseUsername
+    );
 
     const password = generatePassword(providerInputs.passwordRequirements);
 

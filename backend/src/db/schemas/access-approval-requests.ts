@@ -11,7 +11,6 @@ export const AccessApprovalRequestsSchema = z.object({
   id: z.string().uuid(),
   policyId: z.string().uuid(),
   privilegeId: z.string().uuid().nullable().optional(),
-  requestedBy: z.string().uuid().nullable().optional(),
   isTemporary: z.boolean(),
   temporaryRange: z.string().nullable().optional(),
   permissions: z.unknown(),
@@ -22,7 +21,13 @@ export const AccessApprovalRequestsSchema = z.object({
   privilegeDeletedAt: z.date().nullable().optional(),
   status: z.string().default("pending"),
   editedByUserId: z.string().uuid().nullable().optional(),
-  editNote: z.string().nullable().optional()
+  editNote: z.string().nullable().optional(),
+  expiresAt: z.date().nullable().optional(),
+  approvedAt: z.date().nullable().optional(),
+  revokedAt: z.date().nullable().optional(),
+  approvedByUserId: z.string().uuid().nullable().optional(),
+  revokedByUserId: z.string().uuid().nullable().optional(),
+  bypassReason: z.string().nullable().optional()
 });
 
 export type TAccessApprovalRequests = z.infer<typeof AccessApprovalRequestsSchema>;

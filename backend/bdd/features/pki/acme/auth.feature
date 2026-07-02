@@ -2,7 +2,7 @@ Feature: Authorization
 
   Scenario: Get authorization
     Given I have an ACME cert profile as "acme_profile"
-    When I have an ACME client connecting to "{BASE_URL}/api/v1/cert-manager/acme/profiles/{acme_profile.id}/directory"
+    When I have an ACME client connecting to "{BASE_URL}/api/v1/cert-manager/acme/applications/{acme_profile.app_id}/profiles/{acme_profile.id}/directory"
     Then I register a new ACME account with email fangpen@infisical.com and EAB key id "{acme_profile.eab_kid}" with secret "{acme_profile.eab_secret}" as acme_account
     When I create certificate signing request as csr
     Then I add names to certificate signing request csr
@@ -20,12 +20,16 @@ Feature: Authorization
       """
         [
           {
+            "type": "dns-01",
+            "status": "pending"
+          },
+          {
             "type": "http-01",
             "status": "pending"
           }
         ]
       """
-    And the value order.authorizations[0].body with jq ".challenges | map(.status) | sort" should be equal to ["pending"]
+    And the value order.authorizations[0].body with jq ".challenges | map(.status) | sort" should be equal to ["pending", "pending"]
     And the value order.authorizations[0].body with jq ".identifier" should be equal to json
       """
       {

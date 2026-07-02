@@ -19,6 +19,12 @@ export const isOfflineLicenseKey = (licenseKey: string): boolean => {
   }
 };
 
+// Self-hosted License Server v2 keys carry this prefix; legacy online keys look like "QVHK-HIGYH".
+export const SELF_HOSTED_V2_LICENSE_KEY_PREFIX = "infisical_lk_";
+
+export const isV2SelfHostedLicenseKey = (licenseKey: string): boolean =>
+  licenseKey.startsWith(SELF_HOSTED_V2_LICENSE_KEY_PREFIX);
+
 export const getLicenseKeyConfig = (
   config?: Pick<TEnvConfig, "LICENSE_KEY" | "LICENSE_KEY_OFFLINE">
 ): TLicenseKeyConfig => {
@@ -31,6 +37,10 @@ export const getLicenseKeyConfig = (
   const licenseKey = cfg.LICENSE_KEY;
 
   if (licenseKey) {
+    if (isV2SelfHostedLicenseKey(licenseKey)) {
+      return { isValid: true, licenseKey, type: LicenseType.OnlineV2 };
+    }
+
     if (isOfflineLicenseKey(licenseKey)) {
       return { isValid: true, licenseKey, type: LicenseType.Offline };
     }
@@ -99,11 +109,15 @@ export const getDefaultOnPremFeatures = (): TFeatureSet => ({
     secretsLimit: 40
   },
   pkiEst: false,
-  pkiAcme: false,
+  pkiAcme: true,
+  pkiScep: false,
+  pkiPqc: false,
+  kmsPqc: false,
   enforceMfa: false,
   projectTemplates: false,
   kmip: false,
   gateway: false,
+  gatewayPool: false,
   sshHostGroups: false,
   secretScanning: false,
   enterpriseSecretSyncs: false,
@@ -113,7 +127,9 @@ export const getDefaultOnPremFeatures = (): TFeatureSet => ({
   eventSubscriptions: false,
   machineIdentityAuthTemplates: false,
   pkiLegacyTemplates: false,
-  pam: false
+  secretShareExternalBranding: false,
+  honeyTokens: false,
+  honeyTokenLimit: 0
 });
 
 export const setupLicenseRequestWithStore = (
@@ -191,8 +207,9 @@ export const throwOnPlanSeatLimitReached = async (
   type?: UserAliasType
 ) => {
   const plan = await licenseService.getPlan(orgId);
+  const isEnterpriseBypass = plan?.slug === "enterprise" && !plan?.enforceIdentityLimit;
 
-  if (plan?.slug !== "enterprise" && plan?.identityLimit && plan.identitiesUsed >= plan.identityLimit) {
+  if (!isEnterpriseBypass && plan?.identityLimit && plan.identitiesUsed >= plan.identityLimit) {
     // limit imposed on number of identities allowed / number of identities used exceeds the number of identities allowed
     throw new BadRequestError({
       message: `Failed to create new member${type ? ` via ${type.toUpperCase()}` : ""} due to member limit reached. Upgrade plan to add more members.`

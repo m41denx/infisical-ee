@@ -20,7 +20,8 @@ export const AcmeCertificateAuthorityConfigurationSchema = z.object({
   directoryUrl: z.string().url().trim().min(1).describe(CertificateAuthorities.CONFIGURATIONS.ACME.directoryUrl),
   accountEmail: z.string().trim().min(1).describe(CertificateAuthorities.CONFIGURATIONS.ACME.accountEmail),
   eabKid: z.string().trim().max(64).optional().describe(CertificateAuthorities.CONFIGURATIONS.ACME.eabKid),
-  eabHmacKey: z.string().trim().max(512).optional().describe(CertificateAuthorities.CONFIGURATIONS.ACME.eabHmacKey)
+  eabHmacKey: z.string().trim().max(512).optional().describe(CertificateAuthorities.CONFIGURATIONS.ACME.eabHmacKey),
+  dnsResolver: z.string().trim().ip().optional().describe(CertificateAuthorities.CONFIGURATIONS.ACME.dnsResolver)
 });
 
 export const AcmeCertificateAuthorityCredentialsSchema = z.object({
@@ -30,6 +31,15 @@ export const AcmeCertificateAuthorityCredentialsSchema = z.object({
 export const AcmeCertificateAuthoritySchema = BaseCertificateAuthoritySchema.extend({
   type: z.literal(CaType.ACME),
   configuration: AcmeCertificateAuthorityConfigurationSchema
+});
+
+const SanitizedAcmeCertificateAuthorityConfigurationSchema = AcmeCertificateAuthorityConfigurationSchema.omit({
+  eabHmacKey: true
+});
+
+export const SanitizedAcmeCertificateAuthoritySchema = BaseCertificateAuthoritySchema.extend({
+  type: z.literal(CaType.ACME),
+  configuration: SanitizedAcmeCertificateAuthorityConfigurationSchema
 });
 
 export const CreateAcmeCertificateAuthoritySchema = GenericCreateCertificateAuthorityFieldsSchema(CaType.ACME).extend({

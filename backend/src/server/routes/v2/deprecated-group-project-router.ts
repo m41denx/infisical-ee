@@ -6,16 +6,18 @@ import {
   GroupsSchema,
   ProjectMembershipRole,
   ProjectUserMembershipRolesSchema,
-  TemporaryPermissionMode,
-  UsersSchema
+  TemporaryPermissionMode
 } from "@app/db/schemas";
-import { EFilterReturnedUsers } from "@app/ee/services/group/group-types";
+import { EventType } from "@app/ee/services/audit-log/audit-log-types";
+import { FilterReturnedUsers } from "@app/ee/services/group/group-types";
 import { ApiDocsTags, GROUPS, PROJECTS } from "@app/lib/api-docs";
 import { ms } from "@app/lib/ms";
 import { isUuidV4 } from "@app/lib/validator";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
+
+import { SanitizedUserSchema } from "../sanitizedSchemas";
 
 export const registerDeprecatedGroupProjectRouter = async (server: FastifyZodProvider) => {
   server.route({
@@ -38,36 +40,31 @@ export const registerDeprecatedGroupProjectRouter = async (server: FastifyZodPro
         projectId: z.string().trim().describe(PROJECTS.ADD_GROUP_TO_PROJECT.projectId),
         groupIdOrName: z.string().trim().describe(PROJECTS.ADD_GROUP_TO_PROJECT.groupIdOrName)
       }),
-      body: z
-        .object({
-          role: z
-            .string()
-            .trim()
-            .min(1)
-            .default(ProjectMembershipRole.NoAccess)
-            .describe(PROJECTS.ADD_GROUP_TO_PROJECT.role),
-          roles: z
-            .array(
-              z.union([
-                z.object({
-                  role: z.string(),
-                  isTemporary: z.literal(false).default(false)
-                }),
-                z.object({
-                  role: z.string(),
-                  isTemporary: z.literal(true),
-                  temporaryMode: z.nativeEnum(TemporaryPermissionMode),
-                  temporaryRange: z.string().refine((val) => ms(val) > 0, "Temporary range must be a positive number"),
-                  temporaryAccessStartTime: z.string().datetime()
-                })
-              ])
-            )
-            .optional()
-        })
-        .refine((data) => data.role || data.roles, {
-          message: "Either role or roles must be present",
-          path: ["role", "roles"]
-        }),
+      body: z.object({
+        role: z
+          .string()
+          .trim()
+          .min(1)
+          .default(ProjectMembershipRole.NoAccess)
+          .describe(PROJECTS.ADD_GROUP_TO_PROJECT.role),
+        roles: z
+          .array(
+            z.union([
+              z.object({
+                role: z.string(),
+                isTemporary: z.literal(false).default(false)
+              }),
+              z.object({
+                role: z.string(),
+                isTemporary: z.literal(true),
+                temporaryMode: z.nativeEnum(TemporaryPermissionMode),
+                temporaryRange: z.string().refine((val) => ms(val) > 0, "Temporary range must be a positive number"),
+                temporaryAccessStartTime: z.string().datetime()
+              })
+            ])
+          )
+          .optional()
+      }),
       response: {
         200: z.object({
           groupMembership: GroupProjectMembershipsSchema
@@ -81,16 +78,42 @@ export const registerDeprecatedGroupProjectRouter = async (server: FastifyZodPro
         groupId = groupDetails.groupId;
       }
 
-      const { membership: groupMembership } = await server.services.membershipGroup.createMembership({
+      const roles =
+        req.body.roles ??
+        (req.body.role
+          ? [{ role: req.body.role, isTemporary: false }]
+          : [{ role: ProjectMembershipRole.NoAccess, isTemporary: false }]);
+      const { membership: groupMembership, group } = await server.services.membershipGroup.createMembership({
         permission: req.permission,
         data: {
           groupId,
-          roles: req.body.roles || [{ role: req.body.role, isTemporary: false }]
+          roles
         },
         scopeData: {
           scope: AccessScope.Project,
           orgId: req.permission.orgId,
           projectId: req.params.projectId
+        }
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: req.params.projectId,
+        event: {
+          type: EventType.ADD_GROUP_TO_PROJECT,
+          metadata: {
+            groupId,
+            groupName: group.name,
+            roles: roles.map((r) => ({
+              role: r.role,
+              isTemporary: r.isTemporary,
+              ...(r.isTemporary && {
+                temporaryMode: r.temporaryMode,
+                temporaryRange: r.temporaryRange,
+                temporaryAccessStartTime: r.temporaryAccessStartTime
+              })
+            }))
+          }
         }
       });
 
@@ -148,7 +171,7 @@ export const registerDeprecatedGroupProjectRouter = async (server: FastifyZodPro
       }
     },
     handler: async (req) => {
-      const { membership: groupMembership } = await server.services.membershipGroup.updateMembership({
+      const { membership: groupMembership, group } = await server.services.membershipGroup.updateMembership({
         permission: req.permission,
         selector: {
           groupId: req.params.groupId
@@ -160,6 +183,27 @@ export const registerDeprecatedGroupProjectRouter = async (server: FastifyZodPro
           scope: AccessScope.Project,
           orgId: req.permission.orgId,
           projectId: req.params.projectId
+        }
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: req.params.projectId,
+        event: {
+          type: EventType.UPDATE_GROUP_PROJECT_MEMBERSHIP,
+          metadata: {
+            groupId: req.params.groupId,
+            groupName: group.name,
+            roles: req.body.roles.map((r) => ({
+              role: r.role,
+              isTemporary: r.isTemporary,
+              ...(r.isTemporary && {
+                temporaryMode: r.temporaryMode,
+                temporaryRange: r.temporaryRange,
+                temporaryAccessStartTime: r.temporaryAccessStartTime
+              })
+            }))
+          }
         }
       });
 
@@ -194,7 +238,7 @@ export const registerDeprecatedGroupProjectRouter = async (server: FastifyZodPro
       }
     },
     handler: async (req) => {
-      const { membership: groupMembership } = await server.services.membershipGroup.deleteMembership({
+      const { membership: groupMembership, group } = await server.services.membershipGroup.deleteMembership({
         permission: req.permission,
         selector: {
           groupId: req.params.groupId
@@ -203,6 +247,18 @@ export const registerDeprecatedGroupProjectRouter = async (server: FastifyZodPro
           scope: AccessScope.Project,
           orgId: req.permission.orgId,
           projectId: req.params.projectId
+        }
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: req.params.projectId,
+        event: {
+          type: EventType.REMOVE_GROUP_FROM_PROJECT,
+          metadata: {
+            groupId: req.params.groupId,
+            groupName: group.name
+          }
         }
       });
 
@@ -367,11 +423,11 @@ export const registerDeprecatedGroupProjectRouter = async (server: FastifyZodPro
         limit: z.coerce.number().min(1).max(100).default(10).describe(GROUPS.LIST_USERS.limit),
         username: z.string().trim().optional().describe(GROUPS.LIST_USERS.username),
         search: z.string().trim().optional().describe(GROUPS.LIST_USERS.search),
-        filter: z.nativeEnum(EFilterReturnedUsers).optional().describe(GROUPS.LIST_USERS.filterUsers)
+        filter: z.nativeEnum(FilterReturnedUsers).optional().describe(GROUPS.LIST_USERS.filterUsers)
       }),
       response: {
         200: z.object({
-          users: UsersSchema.pick({
+          users: SanitizedUserSchema.pick({
             email: true,
             username: true,
             firstName: true,

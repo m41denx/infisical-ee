@@ -1,5 +1,5 @@
 /* eslint-disable no-await-in-loop */
-import { ForbiddenError } from "@casl/ability";
+import { ForbiddenError, subject } from "@casl/ability";
 import { Knex } from "knex";
 
 import {
@@ -106,6 +106,9 @@ type SecretChange = BaseChange & {
     metadata?: unknown;
     tags?: string[] | null;
     secretValue?: string;
+    isRedacted: boolean;
+    redactedAt: Date | null;
+    redactedByUserId: string | null;
   }[];
 };
 
@@ -209,13 +212,17 @@ export const folderCommitServiceFactory = ({
     actorId,
     projectId,
     actorAuthMethod,
-    actorOrgId
+    actorOrgId,
+    environment,
+    secretPath
   }: {
     actor: ActorType;
     actorId: string;
     projectId: string;
     actorAuthMethod: ActorAuthMethod;
     actorOrgId: string;
+    environment: string;
+    secretPath: string;
   }) => {
     if (!permissionService) {
       throw new Error("Permission service not initialized");
@@ -229,7 +236,10 @@ export const folderCommitServiceFactory = ({
       actionProjectType: ActionProjectType.SecretManager
     });
 
-    ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionCommitsActions.Read, ProjectPermissionSub.Commits);
+    ForbiddenError.from(permission).throwUnlessCan(
+      ProjectPermissionCommitsActions.Read,
+      subject(ProjectPermissionSub.Commits, { environment, secretPath })
+    );
   };
 
   /**
@@ -873,7 +883,7 @@ export const folderCommitServiceFactory = ({
    */
   const createCommit = async (data: TCreateCommitDTO, tx?: Knex) => {
     try {
-      const metadata = { ...data.actor.metadata } || {};
+      const { metadata = {} } = data.actor;
 
       if (data.actor.type === ActorType.USER && data.actor.metadata?.id) {
         const user = await userDAL.findById(data.actor.metadata?.id, tx);
@@ -1019,18 +1029,23 @@ export const folderCommitServiceFactory = ({
                 encryptedValue: secretVersion.encryptedValue,
                 encryptedComment: secretVersion.encryptedComment,
                 userId: secretVersion.userId,
-                folderId
+                folderId,
+                secretValueBlindIndex: secretVersion.secretValueBlindIndex
               }
             ];
             await secretV2BridgeDAL.insertMany(newSecret, tx);
 
-            const metadata: { key: string; value: string }[] =
-              (secretVersion.metadata as { key: string; value: string }[]) || [];
+            const metadata: { key: string; value?: string; encryptedValue?: string }[] = Array.isArray(
+              secretVersion.metadata
+            )
+              ? (secretVersion.metadata as { key: string; value?: string; encryptedValue?: string }[])
+              : [];
             if (metadata.length > 0) {
               await resourceMetadataDAL.insertMany(
-                metadata.map(({ key, value }) => ({
+                metadata.map(({ key, value, encryptedValue }) => ({
                   key,
                   value,
+                  encryptedValue: encryptedValue ? Buffer.from(encryptedValue, "base64") : null,
                   secretId: change.id,
                   orgId: project.orgId
                 })),
@@ -1052,7 +1067,8 @@ export const folderCommitServiceFactory = ({
                 userId: secretVersion.userId,
                 actorType: actorInfo.actorType,
                 envId: secretVersion.envId,
-                metadata: JSON.stringify(metadata),
+                metadata: metadata ? JSON.stringify(metadata) : null,
+                secretValueBlindIndex: secretVersion.secretValueBlindIndex,
                 ...(actorInfo.actorType === ActorType.IDENTITY && { identityActorId: actorInfo.actorId }),
                 ...(actorInfo.actorType === ActorType.USER && { userActorId: actorInfo.actorId })
               },
@@ -1093,18 +1109,23 @@ export const folderCommitServiceFactory = ({
                 reminderRepeatDays: secretVersion?.reminderRepeatDays,
                 encryptedValue: secretVersion?.encryptedValue,
                 encryptedComment: secretVersion?.encryptedComment,
-                userId: secretVersion?.userId
+                userId: secretVersion?.userId,
+                secretValueBlindIndex: secretVersion?.secretValueBlindIndex
               },
               tx
             );
 
-            const metadata: { key: string; value: string }[] =
-              (secretVersion.metadata as { key: string; value: string }[]) || [];
+            const metadata: { key: string; value?: string; encryptedValue?: string }[] = Array.isArray(
+              secretVersion.metadata
+            )
+              ? (secretVersion.metadata as { key: string; value?: string; encryptedValue?: string }[])
+              : [];
             await resourceMetadataDAL.delete({ secretId: change.id }, tx);
             if (metadata.length > 0) {
               await resourceMetadataDAL.insertMany(
-                metadata.map(({ key, value }) => ({
+                metadata.map(({ key, value, encryptedValue }) => ({
                   key,
+                  encryptedValue: encryptedValue ? Buffer.from(encryptedValue, "base64") : null,
                   value,
                   secretId: change.id,
                   orgId: project.orgId
@@ -1128,6 +1149,7 @@ export const folderCommitServiceFactory = ({
                 envId: secretVersion.envId,
                 folderId,
                 secretId: secretVersion.secretId,
+                secretValueBlindIndex: secretVersion.secretValueBlindIndex,
                 ...(actorInfo.actorType === ActorType.IDENTITY && { identityActorId: actorInfo.actorId }),
                 ...(actorInfo.actorType === ActorType.USER && { userActorId: actorInfo.actorId })
               },
@@ -1436,14 +1458,27 @@ export const folderCommitServiceFactory = ({
     projectId: string;
     tx?: Knex;
   }) => {
+    const commit = await folderCommitDAL.findById(commitId, tx, projectId);
+    if (!commit) {
+      throw new NotFoundError({ message: `Commit with ID ${commitId} not found` });
+    }
+
+    const [folderWithPath] = await folderDAL.findSecretPathByFolderIds(projectId, [commit.folderId], tx);
+    if (!folderWithPath) {
+      throw new NotFoundError({ message: `Folder for commit ${commitId} not found` });
+    }
+
     await checkProjectCommitReadPermission({
       actor,
       actorId,
       actorAuthMethod,
       actorOrgId,
-      projectId
+      projectId,
+      environment: folderWithPath.environmentSlug,
+      secretPath: folderWithPath.path
     });
-    return folderCommitDAL.findById(commitId, tx, projectId);
+
+    return commit;
   };
 
   /**
@@ -1483,7 +1518,9 @@ export const folderCommitServiceFactory = ({
       actorId,
       actorAuthMethod,
       actorOrgId,
-      projectId
+      projectId,
+      environment,
+      secretPath: path
     });
     const folder = await folderDAL.findBySecretPath(projectId, environment, path);
     if (!folder) {
@@ -1522,7 +1559,9 @@ export const folderCommitServiceFactory = ({
       actorId,
       actorAuthMethod,
       actorOrgId,
-      projectId
+      projectId,
+      environment,
+      secretPath: path
     });
 
     const folder = await folderDAL.findBySecretPath(projectId, environment, path);
@@ -1553,15 +1592,27 @@ export const folderCommitServiceFactory = ({
     projectId: string;
     commitId: string;
   }) => {
+    const commit = await folderCommitDAL.findById(commitId, undefined, projectId);
+    if (!commit) {
+      throw new NotFoundError({ message: `Commit with ID ${commitId} not found` });
+    }
+
+    const [folderWithPath] = await folderDAL.findSecretPathByFolderIds(projectId, [commit.folderId]);
+    if (!folderWithPath) {
+      throw new NotFoundError({ message: `Folder for commit ${commitId} not found` });
+    }
+
     await checkProjectCommitReadPermission({
       actor,
       actorId,
       actorAuthMethod,
       actorOrgId,
-      projectId
+      projectId,
+      environment: folderWithPath.environmentSlug,
+      secretPath: folderWithPath.path
     });
+
     const changes = await folderCommitChangesDAL.findByCommitId(commitId, projectId);
-    const commit = await folderCommitDAL.findById(commitId, undefined, projectId);
     const latestCommit = await folderCommitDAL.findLatestCommit(commit.folderId, projectId);
     return { ...commit, changes, isLatest: commit.id === latestCommit?.id };
   };
@@ -1906,7 +1957,8 @@ export const folderCommitServiceFactory = ({
     actorType: ActorType,
     projectId: string,
     message?: string
-  ) => {
+  ): Promise<{ affectedFolderIds: string[] }> => {
+    const affectedFolderIds: string[] = [];
     await folderCommitDAL.transaction(async (tx) => {
       const targetCommit = await folderCommitDAL.findById(targetCommitId, tx);
       if (!targetCommit) {
@@ -2011,9 +2063,12 @@ export const folderCommitServiceFactory = ({
             reconstructUpToCommit: targetCommit.commitId.toString(),
             tx
           });
+          affectedFolderIds.push(folder.id);
         }
       }
     });
+
+    return { affectedFolderIds };
   };
 
   const getLatestCommit = async ({
@@ -2031,13 +2086,21 @@ export const folderCommitServiceFactory = ({
     actorOrgId: string;
     projectId: string;
   }) => {
+    const [folderWithPath] = await folderDAL.findSecretPathByFolderIds(projectId, [folderId]);
+    if (!folderWithPath) {
+      throw new NotFoundError({ message: `Folder with ID ${folderId} not found` });
+    }
+
     await checkProjectCommitReadPermission({
       actor,
       actorId,
       actorAuthMethod,
       actorOrgId,
-      projectId
+      projectId,
+      environment: folderWithPath.environmentSlug,
+      secretPath: folderWithPath.path
     });
+
     return folderCommitDAL.findLatestCommit(folderId, projectId);
   };
 
@@ -2064,6 +2127,18 @@ export const folderCommitServiceFactory = ({
     if (!permissionService) {
       throw new Error("Permission service not initialized");
     }
+
+    // Get the commit to revert first to get folder info for permission check
+    const commitToRevert = await folderCommitDAL.findById(commitId, undefined, projectId);
+    if (!commitToRevert) {
+      throw new NotFoundError({ message: `Commit with ID ${commitId} not found` });
+    }
+
+    const [folderWithPath] = await folderDAL.findSecretPathByFolderIds(projectId, [commitToRevert.folderId]);
+    if (!folderWithPath) {
+      throw new NotFoundError({ message: `Folder for commit ${commitId} not found` });
+    }
+
     const { permission } = await permissionService.getProjectPermission({
       actor,
       actorId,
@@ -2075,22 +2150,22 @@ export const folderCommitServiceFactory = ({
 
     ForbiddenError.from(permission).throwUnlessCan(
       ProjectPermissionCommitsActions.PerformRollback,
-      ProjectPermissionSub.Commits
+      subject(ProjectPermissionSub.Commits, {
+        environment: folderWithPath.environmentSlug,
+        secretPath: folderWithPath.path
+      })
     );
-    // Check permissions first
+
+    // Check read permissions
     await checkProjectCommitReadPermission({
       actor,
       actorId,
       projectId,
       actorAuthMethod,
-      actorOrgId
+      actorOrgId,
+      environment: folderWithPath.environmentSlug,
+      secretPath: folderWithPath.path
     });
-
-    // Get the commit to revert
-    const commitToRevert = await folderCommitDAL.findById(commitId, undefined, projectId);
-    if (!commitToRevert) {
-      throw new NotFoundError({ message: `Commit with ID ${commitId} not found` });
-    }
 
     const previousCommit = await folderCommitDAL.findCommitBefore(commitToRevert.folderId, commitToRevert.commitId);
 
@@ -2145,7 +2220,8 @@ export const folderCommitServiceFactory = ({
       message: "Changes reverted successfully",
       originalCommitId: commitId,
       revertCommitId: latestCommit?.id,
-      changesReverted: revertResult.totalChanges
+      changesReverted: revertResult.totalChanges,
+      folderId: commitToRevert.folderId
     };
   };
 

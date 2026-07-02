@@ -1,89 +1,98 @@
-import { useMemo } from "react";
-import {
-  faArrowRight,
-  faCheck,
-  faCopy,
-  faEye,
-  faEyeSlash
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { ClipboardCheckIcon, Copy, Eye, EyeOff, ForwardIcon } from "lucide-react";
 
-import { decryptSymmetric } from "@app/components/utilities/cryptography/crypto";
-import { Button, IconButton } from "@app/components/v2";
+import { Button, IconButton } from "@app/components/v3";
 import { useTimedReset, useToggle } from "@app/hooks";
-import { TViewSharedSecretResponse } from "@app/hooks/api/secretSharing";
+import { TAccessSharedSecretResponse } from "@app/hooks/api/secretSharing";
 
+import { BrandingTheme } from "../ViewSharedSecretByIDPage";
 import { SecretShareInfo } from "./SecretShareInfo";
 
 type Props = {
-  secret: TViewSharedSecretResponse["secret"];
-  secretKey: string | null;
+  secret: TAccessSharedSecretResponse;
+  brandingTheme?: BrandingTheme;
 };
 
-export const SecretContainer = ({ secret, secretKey: key }: Props) => {
+export const SecretContainer = ({ secret, brandingTheme }: Props) => {
   const [isVisible, setIsVisible] = useToggle(false);
   const [, isCopyingSecret, setCopyTextSecret] = useTimedReset<string>({
     initialState: "Copy to clipboard"
   });
 
-  const decryptedSecret = useMemo(() => {
-    if (secret.secretValue) {
-      return secret.secretValue;
-    }
+  const hiddenSecret = "*".repeat(secret.secretValue.length);
 
-    if (secret && secret.encryptedValue && key) {
-      const res = decryptSymmetric({
-        ciphertext: secret.encryptedValue,
-        iv: secret.iv,
-        tag: secret.tag,
-        key
-      });
-      return res;
-    }
-    return "";
-  }, [secret, key]);
+  const panelStyle = brandingTheme
+    ? {
+        backgroundColor: brandingTheme.panelBg,
+        borderColor: brandingTheme.panelBorder
+      }
+    : undefined;
 
-  const hiddenSecret = decryptedSecret ? "*".repeat(decryptedSecret.length) : "";
+  const secretDisplayStyle = brandingTheme
+    ? {
+        backgroundColor: brandingTheme.inputBg,
+        borderColor: brandingTheme.panelBorder,
+        color: brandingTheme.textColor
+      }
+    : undefined;
+
+  const iconButtonStyle = brandingTheme
+    ? {
+        backgroundColor: brandingTheme.buttonBg,
+        color: brandingTheme.textColor
+      }
+    : undefined;
 
   return (
-    <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-800 p-4">
-      <div className="flex items-center justify-between rounded-md bg-white/5 p-2 text-base text-gray-400">
-        <p className="break-all whitespace-pre-wrap">
-          {isVisible ? decryptedSecret : hiddenSecret}
+    <div style={panelStyle}>
+      <div
+        className={`flex items-start justify-between rounded-md border p-2 pl-3 text-base ${
+          brandingTheme ? "" : "border-border bg-container text-label"
+        }`}
+        style={secretDisplayStyle}
+      >
+        <p className="min-w-0 break-all whitespace-pre-wrap">
+          {isVisible ? secret.secretValue : hiddenSecret}
         </p>
-        <div className="flex">
+        <div className="ml-1 flex shrink-0 items-start gap-2 self-start">
           <IconButton
-            ariaLabel="copy icon"
-            colorSchema="secondary"
-            className="group relative"
+            aria-label="copy icon"
+            variant="ghost"
+            size="sm"
             onClick={() => {
-              navigator.clipboard.writeText(decryptedSecret);
+              navigator.clipboard.writeText(secret.secretValue);
               setCopyTextSecret("Copied");
             }}
+            style={iconButtonStyle}
           >
-            <FontAwesomeIcon icon={isCopyingSecret ? faCheck : faCopy} />
+            {isCopyingSecret ? (
+              <ClipboardCheckIcon className="size-4" />
+            ) : (
+              <Copy className="size-4" />
+            )}
           </IconButton>
           <IconButton
-            ariaLabel="copy icon"
-            colorSchema="secondary"
-            className="group relative ml-2"
+            aria-label="toggle visibility"
+            variant="ghost"
+            size="sm"
             onClick={() => setIsVisible.toggle()}
+            style={iconButtonStyle}
           >
-            <FontAwesomeIcon icon={isVisible ? faEyeSlash : faEye} />
+            {isVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
           </IconButton>
         </div>
       </div>
-      <SecretShareInfo secret={secret} />
-      <Button
-        className="mt-4 w-full bg-mineshaft-700 py-3 text-bunker-200"
-        colorSchema="primary"
-        variant="outline_bg"
-        size="sm"
-        onClick={() => window.open("/share-secret", "_blank", "noopener")}
-        rightIcon={<FontAwesomeIcon icon={faArrowRight} className="pl-2" />}
-      >
-        Share Your Own Secret
-      </Button>
+      <SecretShareInfo secret={secret} brandingTheme={brandingTheme} />
+      {!brandingTheme && (
+        <Button
+          className="mt-4 w-full"
+          variant="project"
+          size="lg"
+          onClick={() => window.open("/share-secret", "_blank", "noopener")}
+        >
+          Share Your Own Secret
+          <ForwardIcon />
+        </Button>
+      )}
     </div>
   );
 };

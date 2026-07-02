@@ -20,8 +20,10 @@ import {
   SecretScanningFindings
 } from "@app/lib/api-docs";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 const SecretScanningDataSourceOptionsSchema = z.discriminatedUnion("type", [
   GitHubDataSourceListItemSchema,
@@ -38,6 +40,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
     },
     schema: {
       hide: false,
+      operationId: "listSecretScanningDataSourceOptions",
       tags: [ApiDocsTags.SecretScanning],
       description: "List the available Secret Scanning Data Source Options.",
       response: {
@@ -61,6 +64,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
     },
     schema: {
       hide: false,
+      operationId: "listSecretScanningDataSources",
       tags: [ApiDocsTags.SecretScanning],
       description: "List all the Secret Scanning Data Sources for the specified project.",
       querystring: z.object({
@@ -106,6 +110,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
     },
     schema: {
       hide: false,
+      operationId: "listSecretScanningFindings",
       tags: [ApiDocsTags.SecretScanning],
       description: "List all the Secret Scanning Findings for the specified project.",
       querystring: z.object({
@@ -151,6 +156,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
     },
     schema: {
       hide: false,
+      operationId: "updateSecretScanningFinding",
       tags: [ApiDocsTags.SecretScanning],
       description: "Update the specified Secret Scanning Finding.",
       params: z.object({
@@ -189,6 +195,17 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
         }
       });
 
+      if (body.status === SecretScanningFindingStatus.Resolved) {
+        void server.services.telemetry
+          .sendPostHogEvents({
+            event: PostHogEventTypes.SecretScanningFindingResolved,
+            distinctId: getTelemetryDistinctId(req),
+            organizationId: permission.orgId,
+            properties: { findingId, projectId }
+          })
+          .catch(() => {});
+      }
+
       return { finding };
     }
   });
@@ -201,6 +218,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
     },
     schema: {
       hide: false,
+      operationId: "updateSecretScanningFindingsBatch",
       tags: [ApiDocsTags.SecretScanning],
       description: "Update one or more Secret Scanning Findings in a batch.",
       body: z
@@ -251,6 +269,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
     },
     schema: {
       hide: false,
+      operationId: "getSecretScanningConfig",
       tags: [ApiDocsTags.SecretScanning],
       description: "Get the Secret Scanning Config for the specified project.",
       querystring: z.object({
@@ -295,6 +314,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
     },
     schema: {
       hide: false,
+      operationId: "updateSecretScanningConfig",
       tags: [ApiDocsTags.SecretScanning],
       description: "Update the specified Secret Scanning Configuration.",
       querystring: z.object({
@@ -341,6 +361,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
       rateLimit: readLimit
     },
     schema: {
+      operationId: "listSecretScanningDataSourcesDashboard",
       querystring: z.object({
         projectId: z.string().trim().min(1, "Project ID required")
       }),
@@ -395,6 +416,7 @@ export const registerSecretScanningV2Router = async (server: FastifyZodProvider)
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getSecretScanningUnresolvedFindingsCount",
       tags: [ApiDocsTags.SecretScanning],
       querystring: z.object({
         projectId: z.string().trim().min(1, "Project ID required").describe(SecretScanningFindings.LIST.projectId)

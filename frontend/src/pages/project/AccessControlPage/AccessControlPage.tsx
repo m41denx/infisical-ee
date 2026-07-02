@@ -19,7 +19,7 @@ import {
 
 const Page = () => {
   const navigate = useNavigate();
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isSubOrganization } = useOrganization();
   const { currentProject } = useProject();
   const selectedTab = useSearch({
     strict: false,
@@ -38,14 +38,19 @@ const Page = () => {
   };
 
   const isSecretManager = currentProject.type === ProjectType.SecretManager;
+  const isCertManager = currentProject.type === ProjectType.CertificateManager;
 
   return (
     <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       <div className="mx-auto mb-6 w-full max-w-8xl">
         <PageHeader
           scope={currentProject.type}
-          title="Project Access Control"
-          description="Manage fine-grained access for users, groups, roles, and machine identities within your project resources."
+          title={isCertManager ? "Access Control" : "Project Access Control"}
+          description={
+            isCertManager
+              ? "Manage access for users, groups, and machine identities."
+              : "Manage fine-grained access for users, groups, roles, and machine identities within your project resources."
+          }
         >
           <Link
             to="/organizations/$orgId/access-management"
@@ -54,37 +59,46 @@ const Page = () => {
             }}
             className="flex items-center gap-x-1.5 text-xs whitespace-nowrap text-neutral hover:underline"
           >
-            <InfoIcon size={12} /> Looking for organization access control?
+            <InfoIcon size={12} /> Looking for {isSubOrganization ? "sub-" : ""}organization access
+            control?
           </Link>
         </PageHeader>
-        <Tabs orientation="vertical" value={selectedTab} onValueChange={updateSelectedTab}>
-          <TabList>
-            <Tab variant="project" value={ProjectAccessControlTabs.Member}>
-              Users
-            </Tab>
-            <Tab variant="project" value={ProjectAccessControlTabs.Groups}>
-              Groups
-            </Tab>
-            <Tab variant="project" value={ProjectAccessControlTabs.Identities}>
-              Machine Identities
-            </Tab>
-            {isSecretManager && (
-              <Tab variant="project" value={ProjectAccessControlTabs.ServiceTokens}>
-                Service Tokens
+        <Tabs
+          orientation={isCertManager || isSecretManager ? "horizontal" : "vertical"}
+          value={selectedTab}
+          onValueChange={updateSelectedTab}
+        >
+          {(isCertManager || isSecretManager) && (
+            <TabList>
+              <Tab variant="project" value={ProjectAccessControlTabs.Member}>
+                Users
               </Tab>
-            )}
-            <Tab variant="project" value={ProjectAccessControlTabs.Roles}>
-              Roles
-            </Tab>
-          </TabList>
+              <Tab variant="project" value={ProjectAccessControlTabs.Identities}>
+                Machine Identities
+              </Tab>
+              <Tab variant="project" value={ProjectAccessControlTabs.Groups}>
+                Groups
+              </Tab>
+              {isSecretManager && (
+                <Tab variant="project" value={ProjectAccessControlTabs.ServiceTokens}>
+                  Service Tokens
+                </Tab>
+              )}
+              {isSecretManager && (
+                <Tab variant="project" value={ProjectAccessControlTabs.Roles}>
+                  Roles
+                </Tab>
+              )}
+            </TabList>
+          )}
           <TabPanel value={ProjectAccessControlTabs.Member}>
             <MembersTab />
           </TabPanel>
-          <TabPanel value={ProjectAccessControlTabs.Groups}>
-            <GroupsTab />
-          </TabPanel>
           <TabPanel value={ProjectAccessControlTabs.Identities}>
             <IdentityTab />
+          </TabPanel>
+          <TabPanel value={ProjectAccessControlTabs.Groups}>
+            <GroupsTab />
           </TabPanel>
           {isSecretManager && (
             <TabPanel value={ProjectAccessControlTabs.ServiceTokens}>

@@ -6,8 +6,9 @@ import { KmipPermission } from "./kmip-enum";
 
 export type TCreateKmipClientCertificateDTO = {
   clientId: string;
-  keyAlgorithm: CertKeyAlgorithm;
+  keyAlgorithm?: CertKeyAlgorithm;
   ttl: string;
+  csr?: string;
 } & Omit<TProjectPermission, "projectId">;
 
 export type TCreateKmipClientDTO = {
@@ -80,12 +81,6 @@ export type TKmipRegisterDTO = {
   algorithm: SymmetricKeyAlgorithm;
   kmipMetadata?: Record<string, unknown> | null;
 } & KmipOperationBaseDTO;
-
-export type TSetupOrgKmipDTO = {
-  caKeyAlgorithm: CertKeyAlgorithm;
-} & Omit<TOrgPermission, "orgId">;
-
-export type TGetOrgKmipDTO = Omit<TOrgPermission, "orgId">;
 
 export type TGenerateOrgKmipServerCertificateDTO = {
   commonName: string;

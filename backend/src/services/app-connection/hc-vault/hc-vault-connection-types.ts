@@ -1,5 +1,7 @@
 import z from "zod";
 
+import { TGatewayV2ConnectionDetails } from "@app/ee/services/gateway-v2/gateway-v2-types";
+import { GatewayVersion, TGatewayV1RelayDetails } from "@app/lib/gateway/types";
 import { DiscriminativePick } from "@app/lib/types";
 
 import { AppConnection } from "../app-connection-enums";
@@ -118,3 +120,61 @@ export type THCVaultKubernetesRole = {
   config: THCVaultKubernetesSecretsConfig;
   mountPath: string;
 };
+
+export type THCVaultDatabaseConfig = {
+  connection_details: {
+    connection_url?: string;
+    hosts?: string;
+    tls_ca?: string;
+    username?: string;
+  };
+  plugin_name: string;
+};
+
+export type THCVaultDatabaseRole = {
+  name: string;
+  db_name: string;
+  default_ttl?: number;
+  max_ttl?: number;
+  creation_statements?: string[];
+  revocation_statements?: string[];
+  renew_statements?: string[];
+  config: THCVaultDatabaseConfig;
+  mountPath: string;
+};
+
+export type THCVaultLdapConfig = {
+  binddn: string;
+  url: string;
+  certificate?: string;
+};
+
+export type THCVaultLdapRole = {
+  name: string;
+  default_ttl?: number;
+  max_ttl?: number;
+  creation_ldif?: string;
+  deletion_ldif?: string;
+  rollback_ldif?: string;
+  username_template?: string;
+  config: THCVaultLdapConfig;
+  mountPath: string;
+};
+
+export type TGatewayDetails =
+  | {
+      gatewayVersion: GatewayVersion.V1;
+      details: TGatewayV1RelayDetails;
+      target: {
+        host: string;
+        port: number;
+      };
+    }
+  | {
+      gatewayVersion: GatewayVersion.V2;
+      details: TGatewayV2ConnectionDetails;
+      target: {
+        host: string;
+        port: number;
+      };
+    };

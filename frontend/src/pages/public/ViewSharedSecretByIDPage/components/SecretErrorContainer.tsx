@@ -1,13 +1,37 @@
-import { faKey } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { TriangleAlertIcon } from "lucide-react";
 
-export const SecretErrorContainer = () => {
+import { Alert, AlertDescription, AlertTitle } from "@app/components/v3";
+
+import { BrandingTheme } from "../ViewSharedSecretByIDPage";
+
+type Props = {
+  brandingTheme?: BrandingTheme;
+  error?: string;
+};
+
+export const SecretErrorContainer = ({ error, brandingTheme }: Props) => {
+  const panelStyle = brandingTheme
+    ? {
+        backgroundColor: brandingTheme.panelBg,
+        borderColor: brandingTheme.panelBorder,
+        color: brandingTheme.textColor
+      }
+    : undefined;
+
   return (
-    <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-800 p-8">
-      <div className="text-center">
-        <FontAwesomeIcon icon={faKey} size="2x" />
-        <p className="mt-4">The secret you are looking is missing or has expired</p>
-      </div>
-    </div>
+    <Alert variant={brandingTheme ? "default" : "danger"} style={panelStyle}>
+      <TriangleAlertIcon
+        style={brandingTheme ? { color: brandingTheme.textMutedColor } : undefined}
+      />
+      <AlertTitle style={brandingTheme ? { color: brandingTheme.textColor } : undefined}>
+        Unable to view shared secret
+      </AlertTitle>
+      <AlertDescription
+        className="break-words"
+        style={brandingTheme ? { color: brandingTheme.textMutedColor } : undefined}
+      >
+        {error || "The secret you are looking for is missing or has expired"}
+      </AlertDescription>
+    </Alert>
   );
 };

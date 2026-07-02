@@ -1,24 +1,17 @@
 import { useMemo } from "react";
-import { subject } from "@casl/ability";
-import { faEdit } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { format } from "date-fns";
+import { BanIcon, RefreshCwIcon } from "lucide-react";
 
-import { ProjectPermissionCan } from "@app/components/permissions";
-import { GenericFieldLabel, SecretSyncStatusBadge } from "@app/components/secret-syncs";
-import { IconButton } from "@app/components/v2";
-import { ProjectPermissionSub } from "@app/context";
-import { ProjectPermissionSecretSyncActions } from "@app/context/ProjectPermissionContext/types";
+import { SecretSyncStatusBadge } from "@app/components/secret-syncs";
+import { Badge, Detail, DetailLabel, DetailValue } from "@app/components/v3";
 import { SecretSyncStatus, TSecretSync } from "@app/hooks/api/secretSyncs";
 
 type Props = {
   secretSync: TSecretSync;
-  onEditDetails: VoidFunction;
 };
 
-export const SecretSyncDetailsSection = ({ secretSync, onEditDetails }: Props) => {
-  const { syncStatus, lastSyncMessage, lastSyncedAt, name, description, environment, folder } =
-    secretSync;
+export const SecretSyncDetailsSection = ({ secretSync }: Props) => {
+  const { syncStatus, lastSyncMessage, lastSyncedAt, isAutoSyncEnabled } = secretSync;
 
   const failureMessage = useMemo(() => {
     if (syncStatus === SecretSyncStatus.Failed) {
@@ -34,55 +27,46 @@ export const SecretSyncDetailsSection = ({ secretSync, onEditDetails }: Props) =
     return null;
   }, [syncStatus, lastSyncMessage]);
 
-  const permissionSubject =
-    environment && folder
-      ? subject(ProjectPermissionSub.SecretSyncs, {
-          environment: environment.slug,
-          secretPath: folder.path
-        })
-      : ProjectPermissionSub.SecretSyncs;
-
   return (
-    <div className="flex w-full flex-col gap-3 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-4 py-3">
-      <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
-        <h3 className="font-medium text-mineshaft-100">Details</h3>
-        <ProjectPermissionCan I={ProjectPermissionSecretSyncActions.Edit} a={permissionSubject}>
-          {(isAllowed) => (
-            <IconButton
-              variant="plain"
-              colorSchema="secondary"
-              isDisabled={!isAllowed}
-              ariaLabel="Edit sync details"
-              onClick={onEditDetails}
-            >
-              <FontAwesomeIcon icon={faEdit} />
-            </IconButton>
+    <>
+      {syncStatus && (
+        <Detail>
+          <DetailLabel>Status</DetailLabel>
+          <DetailValue>
+            <SecretSyncStatusBadge status={syncStatus} />
+          </DetailValue>
+        </Detail>
+      )}
+      <Detail>
+        <DetailLabel>Auto-Sync</DetailLabel>
+        <DetailValue>
+          {isAutoSyncEnabled ? (
+            <Badge variant="info">
+              <RefreshCwIcon />
+              Enabled
+            </Badge>
+          ) : (
+            <Badge variant="neutral">
+              <BanIcon />
+              Disabled
+            </Badge>
           )}
-        </ProjectPermissionCan>
-      </div>
-      <div>
-        <div className="space-y-3">
-          <GenericFieldLabel label="Name">{name}</GenericFieldLabel>
-          <GenericFieldLabel label="Description">{description}</GenericFieldLabel>
-          {syncStatus && (
-            <GenericFieldLabel label="Status">
-              <SecretSyncStatusBadge status={syncStatus} />
-            </GenericFieldLabel>
-          )}
-          {lastSyncedAt && (
-            <GenericFieldLabel label="Last Synced">
-              {format(new Date(lastSyncedAt), "yyyy-MM-dd, hh:mm aaa")}
-            </GenericFieldLabel>
-          )}
-          {syncStatus === SecretSyncStatus.Failed && failureMessage && (
-            <GenericFieldLabel labelClassName="text-red" label="Last Sync Error">
-              <p className="rounded-sm bg-mineshaft-600 p-2 text-xs break-words">
-                {failureMessage}
-              </p>
-            </GenericFieldLabel>
-          )}
-        </div>
-      </div>
-    </div>
+        </DetailValue>
+      </Detail>
+      {lastSyncedAt && (
+        <Detail>
+          <DetailLabel>Last Synced</DetailLabel>
+          <DetailValue>{format(new Date(lastSyncedAt), "yyyy-MM-dd, hh:mm aaa")}</DetailValue>
+        </Detail>
+      )}
+      {syncStatus === SecretSyncStatus.Failed && failureMessage && (
+        <Detail>
+          <DetailLabel className="text-red">Last Sync Error</DetailLabel>
+          <DetailValue>
+            <p className="rounded-sm bg-mineshaft-600 p-2 text-xs break-words">{failureMessage}</p>
+          </DetailValue>
+        </Detail>
+      )}
+    </>
   );
 };

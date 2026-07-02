@@ -16,9 +16,10 @@ export const Route = createFileRoute("/_authenticate")({
     }
 
     const data = await context.queryClient
-      .ensureQueryData({
+      .fetchQuery({
         queryKey: authKeys.getAuthToken,
-        queryFn: fetchAuthToken
+        queryFn: fetchAuthToken,
+        staleTime: 0
       })
       .catch(() => {
         createNotification({
@@ -36,6 +37,9 @@ export const Route = createFileRoute("/_authenticate")({
           })
         );
 
+        context.queryClient.removeQueries({
+          queryKey: authKeys.getAuthToken
+        });
         throw redirect({
           to: "/login"
         });
@@ -65,7 +69,7 @@ export const Route = createFileRoute("/_authenticate")({
             text: "Something went wrong with your session. Please log in again."
           });
         }
-        clearSession(true);
+        clearSession();
         await logoutUser();
 
         throw redirect({
@@ -73,6 +77,11 @@ export const Route = createFileRoute("/_authenticate")({
         });
       });
 
-    return { organizationId: data.organizationId as string, isAuthenticated: true, user };
+    const isSubOrganization = !!data.subOrganizationId;
+    return {
+      organizationId: isSubOrganization ? data.subOrganizationId : (data.organizationId as string),
+      isAuthenticated: true,
+      user
+    };
   }
 });

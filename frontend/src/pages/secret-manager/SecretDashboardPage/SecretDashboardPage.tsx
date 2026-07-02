@@ -66,6 +66,7 @@ import { usePathAccessPolicies } from "@app/hooks/usePathAccessPolicies";
 import { useResizableColWidth } from "@app/hooks/useResizableColWidth";
 import { hasSecretReadValueOrDescribePermission } from "@app/lib/fn/permission";
 import { RequestAccessModal } from "@app/pages/secret-manager/SecretApprovalsPage/components/AccessApprovalRequest/components/RequestAccessModal";
+import { HoneyTokenListView } from "@app/pages/secret-manager/SecretDashboardPage/components/HoneyTokenListView";
 import { SecretRotationListView } from "@app/pages/secret-manager/SecretDashboardPage/components/SecretRotationListView";
 
 import { SecretTableResourceCount } from "../OverviewPage/components/SecretTableResourceCount";
@@ -325,6 +326,7 @@ const Page = () => {
     includeSecrets: canReadSecret && (isResourceTypeFiltered ? filter.include.secret : true),
     includeSecretRotations:
       canReadSecretRotations && (isResourceTypeFiltered ? filter.include.rotation : true),
+    includeHoneyTokens: true,
     tags: filter.tags
   });
 
@@ -345,6 +347,7 @@ const Page = () => {
     folders,
     dynamicSecrets,
     secretRotations,
+    honeyTokens,
     secrets,
     totalImportCount = 0,
     totalFolderCount = 0,
@@ -395,8 +398,13 @@ const Page = () => {
       message
     });
 
-    if (!isProtectedBranch) {
-      pendingChanges.secrets.forEach((secret) => {
+    // Check if there are only folder changes (no secret changes)
+    // Folder changes are not affected by approval policies, so they're saved directly
+    const hasOnlyFolderChanges = changes.folders.length > 0 && changes.secrets.length === 0;
+    const requiresApproval = isProtectedBranch && !hasOnlyFolderChanges;
+
+    if (!requiresApproval) {
+      changes.secrets.forEach((secret) => {
         if (secret.type === "update" && secret.secretValue !== undefined) {
           queryClient.setQueryData(
             dashboardKeys.getSecretValue({
@@ -413,7 +421,7 @@ const Page = () => {
     }
 
     createNotification({
-      text: isProtectedBranch
+      text: requiresApproval
         ? "Requested changes have been sent for review"
         : "Changes saved successfully",
       type: "success"
@@ -495,7 +503,8 @@ const Page = () => {
       (folders?.length || 0) -
       (secrets?.length || 0) -
       (dynamicSecrets?.length || 0) -
-      (secretRotations?.length || 0),
+      (secretRotations?.length || 0) -
+      (honeyTokens?.length || 0),
     0
   );
   const isNotEmpty = Boolean(
@@ -663,8 +672,7 @@ const Page = () => {
     const newChecks = { ...selectedSecrets };
 
     secrets?.forEach((secret) => {
-      // bulk actions don't apply to rotation secrets (move/delete)
-      if (secret.isRotatedSecret) return;
+      if (secret.isRotatedSecret || secret.isHoneyTokenSecret) return;
 
       if (allRowsSelectedOnPage.isChecked) {
         delete newChecks[secret.id];
@@ -685,12 +693,17 @@ const Page = () => {
     setDebouncedSearchFilter("");
   };
 
-  const getMergedSecretsWithPending = () => {
+  const getMergedSecretsWithPending = (
+    paramSecrets?: (SecretV3RawSanitized | null)[]
+  ): SecretV3RawSanitized[] => {
+    const sanitizedParamSecrets = paramSecrets?.filter(Boolean) as
+      | SecretV3RawSanitized[]
+      | undefined;
     if (!isBatchMode || pendingChanges.secrets.length === 0) {
-      return secrets;
+      return sanitizedParamSecrets || secrets || [];
     }
 
-    const mergedSecrets = [...(secrets || [])] as (SecretV3RawSanitized & {
+    const mergedSecrets = [...(sanitizedParamSecrets || secrets || [])] as (SecretV3RawSanitized & {
       originalKey?: string;
     })[];
 
@@ -863,7 +876,7 @@ const Page = () => {
             ,
             <a
               className="ml-1 text-mineshaft-300 underline decoration-primary-800 underline-offset-4 duration-200 hover:text-mineshaft-100 hover:decoration-primary-600"
-              href="https://infisical.com/docs/documentation/getting-started/api"
+              href="https://infisical.com/docs/api-reference/overview/introduction"
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -1072,8 +1085,19 @@ const Page = () => {
                 />
               )}
               {canReadSecretRotations && Boolean(secretRotations?.length) && (
-                <SecretRotationListView secretRotations={secretRotations} />
+                <SecretRotationListView
+                  secretRotations={secretRotations}
+                  colWidth={colWidth}
+                  tags={tags}
+                  projectId={projectId}
+                  secretPath={secretPath}
+                  isProtectedBranch={isProtectedBranch}
+                  importedBy={importedBy}
+                  usedBySecretSyncs={usedBySecretSyncs}
+                  getMergedSecretsWithPending={getMergedSecretsWithPending}
+                />
               )}
+              {Boolean(honeyTokens?.length) && <HoneyTokenListView honeyTokens={honeyTokens} />}
               {canReadSecret && Boolean(mergedSecrets?.length) && (
                 <SecretListView
                   colWidth={colWidth}

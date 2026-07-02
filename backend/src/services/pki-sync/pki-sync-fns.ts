@@ -1,6 +1,8 @@
-import * as handlebars from "handlebars";
+import RE2 from "re2";
 import { z, ZodSchema } from "zod";
 
+import { TGatewayPoolServiceFactory } from "@app/ee/services/gateway-pool/gateway-pool-service";
+import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
 import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
 import { BadRequestError } from "@app/lib/errors";
 import { TAppConnectionDALFactory } from "@app/services/app-connection/app-connection-dal";
@@ -10,12 +12,25 @@ import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 
 import { AWS_CERTIFICATE_MANAGER_PKI_SYNC_LIST_OPTION } from "./aws-certificate-manager/aws-certificate-manager-pki-sync-constants";
 import { awsCertificateManagerPkiSyncFactory } from "./aws-certificate-manager/aws-certificate-manager-pki-sync-fns";
+import { AWS_ELASTIC_LOAD_BALANCER_PKI_SYNC_LIST_OPTION } from "./aws-elastic-load-balancer/aws-elastic-load-balancer-pki-sync-constants";
+import { awsElasticLoadBalancerPkiSyncFactory } from "./aws-elastic-load-balancer/aws-elastic-load-balancer-pki-sync-fns";
 import { AWS_SECRETS_MANAGER_PKI_SYNC_LIST_OPTION } from "./aws-secrets-manager/aws-secrets-manager-pki-sync-constants";
 import { awsSecretsManagerPkiSyncFactory } from "./aws-secrets-manager/aws-secrets-manager-pki-sync-fns";
 import { AZURE_KEY_VAULT_PKI_SYNC_LIST_OPTION } from "./azure-key-vault/azure-key-vault-pki-sync-constants";
 import { azureKeyVaultPkiSyncFactory } from "./azure-key-vault/azure-key-vault-pki-sync-fns";
 import { chefPkiSyncFactory } from "./chef/chef-pki-sync-fns";
 import { CHEF_PKI_SYNC_LIST_OPTION } from "./chef/chef-pki-sync-list-constants";
+import { CLOUDFLARE_CUSTOM_CERTIFICATE_PKI_SYNC_LIST_OPTION } from "./cloudflare-custom-certificate/cloudflare-custom-certificate-pki-sync-constants";
+import { cloudflareCustomCertificatePkiSyncFactory } from "./cloudflare-custom-certificate/cloudflare-custom-certificate-pki-sync-fns";
+import { F5_BIG_IP_PKI_SYNC_LIST_OPTION } from "./f5-big-ip/f5-big-ip-pki-sync-constants";
+import { f5BigIpPkiSyncFactory } from "./f5-big-ip/f5-big-ip-pki-sync-fns";
+import { NETSCALER_PKI_SYNC_LIST_OPTION } from "./netscaler/netscaler-pki-sync-constants";
+import { netScalerPkiSyncFactory } from "./netscaler/netscaler-pki-sync-fns";
+import {
+  buildManagedCertificateNameRegexSource,
+  SHORT_UUID_NAME_REGEX_FRAGMENT,
+  UUID_NAME_REGEX_FRAGMENT
+} from "./pki-sync-certificate-name-fns";
 import { PkiSync } from "./pki-sync-enums";
 import { TCertificateMap, TPkiSyncWithCredentials } from "./pki-sync-types";
 
@@ -25,7 +40,11 @@ const PKI_SYNC_LIST_OPTIONS = {
   [PkiSync.AzureKeyVault]: AZURE_KEY_VAULT_PKI_SYNC_LIST_OPTION,
   [PkiSync.AwsCertificateManager]: AWS_CERTIFICATE_MANAGER_PKI_SYNC_LIST_OPTION,
   [PkiSync.AwsSecretsManager]: AWS_SECRETS_MANAGER_PKI_SYNC_LIST_OPTION,
-  [PkiSync.Chef]: CHEF_PKI_SYNC_LIST_OPTION
+  [PkiSync.AwsElasticLoadBalancer]: AWS_ELASTIC_LOAD_BALANCER_PKI_SYNC_LIST_OPTION,
+  [PkiSync.Chef]: CHEF_PKI_SYNC_LIST_OPTION,
+  [PkiSync.CloudflareCustomCertificate]: CLOUDFLARE_CUSTOM_CERTIFICATE_PKI_SYNC_LIST_OPTION,
+  [PkiSync.NetScaler]: NETSCALER_PKI_SYNC_LIST_OPTION,
+  [PkiSync.F5BigIp]: F5_BIG_IP_PKI_SYNC_LIST_OPTION
 };
 
 export const enterprisePkiSyncCheck = async (
@@ -75,84 +94,16 @@ export const parsePkiSyncErrorMessage = (error: unknown): string => {
   return "An unknown error occurred during PKI sync operation";
 };
 
-export const applyCertificateNameSchema = (
-  certificateMap: TCertificateMap,
-  environment: string,
-  schema?: string
-): TCertificateMap => {
-  if (!schema) return certificateMap;
-
-  const processedCertificateMap: TCertificateMap = {};
-
-  for (const [certificateId, value] of Object.entries(certificateMap)) {
-    const newName = handlebars.compile(schema)({
-      certificateId,
-      environment
-    });
-
-    processedCertificateMap[newName] = value;
-  }
-
-  return processedCertificateMap;
-};
-
-export const stripCertificateNameSchema = (
-  certificateMap: TCertificateMap,
-  environment: string,
-  schema?: string
-): TCertificateMap => {
-  if (!schema) return certificateMap;
-
-  const compiledSchemaPattern = handlebars.compile(schema)({
-    certificateId: "{{certificateId}}",
-    environment
-  });
-
-  const parts = compiledSchemaPattern.split("{{certificateId}}");
-  const prefix = parts[0];
-  const suffix = parts[parts.length - 1];
-
-  const strippedMap: TCertificateMap = {};
-
-  for (const [name, value] of Object.entries(certificateMap)) {
-    if (!name.startsWith(prefix) || !name.endsWith(suffix)) {
-      // eslint-disable-next-line no-continue
-      continue;
-    }
-
-    const strippedName = name.slice(prefix.length, name.length - suffix.length);
-    strippedMap[strippedName] = value;
-  }
-
-  return strippedMap;
-};
-
-export const matchesCertificateNameSchema = (name: string, environment: string, schema?: string): boolean => {
+export const matchesCertificateNameSchema = (name: string, schema?: string): boolean => {
   if (!schema) return true;
 
-  const compiledSchemaPattern = handlebars.compile(schema)({
-    certificateId: "{{certificateId}}",
-    environment
+  const pattern = buildManagedCertificateNameRegexSource(schema, {
+    uuid: UUID_NAME_REGEX_FRAGMENT,
+    shortUuid: SHORT_UUID_NAME_REGEX_FRAGMENT,
+    freeText: "[a-zA-Z0-9._-]*"
   });
 
-  if (!compiledSchemaPattern.includes("{{certificateId}}")) {
-    return name === compiledSchemaPattern;
-  }
-
-  const parts = compiledSchemaPattern.split("{{certificateId}}");
-  const prefix = parts[0];
-  const suffix = parts[parts.length - 1];
-
-  if (prefix === "" && suffix === "") return true;
-
-  // If prefix is empty, name must end with suffix
-  if (prefix === "") return name.endsWith(suffix);
-
-  // If suffix is empty, name must start with prefix
-  if (suffix === "") return name.startsWith(prefix);
-
-  // Name must start with prefix and end with suffix
-  return name.startsWith(prefix) && name.endsWith(suffix);
+  return new RE2(`^${pattern}$`).test(name);
 };
 
 const checkPkiSyncDestination = (pkiSync: TPkiSyncWithCredentials, destination: PkiSync): void => {
@@ -191,6 +142,24 @@ export const PkiSyncFns = {
           "Chef does not support importing certificates into Infisical (private keys cannot be extracted securely)"
         );
       }
+      case PkiSync.AwsElasticLoadBalancer: {
+        throw new Error(
+          "AWS Elastic Load Balancer does not support importing certificates into Infisical (certificates are stored in ACM)"
+        );
+      }
+      case PkiSync.CloudflareCustomCertificate: {
+        throw new Error(
+          "Cloudflare Custom SSL Certificate does not support importing certificates into Infisical (private keys cannot be extracted)"
+        );
+      }
+      case PkiSync.NetScaler: {
+        throw new Error(
+          "NetScaler does not support importing certificates into Infisical (private keys cannot be extracted)"
+        );
+      }
+      case PkiSync.F5BigIp: {
+        throw new Error("F5 BIG-IP does not support importing certificates into Infisical");
+      }
       default:
         throw new Error(`Unsupported PKI sync destination: ${String(pkiSync.destination)}`);
     }
@@ -204,6 +173,8 @@ export const PkiSyncFns = {
       kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
       certificateDAL: TCertificateDALFactory;
       certificateSyncDAL: TCertificateSyncDALFactory;
+      gatewayV2Service?: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
+      gatewayPoolService?: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
     }
   ): Promise<{
     uploaded: number;
@@ -254,6 +225,44 @@ export const PkiSyncFns = {
         });
         return chefPkiSync.syncCertificates(pkiSync, certificateMap);
       }
+      case PkiSync.AwsElasticLoadBalancer: {
+        checkPkiSyncDestination(pkiSync, PkiSync.AwsElasticLoadBalancer as PkiSync);
+        const awsElasticLoadBalancerPkiSync = awsElasticLoadBalancerPkiSyncFactory({
+          appConnectionDAL: dependencies.appConnectionDAL,
+          kmsService: dependencies.kmsService,
+          certificateDAL: dependencies.certificateDAL,
+          certificateSyncDAL: dependencies.certificateSyncDAL
+        });
+        return awsElasticLoadBalancerPkiSync.syncCertificates(pkiSync, certificateMap);
+      }
+      case PkiSync.CloudflareCustomCertificate: {
+        checkPkiSyncDestination(pkiSync, PkiSync.CloudflareCustomCertificate as PkiSync);
+        const cloudflareCustomCertificatePkiSync = cloudflareCustomCertificatePkiSyncFactory({
+          certificateDAL: dependencies.certificateDAL,
+          certificateSyncDAL: dependencies.certificateSyncDAL
+        });
+        return cloudflareCustomCertificatePkiSync.syncCertificates(pkiSync, certificateMap);
+      }
+      case PkiSync.NetScaler: {
+        checkPkiSyncDestination(pkiSync, PkiSync.NetScaler as PkiSync);
+        const netScalerPkiSync = netScalerPkiSyncFactory({
+          certificateDAL: dependencies.certificateDAL,
+          certificateSyncDAL: dependencies.certificateSyncDAL,
+          gatewayV2Service: dependencies.gatewayV2Service,
+          gatewayPoolService: dependencies.gatewayPoolService
+        });
+        return netScalerPkiSync.syncCertificates(pkiSync, certificateMap);
+      }
+      case PkiSync.F5BigIp: {
+        checkPkiSyncDestination(pkiSync, PkiSync.F5BigIp as PkiSync);
+        const f5BigIpPkiSync = f5BigIpPkiSyncFactory({
+          certificateDAL: dependencies.certificateDAL,
+          certificateSyncDAL: dependencies.certificateSyncDAL,
+          gatewayV2Service: dependencies.gatewayV2Service,
+          gatewayPoolService: dependencies.gatewayPoolService
+        });
+        return f5BigIpPkiSync.syncCertificates(pkiSync, certificateMap);
+      }
       default:
         throw new Error(`Unsupported PKI sync destination: ${String(pkiSync.destination)}`);
     }
@@ -268,6 +277,8 @@ export const PkiSyncFns = {
       certificateSyncDAL: TCertificateSyncDALFactory;
       certificateDAL: TCertificateDALFactory;
       certificateMap: TCertificateMap;
+      gatewayV2Service?: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
+      gatewayPoolService?: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
     }
   ): Promise<void> => {
     switch (pkiSync.destination) {
@@ -315,6 +326,60 @@ export const PkiSyncFns = {
           certificateSyncDAL: dependencies.certificateSyncDAL
         });
         await chefPkiSync.removeCertificates(pkiSync, certificateNames, {
+          certificateSyncDAL: dependencies.certificateSyncDAL,
+          certificateMap: dependencies.certificateMap
+        });
+        break;
+      }
+      case PkiSync.AwsElasticLoadBalancer: {
+        checkPkiSyncDestination(pkiSync, PkiSync.AwsElasticLoadBalancer as PkiSync);
+        const awsElasticLoadBalancerPkiSync = awsElasticLoadBalancerPkiSyncFactory({
+          appConnectionDAL: dependencies.appConnectionDAL,
+          kmsService: dependencies.kmsService,
+          certificateDAL: dependencies.certificateDAL,
+          certificateSyncDAL: dependencies.certificateSyncDAL
+        });
+        await awsElasticLoadBalancerPkiSync.removeCertificates(pkiSync, certificateNames, {
+          certificateSyncDAL: dependencies.certificateSyncDAL,
+          certificateMap: dependencies.certificateMap
+        });
+        break;
+      }
+      case PkiSync.CloudflareCustomCertificate: {
+        checkPkiSyncDestination(pkiSync, PkiSync.CloudflareCustomCertificate as PkiSync);
+        const cloudflareCustomCertificatePkiSync = cloudflareCustomCertificatePkiSyncFactory({
+          certificateDAL: dependencies.certificateDAL,
+          certificateSyncDAL: dependencies.certificateSyncDAL
+        });
+        await cloudflareCustomCertificatePkiSync.removeCertificates(pkiSync, certificateNames, {
+          certificateSyncDAL: dependencies.certificateSyncDAL,
+          certificateMap: dependencies.certificateMap
+        });
+        break;
+      }
+      case PkiSync.NetScaler: {
+        checkPkiSyncDestination(pkiSync, PkiSync.NetScaler as PkiSync);
+        const netScalerPkiSync = netScalerPkiSyncFactory({
+          certificateDAL: dependencies.certificateDAL,
+          certificateSyncDAL: dependencies.certificateSyncDAL,
+          gatewayV2Service: dependencies.gatewayV2Service,
+          gatewayPoolService: dependencies.gatewayPoolService
+        });
+        await netScalerPkiSync.removeCertificates(pkiSync, certificateNames, {
+          certificateSyncDAL: dependencies.certificateSyncDAL,
+          certificateMap: dependencies.certificateMap
+        });
+        break;
+      }
+      case PkiSync.F5BigIp: {
+        checkPkiSyncDestination(pkiSync, PkiSync.F5BigIp as PkiSync);
+        const f5BigIpPkiSync = f5BigIpPkiSyncFactory({
+          certificateDAL: dependencies.certificateDAL,
+          certificateSyncDAL: dependencies.certificateSyncDAL,
+          gatewayV2Service: dependencies.gatewayV2Service,
+          gatewayPoolService: dependencies.gatewayPoolService
+        });
+        await f5BigIpPkiSync.removeCertificates(pkiSync, certificateNames, {
           certificateSyncDAL: dependencies.certificateSyncDAL,
           certificateMap: dependencies.certificateMap
         });

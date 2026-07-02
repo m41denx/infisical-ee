@@ -1,26 +1,24 @@
 import { useMemo } from "react";
-import {
-  faArrowDown,
-  faArrowUp,
-  faFolder,
-  faMagnifyingGlass,
-  faSearch
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { ChevronDownIcon, PlusIcon } from "lucide-react";
+import { twMerge } from "tailwind-merge";
 
+import { Lottie } from "@app/components/v2";
 import {
-  EmptyState,
-  IconButton,
+  Button,
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
   Input,
   Pagination,
   Table,
-  TableContainer,
-  TableSkeleton,
-  TBody,
-  Th,
-  THead,
-  Tr
-} from "@app/components/v2";
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@app/components/v3";
+import { useOrganization } from "@app/context";
 import {
   getUserTablePreference,
   PreferenceKey,
@@ -29,6 +27,7 @@ import {
 import { usePagination, useResetPageHelper } from "@app/hooks";
 import { useGetIdentityProjectMemberships } from "@app/hooks/api";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 import { IdentityProjectRow } from "./IdentityProjectRow";
@@ -36,7 +35,7 @@ import { IdentityProjectRow } from "./IdentityProjectRow";
 type Props = {
   identityId: string;
   handlePopUpOpen: (
-    popUpName: keyof UsePopUpState<["removeIdentityFromProject"]>,
+    popUpName: keyof UsePopUpState<["removeIdentityFromProject", "addIdentityToProject"]>,
     data?: object
   ) => void;
 };
@@ -47,6 +46,8 @@ enum IdentityProjectsOrderBy {
 
 export const IdentityProjectsTable = ({ identityId, handlePopUpOpen }: Props) => {
   const { data: projectMemberships = [], isPending } = useGetIdentityProjectMemberships(identityId);
+
+  const { isSubOrganization } = useOrganization();
 
   const {
     search,
@@ -67,9 +68,16 @@ export const IdentityProjectsTable = ({ identityId, handlePopUpOpen }: Props) =>
     setUserTablePreference("identityProjectsTable", PreferenceKey.PerPage, newPerPage);
   };
 
+  const visibleProjectMemberships = useMemo(
+    () =>
+      projectMemberships?.filter(
+        (membership) => membership.project.type !== ProjectType.CertificateManager
+      ),
+    [projectMemberships]
+  );
   const filteredProjectMemberships = useMemo(
     () =>
-      projectMemberships
+      visibleProjectMemberships
         ?.filter((membership) =>
           membership.project.name.toLowerCase().includes(search.trim().toLowerCase())
         )
@@ -81,7 +89,7 @@ export const IdentityProjectsTable = ({ identityId, handlePopUpOpen }: Props) =>
             .toLowerCase()
             .localeCompare(membershipTwo.project.name.toLowerCase());
         }),
-    [projectMemberships, orderDirection, search]
+    [visibleProjectMemberships, orderDirection, search]
   );
 
   useResetPageHelper({
@@ -90,41 +98,43 @@ export const IdentityProjectsTable = ({ identityId, handlePopUpOpen }: Props) =>
     setPage
   });
 
+  if (isPending) {
+    return (
+      // scott: todo proper loader
+      <div className="flex h-40 w-full items-center justify-center">
+        <Lottie icon="infisical_loading_white" isAutoPlay className="w-16" />
+      </div>
+    );
+  }
+
   return (
-    <div>
+    <>
       <Input
+        className="mb-4"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
         placeholder="Search projects..."
       />
-      <TableContainer className="mt-4">
+      {filteredProjectMemberships.length ? (
         <Table>
-          <THead>
-            <Tr>
-              <Th className="w-2/3">
-                <div className="flex items-center">
-                  Name
-                  <IconButton
-                    variant="plain"
-                    className="ml-2"
-                    ariaLabel="sort"
-                    onClick={toggleOrderDirection}
-                  >
-                    <FontAwesomeIcon
-                      icon={orderDirection === OrderByDirection.DESC ? faArrowUp : faArrowDown}
-                    />
-                  </IconButton>
-                </div>
-              </Th>
+          <TableHeader>
+            <TableRow>
+              <TableHead onClick={toggleOrderDirection} className="w-1/3">
+                Name
+                <ChevronDownIcon
+                  className={twMerge(
+                    orderDirection === OrderByDirection.DESC && "rotate-180",
+                    "transition-transform"
+                  )}
+                />
+              </TableHead>
 
-              <Th>Role</Th>
-              <Th>Added On</Th>
-              <Th className="w-5" />
-            </Tr>
-          </THead>
-          <TBody>
-            {isPending && <TableSkeleton columns={4} innerKey="identity-project-memberships" />}
+              <TableHead>Role</TableHead>
+              <TableHead>Added On</TableHead>
+              <TableHead className="w-5" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {!isPending &&
               filteredProjectMemberships.slice(offset, perPage * page).map((membership) => {
                 return (
@@ -135,28 +145,45 @@ export const IdentityProjectsTable = ({ identityId, handlePopUpOpen }: Props) =>
                   />
                 );
               })}
-          </TBody>
+          </TableBody>
         </Table>
-        {Boolean(filteredProjectMemberships.length) && (
-          <Pagination
-            count={filteredProjectMemberships.length}
-            page={page}
-            perPage={perPage}
-            onChangePage={setPage}
-            onChangePerPage={handlePerPageChange}
-          />
-        )}
-        {!isPending && !filteredProjectMemberships?.length && (
-          <EmptyState
-            title={
-              projectMemberships.length
-                ? "No projects match search..."
-                : "This machine identity has not been assigned to any projects"
-            }
-            icon={projectMemberships.length ? faSearch : faFolder}
-          />
-        )}
-      </TableContainer>
-    </div>
+      ) : (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>
+              {visibleProjectMemberships.length
+                ? "No projects match this search"
+                : "This machine identity is not a member of any projects"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {visibleProjectMemberships.length
+                ? "Adjust search filters to view project memberships."
+                : "Assign this machine identity to a project."}
+            </EmptyDescription>
+            {!visibleProjectMemberships.length && (
+              <EmptyContent>
+                <Button
+                  variant={isSubOrganization ? "sub-org" : "org"}
+                  size="xs"
+                  onClick={() => handlePopUpOpen("addIdentityToProject")}
+                >
+                  <PlusIcon />
+                  Add to Project
+                </Button>
+              </EmptyContent>
+            )}
+          </EmptyHeader>
+        </Empty>
+      )}
+      {Boolean(filteredProjectMemberships.length) && (
+        <Pagination
+          count={filteredProjectMemberships.length}
+          page={page}
+          perPage={perPage}
+          onChangePage={setPage}
+          onChangePerPage={handlePerPageChange}
+        />
+      )}
+    </>
   );
 };

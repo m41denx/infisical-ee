@@ -3,10 +3,12 @@ import opentelemetry from "@opentelemetry/api";
 import * as x509 from "@peculiar/x509";
 import { AxiosError } from "axios";
 import { Job } from "bullmq";
-import handlebars from "handlebars";
+import { randomUUID } from "crypto";
 
 import { TCertificates } from "@app/db/schemas";
 import { EventType, TAuditLogServiceFactory } from "@app/ee/services/audit-log/audit-log-types";
+import { TGatewayPoolServiceFactory } from "@app/ee/services/gateway-pool/gateway-pool-service";
+import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
 import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
 import { KeyStorePrefixes, TKeyStoreFactory } from "@app/keystore/keystore";
 import { getConfig } from "@app/lib/config/env";
@@ -17,6 +19,8 @@ import { ActorType } from "@app/services/auth/auth-type";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 import { getProjectKmsCertificateKeyId } from "@app/services/project/project-fns";
+import { TTelemetryServiceFactory } from "@app/services/telemetry/telemetry-service";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 import { TAppConnectionDALFactory } from "../app-connection/app-connection-dal";
 import { TCertificateBodyDALFactory } from "../certificate/certificate-body-dal";
@@ -29,8 +33,9 @@ import { getCaCertChain } from "../certificate-authority/certificate-authority-f
 import { extractRootCaFromChain, removeRootCaFromChain } from "../certificate-common/certificate-utils";
 import { TCertificateSyncDALFactory } from "../certificate-sync/certificate-sync-dal";
 import { CertificateSyncStatus } from "../certificate-sync/certificate-sync-enums";
+import { compileCertificateNameSchema } from "./pki-sync-certificate-name-fns";
 import { TPkiSyncDALFactory } from "./pki-sync-dal";
-import { PkiSyncStatus } from "./pki-sync-enums";
+import { PkiSync, PkiSyncStatus } from "./pki-sync-enums";
 import { PkiSyncError } from "./pki-sync-errors";
 import { enterprisePkiSyncCheck, parsePkiSyncErrorMessage, PkiSyncFns } from "./pki-sync-fns";
 import {
@@ -65,6 +70,9 @@ type TPkiSyncQueueFactoryDep = {
   certificateAuthorityDAL: Pick<TCertificateAuthorityDALFactory, "findById">;
   certificateAuthorityCertDAL: Pick<TCertificateAuthorityCertDALFactory, "findById">;
   certificateSyncDAL: TCertificateSyncDALFactory;
+  gatewayV2Service?: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
+  gatewayPoolService?: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
+  telemetryService: Pick<TTelemetryServiceFactory, "sendPostHogEvents">;
 };
 
 type PkiSyncActionJob = Job<
@@ -96,7 +104,10 @@ export const pkiSyncQueueFactory = ({
   certificateSecretDAL,
   certificateAuthorityDAL,
   certificateAuthorityCertDAL,
-  certificateSyncDAL
+  certificateSyncDAL,
+  gatewayV2Service,
+  gatewayPoolService,
+  telemetryService
 }: TPkiSyncQueueFactoryDep) => {
   const appCfg = getConfig();
 
@@ -278,15 +289,17 @@ export const pkiSyncQueueFactory = ({
             const certificateNameSchema = syncOptions?.certificateNameSchema;
 
             if (certificateNameSchema) {
-              const environment = "global";
-              const templateData = {
-                certificateId: certificate.id.replace(/-/g, ""),
-                profileId: cert.profileId?.replace(/-/g, "") || certificate.id.replace(/-/g, ""),
-                commonName: cert.commonName || "",
-                friendlyName: cert.friendlyName || "",
-                environment
-              };
-              certificateName = handlebars.compile(certificateNameSchema)(templateData);
+              certificateName = compileCertificateNameSchema(
+                certificateNameSchema,
+                {
+                  certificateId: certificate.id,
+                  profileId: cert.profileId,
+                  applicationId: pkiSync.applicationId,
+                  applicationName: pkiSync.applicationName,
+                  commonName: cert.commonName
+                },
+                pkiSync.destination as PkiSync
+              );
             } else {
               const stableId = cert.profileId
                 ? `${cert.profileId.replace(/-/g, "")}-${(cert.commonName || "").replace(/[^a-zA-Z0-9]/g, "")}`
@@ -317,7 +330,9 @@ export const pkiSyncQueueFactory = ({
               certificateChain: processedCertificateChain,
               caCertificate,
               alternativeNames,
-              certificateId: certificate.id
+              certificateId: certificate.id,
+              profileId: cert.profileId,
+              commonName: cert.commonName
             };
 
             certificateMetadata.set(certificateName, {
@@ -357,6 +372,7 @@ export const pkiSyncQueueFactory = ({
         type: "exponential",
         delay: 3000
       },
+      jobId: randomUUID(),
       removeOnComplete: true,
       removeOnFail: true
     });
@@ -368,6 +384,7 @@ export const pkiSyncQueueFactory = ({
         type: "exponential",
         delay: 3000
       },
+      jobId: randomUUID(),
       removeOnComplete: true,
       removeOnFail: true
     });
@@ -379,6 +396,7 @@ export const pkiSyncQueueFactory = ({
         type: "exponential",
         delay: 3000
       },
+      jobId: randomUUID(),
       removeOnComplete: true,
       removeOnFail: true
     });
@@ -421,6 +439,8 @@ export const pkiSyncQueueFactory = ({
         throw new Error(`App connection not found: ${connectionId}`);
       }
 
+      const project = appConnectionProjectId ? await projectDAL.findById(appConnectionProjectId) : null;
+
       const credentials = await decryptAppConnectionCredentials({
         orgId,
         encryptedCredentials: appConnection.encryptedCredentials,
@@ -432,7 +452,8 @@ export const pkiSyncQueueFactory = ({
         ...pkiSync,
         connection: {
           ...pkiSync.connection,
-          credentials
+          credentials,
+          projectType: project?.type
         }
       } as TPkiSyncWithCredentials;
 
@@ -453,7 +474,9 @@ export const pkiSyncQueueFactory = ({
         appConnectionDAL,
         kmsService,
         certificateDAL,
-        certificateSyncDAL
+        certificateSyncDAL,
+        gatewayV2Service,
+        gatewayPoolService
       });
 
       logger.info(
@@ -511,6 +534,23 @@ export const pkiSyncQueueFactory = ({
                 certificateId: metadata.id,
                 status: CertificateSyncStatus.Failed,
                 message: `Failed to sync certificate: ${failure.error}`
+              };
+            }
+          }
+        }
+      }
+
+      if (syncResult.details?.skippedCertificates) {
+        for (const skip of syncResult.details.skippedCertificates) {
+          const metadata = certificateMetadata.get(skip.name);
+          if (metadata) {
+            const updateIndex = postSyncUpdates.findIndex((u) => u.certificateId === metadata.id);
+            if (updateIndex >= 0) {
+              postSyncUpdates[updateIndex] = {
+                pkiSyncId: pkiSync.id,
+                certificateId: metadata.id,
+                status: CertificateSyncStatus.Failed,
+                message: `Certificate skipped: ${skip.reason}`
               };
             }
           }
@@ -576,6 +616,17 @@ export const pkiSyncQueueFactory = ({
           lastSyncJobId: job.id,
           lastSyncMessage: syncMessage,
           lastSyncedAt: isSynced ? ranAt : undefined
+        });
+
+        await telemetryService.sendPostHogEvents({
+          event: PostHogEventTypes.PkiSyncExecuted,
+          distinctId: `platform/${pkiSync.projectId}`,
+          organizationId: pkiSync.connection.orgId,
+          properties: {
+            orgId: pkiSync.connection.orgId,
+            destination: pkiSync.destination,
+            success: isSynced
+          }
         });
       }
     }
@@ -695,6 +746,8 @@ export const pkiSyncQueueFactory = ({
         throw new Error(`App connection not found: ${connectionId}`);
       }
 
+      const removeProject = appConnectionProjectId ? await projectDAL.findById(appConnectionProjectId) : null;
+
       const credentials = await decryptAppConnectionCredentials({
         orgId,
         encryptedCredentials: appConnection.encryptedCredentials,
@@ -709,7 +762,8 @@ export const pkiSyncQueueFactory = ({
           ...pkiSync,
           connection: {
             ...pkiSync.connection,
-            credentials
+            credentials,
+            projectType: removeProject?.type
           }
         } as TPkiSyncWithCredentials,
         Object.keys(certificateMap),
@@ -718,7 +772,9 @@ export const pkiSyncQueueFactory = ({
           kmsService,
           certificateSyncDAL,
           certificateDAL,
-          certificateMap
+          certificateMap,
+          gatewayV2Service,
+          gatewayPoolService
         }
       );
 

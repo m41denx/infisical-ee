@@ -14,9 +14,22 @@ import { addUsersToGroupByUserIds, removeUsersFromGroupByUserIds } from "@app/ee
 import { TUserGroupMembershipDALFactory } from "@app/ee/services/group/user-group-membership-dal";
 import { throwOnPlanSeatLimitReached } from "@app/ee/services/license/license-fns";
 import { getConfig } from "@app/lib/config/env";
-import { crypto } from "@app/lib/crypto";
 import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
-import { AuthMethod, AuthTokenType } from "@app/services/auth/auth-type";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
+import {
+  AuthAttemptAuthMethod,
+  AuthAttemptAuthResult,
+  authAttemptCounter,
+  recordAuthAttemptMetric,
+  recordSsoConfigChangeMetric,
+  SsoConfigAction,
+  SsoProvider
+} from "@app/lib/telemetry/metrics";
+import { blockLocalAndPrivateIpAddresses } from "@app/lib/validator";
+import { sanitizeEmail, validateEmail } from "@app/lib/validator/validate-email";
+import { TAuthLoginFactory } from "@app/services/auth/auth-login-service";
+import { AuthMethod } from "@app/services/auth/auth-type";
 import { TAuthTokenServiceFactory } from "@app/services/auth-token/auth-token-service";
 import { TokenType } from "@app/services/auth-token/auth-token-types";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
@@ -31,11 +44,15 @@ import { TProjectKeyDALFactory } from "@app/services/project-key/project-key-dal
 import { SmtpTemplates, TSmtpService } from "@app/services/smtp/smtp-service";
 import { getServerCfg } from "@app/services/super-admin/super-admin-service";
 import { LoginMethod } from "@app/services/super-admin/super-admin-types";
+import { TTelemetryServiceFactory } from "@app/services/telemetry/telemetry-service";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 import { TUserDALFactory } from "@app/services/user/user-dal";
-import { normalizeUsername } from "@app/services/user/user-fns";
 import { TUserAliasDALFactory } from "@app/services/user-alias/user-alias-dal";
+import { ensureSsoAccountVerified, isStaleSsoAlias } from "@app/services/user-alias/user-alias-fns";
 import { UserAliasType } from "@app/services/user-alias/user-alias-types";
 
+import { TEmailDomainDALFactory } from "../email-domain/email-domain-dal";
+import { verifyEmailDomainOwnership } from "../email-domain/email-domain-fns";
 import { TLicenseServiceFactory } from "../license/license-service";
 import { OrgPermissionActions, OrgPermissionSubjects } from "../permission/org-permission";
 import { TPermissionServiceFactory } from "../permission/permission-service-types";
@@ -50,7 +67,7 @@ import {
   TTestLdapConnectionDTO,
   TUpdateLdapCfgDTO
 } from "./ldap-config-types";
-import { searchGroups, testLDAPConfig } from "./ldap-fns";
+import { buildLdapTlsOptions, searchGroups, testLDAPConfig } from "./ldap-fns";
 import { TLdapGroupMapDALFactory } from "./ldap-group-map-dal";
 
 type TLdapConfigServiceFactoryDep = {
@@ -80,12 +97,15 @@ type TLdapConfigServiceFactoryDep = {
     | "find"
     | "findUserEncKeyByUserId"
   >;
-  userAliasDAL: Pick<TUserAliasDALFactory, "create" | "findOne">;
+  userAliasDAL: Pick<TUserAliasDALFactory, "create" | "findOne" | "updateById">;
   permissionService: Pick<TPermissionServiceFactory, "getOrgPermission">;
   licenseService: Pick<TLicenseServiceFactory, "getPlan" | "updateSubscriptionOrgMemberCount">;
   tokenService: Pick<TAuthTokenServiceFactory, "createTokenForUser">;
   smtpService: Pick<TSmtpService, "sendMail">;
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
+  loginService: Pick<TAuthLoginFactory, "processProviderCallback">;
+  emailDomainDAL: Pick<TEmailDomainDALFactory, "findOne">;
+  telemetryService: Pick<TTelemetryServiceFactory, "sendPostHogEvents">;
 };
 
 export type TLdapConfigServiceFactory = ReturnType<typeof ldapConfigServiceFactory>;
@@ -107,7 +127,10 @@ export const ldapConfigServiceFactory = ({
   licenseService,
   tokenService,
   smtpService,
-  kmsService
+  kmsService,
+  loginService,
+  emailDomainDAL,
+  telemetryService
 }: TLdapConfigServiceFactoryDep) => {
   const createLdapCfg = async ({
     actor,
@@ -124,13 +147,15 @@ export const ldapConfigServiceFactory = ({
     searchFilter,
     groupSearchBase,
     groupSearchFilter,
-    caCert
+    caCert,
+    clientCertificate,
+    clientKeyCertificate
   }: TCreateLdapCfgDTO) => {
     const { permission } = await permissionService.getOrgPermission({
       scope: OrganizationActionScope.ParentOrganization,
       actor,
       actorId,
-      orgId: actorOrgId,
+      orgId,
       actorAuthMethod,
       actorOrgId
     });
@@ -143,7 +168,7 @@ export const ldapConfigServiceFactory = ({
           "Failed to create LDAP configuration due to plan restriction. Upgrade plan to create LDAP configuration."
       });
 
-    const org = await orgDAL.findOrgById(orgId);
+    const org = await requestMemoize(requestMemoKeys.orgFindOrgById(orgId), () => orgDAL.findOrgById(orgId));
 
     if (!org) {
       throw new NotFoundError({ message: `Could not find organization with ID "${orgId}"` });
@@ -156,6 +181,14 @@ export const ldapConfigServiceFactory = ({
       });
     }
 
+    await blockLocalAndPrivateIpAddresses(url);
+
+    if (Boolean(clientCertificate) !== Boolean(clientKeyCertificate)) {
+      throw new BadRequestError({
+        message: "clientCertificate and clientKeyCertificate must be provided together for mTLS."
+      });
+    }
+
     const { encryptor } = await kmsService.createCipherPairWithDataKey({
       type: KmsDataKey.Organization,
       orgId
@@ -165,6 +198,8 @@ export const ldapConfigServiceFactory = ({
       bindDN,
       bindPass,
       caCert,
+      clientCertificate,
+      clientKeyCertificate,
       url
     });
 
@@ -185,8 +220,16 @@ export const ldapConfigServiceFactory = ({
       groupSearchFilter,
       encryptedLdapCaCertificate: encryptor({ plainText: Buffer.from(caCert) }).cipherTextBlob,
       encryptedLdapBindDN: encryptor({ plainText: Buffer.from(bindDN) }).cipherTextBlob,
-      encryptedLdapBindPass: encryptor({ plainText: Buffer.from(bindPass) }).cipherTextBlob
+      encryptedLdapBindPass: encryptor({ plainText: Buffer.from(bindPass) }).cipherTextBlob,
+      encryptedLdapClientCertificate: clientCertificate
+        ? encryptor({ plainText: Buffer.from(clientCertificate) }).cipherTextBlob
+        : null,
+      encryptedLdapClientKeyCertificate: clientKeyCertificate
+        ? encryptor({ plainText: Buffer.from(clientKeyCertificate) }).cipherTextBlob
+        : null
     });
+
+    recordSsoConfigChangeMetric({ provider: SsoProvider.Ldap, action: SsoConfigAction.Create, orgId });
 
     return ldapConfig;
   };
@@ -219,6 +262,16 @@ export const ldapConfigServiceFactory = ({
       caCert = decryptor({ cipherTextBlob: ldapConfig.encryptedLdapCaCertificate }).toString();
     }
 
+    let clientCertificate = "";
+    if (ldapConfig.encryptedLdapClientCertificate) {
+      clientCertificate = decryptor({ cipherTextBlob: ldapConfig.encryptedLdapClientCertificate }).toString();
+    }
+
+    let clientKeyCertificate = "";
+    if (ldapConfig.encryptedLdapClientKeyCertificate) {
+      clientKeyCertificate = decryptor({ cipherTextBlob: ldapConfig.encryptedLdapClientKeyCertificate }).toString();
+    }
+
     return {
       id: ldapConfig.id,
       organization: ldapConfig.orgId,
@@ -231,7 +284,9 @@ export const ldapConfigServiceFactory = ({
       searchFilter: ldapConfig.searchFilter,
       groupSearchBase: ldapConfig.groupSearchBase,
       groupSearchFilter: ldapConfig.groupSearchFilter,
-      caCert
+      caCert,
+      clientCertificate,
+      clientKeyCertificate
     };
   };
 
@@ -250,13 +305,15 @@ export const ldapConfigServiceFactory = ({
     searchFilter,
     groupSearchBase,
     groupSearchFilter,
-    caCert
+    caCert,
+    clientCertificate,
+    clientKeyCertificate
   }: TUpdateLdapCfgDTO) => {
     const { permission } = await permissionService.getOrgPermission({
       scope: OrganizationActionScope.ParentOrganization,
       actor,
       actorId,
-      orgId: actorOrgId,
+      orgId,
       actorAuthMethod,
       actorOrgId
     });
@@ -269,7 +326,7 @@ export const ldapConfigServiceFactory = ({
           "Failed to update LDAP configuration due to plan restriction. Upgrade plan to update LDAP configuration."
       });
 
-    const org = await orgDAL.findOrgById(orgId);
+    const org = await requestMemoize(requestMemoKeys.orgFindOrgById(orgId), () => orgDAL.findOrgById(orgId));
 
     if (!org) {
       throw new NotFoundError({ message: `Could not find organization with ID "${orgId}"` });
@@ -280,6 +337,10 @@ export const ldapConfigServiceFactory = ({
         message:
           "You cannot enable LDAP SSO while Google OAuth is enforced. Disable Google OAuth enforcement to enable LDAP SSO."
       });
+    }
+
+    if (url) {
+      await blockLocalAndPrivateIpAddresses(url);
     }
 
     const updateQuery: TLdapConfigsUpdate = {
@@ -309,9 +370,27 @@ export const ldapConfigServiceFactory = ({
       updateQuery.encryptedLdapCaCertificate = encryptor({ plainText: Buffer.from(caCert) }).cipherTextBlob;
     }
 
+    if (clientCertificate !== undefined) {
+      updateQuery.encryptedLdapClientCertificate = clientCertificate
+        ? encryptor({ plainText: Buffer.from(clientCertificate) }).cipherTextBlob
+        : null;
+    }
+
+    if (clientKeyCertificate !== undefined) {
+      updateQuery.encryptedLdapClientKeyCertificate = clientKeyCertificate
+        ? encryptor({ plainText: Buffer.from(clientKeyCertificate) }).cipherTextBlob
+        : null;
+    }
+
     const config = await ldapConfigDAL.transaction(async (tx) => {
       const [updatedLdapCfg] = await ldapConfigDAL.update({ orgId }, updateQuery, tx);
       const decryptedLdapCfg = await getLdapCfg({ orgId }, tx);
+
+      if (Boolean(decryptedLdapCfg.clientCertificate) !== Boolean(decryptedLdapCfg.clientKeyCertificate)) {
+        throw new BadRequestError({
+          message: "clientCertificate and clientKeyCertificate must be provided together for mTLS."
+        });
+      }
 
       const isSoftDeletion = !decryptedLdapCfg.url && !decryptedLdapCfg.bindDN && !decryptedLdapCfg.bindPass;
       if (!isSoftDeletion) {
@@ -327,6 +406,8 @@ export const ldapConfigServiceFactory = ({
       return updatedLdapCfg;
     });
 
+    recordSsoConfigChangeMetric({ provider: SsoProvider.Ldap, action: SsoConfigAction.Update, orgId });
+
     return config;
   };
 
@@ -341,14 +422,17 @@ export const ldapConfigServiceFactory = ({
       scope: OrganizationActionScope.ParentOrganization,
       actor,
       actorId,
-      orgId: actorOrgId,
+      orgId,
       actorAuthMethod,
       actorOrgId
     });
     ForbiddenError.from(permission).throwUnlessCan(OrgPermissionActions.Read, OrgPermissionSubjects.Ldap);
-    return getLdapCfg({
-      orgId
-    });
+    const ldap = await getLdapCfg({ orgId });
+    const { clientKeyCertificate, ...rest } = ldap;
+    return {
+      ...rest,
+      hasClientKeyCertificate: Boolean(clientKeyCertificate)
+    };
   };
 
   const bootLdap = async (organizationSlug: string) => {
@@ -360,6 +444,7 @@ export const ldapConfigServiceFactory = ({
       isActive: true
     });
 
+    const tlsOptions = buildLdapTlsOptions(ldapConfig);
     const opts = {
       server: {
         url: ldapConfig.url,
@@ -369,13 +454,7 @@ export const ldapConfigServiceFactory = ({
         searchBase: ldapConfig.searchBase,
         searchFilter: ldapConfig.searchFilter || "(uid={{username}})",
         // searchAttributes: ["uid", "uidNumber", "givenName", "sn", "mail"],
-        ...(ldapConfig.caCert !== ""
-          ? {
-              tlsOptions: {
-                ca: [ldapConfig.caCert]
-              }
-            }
-          : {})
+        ...(tlsOptions ? { tlsOptions } : {})
       },
       passReqToCallback: true
     };
@@ -383,18 +462,18 @@ export const ldapConfigServiceFactory = ({
     return { opts, ldapConfig };
   };
 
-  const ldapLogin = async ({
+  const ldapLoginInner = async ({
     ldapConfigId,
     externalId,
-    username,
     firstName,
     lastName,
     email,
     groups,
     orgId,
-    relayState
+    ip,
+    userAgent,
+    callbackPort
   }: TLdapLoginDTO) => {
-    const appCfg = getConfig();
     const serverCfg = await getServerCfg();
 
     if (serverCfg.enabledLoginMethods && !serverCfg.enabledLoginMethods.includes(LoginMethod.LDAP)) {
@@ -403,92 +482,110 @@ export const ldapConfigServiceFactory = ({
       });
     }
 
+    await verifyEmailDomainOwnership({ email, orgId, emailDomainDAL });
+    const sanitizedEmail = sanitizeEmail(email);
+    validateEmail(sanitizedEmail);
+
     let userAlias = await userAliasDAL.findOne({
       externalId,
       orgId,
       aliasType: UserAliasType.LDAP
     });
 
-    const organization = await orgDAL.findOrgById(orgId);
+    const organization = await requestMemoize(requestMemoKeys.orgFindOrgById(orgId), () => orgDAL.findOrgById(orgId));
     if (!organization) throw new NotFoundError({ message: `Organization with ID '${orgId}' not found` });
 
-    if (userAlias) {
-      await userDAL.transaction(async (tx) => {
-        const [orgMembership] = await orgDAL.findMembership(
-          {
-            [`${TableName.Membership}.actorUserId` as "actorUserId"]: userAlias.userId,
-            [`${TableName.Membership}.scopeOrgId` as "scopeOrgId"]: orgId,
-            [`${TableName.Membership}.scope` as "scope"]: AccessScope.Organization
-          },
-          { tx }
-        );
-        if (!orgMembership) {
-          const { role, roleId } = await getDefaultOrgMembershipRole(organization.defaultMembershipRole);
+    // When the org enforces SSO, the verified domain + IdP are authoritative, so we skip the
+    // separate email-verification step (the email-domain ownership check above already proves the
+    // org owns this domain, and password signup is blocked for enforced domains).
+    const skipEmailVerification = Boolean(organization.authEnforced);
 
-          const membership = await orgDAL.createMembership(
+    // A stale, still-unverified alias may point at another user's account. Don't mutate that
+    // account's org membership / group state until the IdP proves control of it (the
+    // email-verification fallback below issues no session). Resolved against the existing alias
+    // before any mutation; freshly created aliases are never stale.
+    let isStaleAlias = false;
+    if (userAlias) {
+      // Verify the existing user's stored email domain + cross-org check
+      const existingUser = await userDAL.findOne({ id: userAlias.userId });
+      if (existingUser) {
+        await verifyEmailDomainOwnership({
+          email: existingUser.username,
+          orgId,
+          emailDomainDAL
+        });
+        isStaleAlias = isStaleSsoAlias({ user: existingUser, userAlias, assertedEmail: sanitizedEmail });
+      }
+      if (!isStaleAlias)
+        await userDAL.transaction(async (tx) => {
+          const [orgMembership] = await orgDAL.findMembership(
             {
-              actorUserId: userAlias.userId,
-              scopeOrgId: orgId,
-              scope: AccessScope.Organization,
-              status: OrgMembershipStatus.Accepted,
-              isActive: true
+              [`${TableName.Membership}.actorUserId` as "actorUserId"]: userAlias.userId,
+              [`${TableName.Membership}.scopeOrgId` as "scopeOrgId"]: orgId,
+              [`${TableName.Membership}.scope` as "scope"]: AccessScope.Organization
             },
-            tx
+            { tx }
           );
-          await membershipRoleDAL.create(
-            {
-              membershipId: membership.id,
-              role,
-              customRoleId: roleId
-            },
-            tx
-          );
-        } else if (orgMembership.status === OrgMembershipStatus.Invited) {
-          await orgDAL.updateMembershipById(
-            orgMembership.id,
-            {
-              status: OrgMembershipStatus.Accepted
-            },
-            tx
-          );
-        }
-      });
+          if (!orgMembership) {
+            const { role, roleId } = await getDefaultOrgMembershipRole(organization.defaultMembershipRole);
+
+            const membership = await orgDAL.createMembership(
+              {
+                actorUserId: userAlias.userId,
+                scopeOrgId: orgId,
+                scope: AccessScope.Organization,
+                status: OrgMembershipStatus.Invited,
+                isActive: true
+              },
+              tx
+            );
+            await membershipRoleDAL.create(
+              {
+                membershipId: membership.id,
+                role,
+                customRoleId: roleId
+              },
+              tx
+            );
+          } else if (!orgMembership.isActive) {
+            throw new ForbiddenRequestError({ message: "User organization membership is inactive" });
+          }
+        });
     } else {
+      let isNewUser = false;
       userAlias = await userDAL.transaction(async (tx) => {
         let newUser: TUsers | undefined;
-        newUser = await userDAL.findOne(
-          {
-            email: email.toLowerCase(),
-            isEmailVerified: true
-          },
-          tx
-        );
+
+        newUser = await userDAL.findOne({ username: sanitizedEmail }, tx);
 
         if (!newUser) {
-          const uniqueUsername = await normalizeUsername(username, userDAL);
           newUser = await userDAL.create(
             {
-              username: serverCfg.trustLdapEmails ? email.toLowerCase() : uniqueUsername,
-              email: email.toLowerCase(),
-              isEmailVerified: serverCfg.trustLdapEmails,
+              username: sanitizedEmail,
+              email: sanitizedEmail,
               firstName,
               lastName,
               authMethods: [],
-              isGhost: false
+              isGhost: false,
+              isEmailVerified: skipEmailVerification,
+              isAccepted: skipEmailVerification
             },
             tx
           );
+          isNewUser = true;
+        } else if (!newUser.firstName && firstName) {
+          newUser = await userDAL.updateById(newUser.id, { firstName, ...(lastName ? { lastName } : {}) }, tx);
         }
 
         const newUserAlias = await userAliasDAL.create(
           {
             userId: newUser.id,
-            username,
+            username: sanitizedEmail,
             aliasType: UserAliasType.LDAP,
             externalId,
-            emails: [email],
+            emails: [sanitizedEmail],
             orgId,
-            isEmailVerified: serverCfg.trustLdapEmails
+            isEmailVerified: skipEmailVerification
           },
           tx
         );
@@ -511,9 +608,9 @@ export const ldapConfigServiceFactory = ({
               actorUserId: newUser.id,
               scopeOrgId: orgId,
               scope: AccessScope.Organization,
-              status: newUser.isAccepted ? OrgMembershipStatus.Accepted : OrgMembershipStatus.Invited, // if user is fully completed, then set status to accepted, otherwise set it to invited so we can update it later
+              status: OrgMembershipStatus.Invited,
               isActive: true,
-              inviteEmail: email.toLowerCase()
+              inviteEmail: sanitizedEmail
             },
             tx
           );
@@ -526,24 +623,29 @@ export const ldapConfigServiceFactory = ({
             tx
           );
           // Only update the membership to Accepted if the user account is already completed.
-        } else if (orgMembership.status === OrgMembershipStatus.Invited && newUser.isAccepted) {
-          await orgDAL.updateMembershipById(
-            orgMembership.id,
-            {
-              status: OrgMembershipStatus.Accepted
-            },
-            tx
-          );
         }
 
         return newUserAlias;
       });
+
+      if (isNewUser) {
+        void telemetryService.sendPostHogEvents({
+          event: PostHogEventTypes.UserSignedUp,
+          distinctId: sanitizedEmail,
+          organizationId: orgId,
+          properties: {
+            username: sanitizedEmail,
+            email: sanitizedEmail,
+            signupMethod: "ldap"
+          }
+        });
+      }
     }
     await licenseService.updateSubscriptionOrgMemberCount(organization.id);
 
-    const user = await userDAL.transaction(async (tx) => {
+    let user = await userDAL.transaction(async (tx) => {
       const newUser = await userDAL.findOne({ id: userAlias.userId }, tx);
-      if (groups) {
+      if (groups && !isStaleAlias) {
         const ldapGroupIdsToBePartOf = (
           await ldapGroupMapDAL.find({
             ldapConfigId,
@@ -620,36 +722,18 @@ export const ldapConfigServiceFactory = ({
       return newUser;
     });
 
-    const isUserCompleted = Boolean(user.isAccepted) && userAlias.isEmailVerified;
-    const providerAuthToken = crypto.jwt().sign(
-      {
-        authTokenType: AuthTokenType.PROVIDER_TOKEN,
-        userId: user.id,
-        username: user.username,
-        hasExchangedPrivateKey: true,
-        ...(user.email && { email: user.email, isEmailVerified: userAlias.isEmailVerified }),
-        firstName,
-        lastName,
-        organizationName: organization.name,
-        organizationId: organization.id,
-        organizationSlug: organization.slug,
-        authMethod: AuthMethod.LDAP,
-        authType: UserAliasType.LDAP,
-        aliasId: userAlias.id,
-        isUserCompleted,
-        ...(relayState
-          ? {
-              callbackPort: (JSON.parse(relayState) as { callbackPort: string }).callbackPort
-            }
-          : {})
-      },
-      appCfg.AUTH_SECRET,
-      {
-        expiresIn: appCfg.JWT_PROVIDER_AUTH_LIFETIME
-      }
-    );
+    // When SSO is enforced, mark the user + alias as verified/accepted before issuing a session.
+    if (skipEmailVerification) {
+      ({ user, userAlias } = await ensureSsoAccountVerified({
+        user,
+        userAlias,
+        assertedEmail: sanitizedEmail,
+        userDAL,
+        userAliasDAL
+      }));
+    }
 
-    if (user.email && !userAlias.isEmailVerified) {
+    if (user.email && (!userAlias.isEmailVerified || !user.isAccepted)) {
       const token = await tokenService.createTokenForUser({
         type: TokenType.TOKEN_EMAIL_VERIFICATION,
         userId: user.id,
@@ -658,7 +742,7 @@ export const ldapConfigServiceFactory = ({
 
       await smtpService.sendMail({
         template: SmtpTemplates.EmailVerification,
-        subjectLine: "Infisical confirmation code",
+        subjectLine: `Infisical confirmation code: ${token}`,
         recipients: [user.email],
         substitutions: {
           code: token
@@ -666,7 +750,67 @@ export const ldapConfigServiceFactory = ({
       });
     }
 
-    return { isUserCompleted, providerAuthToken };
+    const callbackResult = await loginService.processProviderCallback({
+      user,
+      authMethod: AuthMethod.LDAP,
+      isEmailVerified: Boolean(userAlias.isEmailVerified),
+      aliasId: userAlias.id,
+      ip,
+      userAgent,
+      organizationId: organization.id,
+      callbackPort
+    });
+
+    return callbackResult;
+  };
+
+  const ldapLogin = async (dto: TLdapLoginDTO) => {
+    const authMetricStartTime = performance.now();
+    const appCfg = getConfig();
+    try {
+      const callbackResult = await ldapLoginInner(dto);
+
+      if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
+        authAttemptCounter.add(1, {
+          "infisical.user.email": dto.email,
+          "infisical.organization.id": dto.orgId,
+          "infisical.auth.method": AuthAttemptAuthMethod.LDAP,
+          "infisical.auth.result": AuthAttemptAuthResult.SUCCESS,
+          "client.address": dto.ip,
+          "user_agent.original": dto.userAgent
+        });
+      }
+
+      recordAuthAttemptMetric({
+        startTime: authMetricStartTime,
+        method: AuthAttemptAuthMethod.LDAP,
+        result: AuthAttemptAuthResult.SUCCESS,
+        orgId: dto.orgId
+      });
+
+      return callbackResult;
+    } catch (error) {
+      if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
+        authAttemptCounter.add(1, {
+          "infisical.user.email": dto.email,
+          "infisical.organization.id": dto.orgId,
+          "infisical.auth.method": AuthAttemptAuthMethod.LDAP,
+          "infisical.auth.result": AuthAttemptAuthResult.FAILURE,
+          "client.address": dto.ip,
+          "user_agent.original": dto.userAgent
+        });
+      }
+
+      recordAuthAttemptMetric({
+        startTime: authMetricStartTime,
+        method: AuthAttemptAuthMethod.LDAP,
+        result: AuthAttemptAuthResult.FAILURE,
+        orgId: dto.orgId,
+        error
+      });
+
+      throw error;
+    }
   };
 
   const getLdapGroupMaps = async ({
@@ -681,7 +825,7 @@ export const ldapConfigServiceFactory = ({
       scope: OrganizationActionScope.ParentOrganization,
       actor,
       actorId,
-      orgId: actorOrgId,
+      orgId,
       actorAuthMethod,
       actorOrgId
     });
@@ -717,7 +861,7 @@ export const ldapConfigServiceFactory = ({
       scope: OrganizationActionScope.ParentOrganization,
       actor,
       actorId,
-      orgId: actorOrgId,
+      orgId,
       actorAuthMethod,
       actorOrgId
     });
@@ -778,7 +922,7 @@ export const ldapConfigServiceFactory = ({
       scope: OrganizationActionScope.ParentOrganization,
       actor,
       actorId,
-      orgId: actorOrgId,
+      orgId,
       actorAuthMethod,
       actorOrgId
     });
@@ -818,13 +962,15 @@ export const ldapConfigServiceFactory = ({
     bindDN,
     bindPass,
     caCert,
+    clientCertificate,
+    clientKeyCertificate,
     url
   }: TTestLdapConnectionDTO) => {
     const { permission } = await permissionService.getOrgPermission({
       scope: OrganizationActionScope.ParentOrganization,
       actor,
       actorId,
-      orgId: actorOrgId,
+      orgId,
       actorAuthMethod,
       actorOrgId
     });
@@ -836,10 +982,18 @@ export const ldapConfigServiceFactory = ({
         message: "Failed to test LDAP connection due to plan restriction. Upgrade plan to test the LDAP connection."
       });
 
+    if (Boolean(clientCertificate) !== Boolean(clientKeyCertificate)) {
+      throw new BadRequestError({
+        message: "clientCertificate and clientKeyCertificate must be provided together for mTLS."
+      });
+    }
+
     return testLDAPConfig({
       bindDN,
       bindPass,
       caCert,
+      clientCertificate,
+      clientKeyCertificate,
       url
     });
   };

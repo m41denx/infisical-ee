@@ -1,7 +1,7 @@
 import { Knex } from "knex";
 
 import { TDbClient } from "@app/db";
-import { AccessScope, TableName, TMemberships, TUserEncryptionKeys } from "@app/db/schemas";
+import { AccessScope, TableName, TMemberships } from "@app/db/schemas";
 import { DatabaseError } from "@app/lib/errors";
 import { sqlNestRelationships } from "@app/lib/knex";
 
@@ -93,15 +93,17 @@ export const groupProjectDALFactory = (db: TDbClient) => {
 
   const findByUserId = async (userId: string, orgId: string, tx?: Knex) => {
     try {
+      // Find groups visible in the org (native + linked from root org) that the user belongs to
+      const groupsVisibleInOrg = (tx || db.replicaNode())(TableName.Membership)
+        .where(`${TableName.Membership}.scopeOrgId`, orgId)
+        .where(`${TableName.Membership}.scope`, AccessScope.Organization)
+        .whereNotNull(`${TableName.Membership}.actorGroupId`)
+        .select(`${TableName.Membership}.actorGroupId`);
+
       const docs = await (tx || db.replicaNode())(TableName.UserGroupMembership)
         .where(`${TableName.UserGroupMembership}.userId`, userId)
-        .join(TableName.Groups, (qb) => {
-          qb.on(`${TableName.UserGroupMembership}.groupId`, "=", `${TableName.Groups}.id`).andOn(
-            `${TableName.Groups}.orgId`,
-            "=",
-            db.raw("?", [orgId])
-          );
-        })
+        .whereIn(`${TableName.UserGroupMembership}.groupId`, groupsVisibleInOrg)
+        .join(TableName.Groups, `${TableName.UserGroupMembership}.groupId`, `${TableName.Groups}.id`)
         .select(
           db.ref("id").withSchema(TableName.Groups),
           db.ref("name").withSchema(TableName.Groups),
@@ -130,14 +132,9 @@ export const groupProjectDALFactory = (db: TDbClient) => {
       .where(`${TableName.Membership}.scopeProjectId`, projectId)
       .where(`${TableName.Membership}.scope`, AccessScope.Project)
       .join(TableName.Users, `${TableName.UserGroupMembership}.userId`, `${TableName.Users}.id`)
-      .join<TUserEncryptionKeys>(
-        TableName.UserEncryptionKey,
-        `${TableName.UserEncryptionKey}.userId`,
-        `${TableName.Users}.id`
-      )
       .join(TableName.MembershipRole, `${TableName.MembershipRole}.membershipId`, `${TableName.Membership}.id`)
       .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
-      .join<TMemberships>(db(TableName.Membership).as("orgMembership"), (qb) => {
+      .leftJoin<TMemberships>(db(TableName.Membership).as("orgMembership"), (qb) => {
         qb.on(`${TableName.Users}.id`, `orgMembership.actorUserId`)
           .andOn(`orgMembership.scope`, db.raw("?", [AccessScope.Organization]))
           .andOn(`orgMembership.scopeOrgId`, `${TableName.Project}.orgId`);
@@ -148,7 +145,6 @@ export const groupProjectDALFactory = (db: TDbClient) => {
         db.ref("isGhost").withSchema(TableName.Users),
         db.ref("username").withSchema(TableName.Users),
         db.ref("email").withSchema(TableName.Users),
-        db.ref("publicKey").withSchema(TableName.UserEncryptionKey),
         db.ref("firstName").withSchema(TableName.Users),
         db.ref("lastName").withSchema(TableName.Users),
         db.ref("id").withSchema(TableName.Users).as("userId"),
@@ -174,7 +170,6 @@ export const groupProjectDALFactory = (db: TDbClient) => {
         firstName,
         username,
         lastName,
-        publicKey,
         isGhost,
         id,
         userId,
@@ -190,7 +185,16 @@ export const groupProjectDALFactory = (db: TDbClient) => {
           id: projectId,
           name: projectName
         },
-        user: { email, username, firstName, lastName, id: userId, publicKey, isGhost, isOrgMembershipActive: isActive },
+        user: {
+          email,
+          username,
+          firstName,
+          lastName,
+          id: userId,
+          publicKey: "",
+          isGhost,
+          isOrgMembershipActive: isActive ?? true
+        },
         createdAt
       }),
       key: "id",

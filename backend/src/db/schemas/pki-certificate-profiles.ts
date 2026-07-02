@@ -11,7 +11,7 @@ export const PkiCertificateProfilesSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string(),
   caId: z.string().uuid().nullable().optional(),
-  certificateTemplateId: z.string().uuid(),
+  certificatePolicyId: z.string().uuid(),
   slug: z.string(),
   description: z.string().nullable().optional(),
   enrollmentType: z.string(),
@@ -20,7 +20,10 @@ export const PkiCertificateProfilesSchema = z.object({
   createdAt: z.date(),
   updatedAt: z.date(),
   acmeConfigId: z.string().uuid().nullable().optional(),
-  issuerType: z.string().default("ca")
+  issuerType: z.string().default("ca"),
+  externalConfigs: z.string().nullable().optional(),
+  defaults: z.unknown().nullable().optional(),
+  scepConfigId: z.string().uuid().nullable().optional()
 });
 
 export type TPkiCertificateProfiles = z.infer<typeof PkiCertificateProfilesSchema>;

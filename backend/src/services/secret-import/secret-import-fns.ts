@@ -3,9 +3,10 @@ import RE2 from "re2";
 import { SecretType, TSecretImports, TSecrets, TSecretsV2 } from "@app/db/schemas";
 import { groupBy, unique } from "@app/lib/fn";
 
-import { ResourceMetadataDTO } from "../resource-metadata/resource-metadata-schema";
+import { ResourceMetadataWithEncryptionDTO } from "../resource-metadata/resource-metadata-schema";
 import { TSecretDALFactory } from "../secret/secret-dal";
 import { INFISICAL_SECRET_VALUE_HIDDEN_MASK } from "../secret/secret-fns";
+import { PersonalOverridesBehavior, SecretsOrderBy } from "../secret/secret-types";
 import { TSecretFolderDALFactory } from "../secret-folder/secret-folder-dal";
 import { TSecretV2BridgeDALFactory } from "../secret-v2-bridge/secret-v2-bridge-dal";
 import { TSecretImportDALFactory } from "./secret-import-dal";
@@ -50,7 +51,7 @@ type TSecretImportSecretsV2 = {
     secretValue: string;
     secretValueHidden: boolean;
     secretComment: string;
-    secretMetadata?: ResourceMetadataDTO;
+    secretMetadata?: ResourceMetadataWithEncryptionDTO;
   })[];
 };
 
@@ -61,7 +62,7 @@ const RESERVED_IMPORT_REGEX = new RE2("/__reserve_replication_([a-f0-9-]{36})");
 /**
  * Processes reserved imports by resolving them to their replication source.
  */
-const processReservedImports = async <
+export const processReservedImports = async <
   T extends {
     isReserved?: boolean | null;
     importPath: string;
@@ -148,9 +149,18 @@ export const fnSecretsFromImports = async ({
     ({ importPath, importEnv }) => !cyclicDetector.has(getImportUniqKey(importEnv.slug, importPath))
   );
 
+  // Deduplicate imports with same (env, path) within this batch
+  const seenInBatch = new Set<string>();
+  const uniqueImports = allowedImports.filter(({ importPath, importEnv }) => {
+    const key = getImportUniqKey(importEnv.slug, importPath);
+    if (seenInBatch.has(key)) return false;
+    seenInBatch.add(key);
+    return true;
+  });
+
   const importedFolders = (
     await folderDAL.findByManySecretPath(
-      allowedImports.map(({ importEnv, importPath }) => ({
+      uniqueImports.map(({ importEnv, importPath }) => ({
         envId: importEnv.id,
         secretPath: importPath
       }))
@@ -174,7 +184,7 @@ export const fnSecretsFromImports = async ({
 
   const importedSecretsGroupByFolderId = groupBy(importedSecrets, (i) => i.folderId);
 
-  allowedImports.forEach(({ importPath, importEnv }) => {
+  uniqueImports.forEach(({ importPath, importEnv }) => {
     cyclicDetector.add(getImportUniqKey(importEnv.slug, importPath));
   });
   // now we need to check recursively deeper imports made inside other imports
@@ -193,7 +203,7 @@ export const fnSecretsFromImports = async ({
   }
   const secretsFromdeeperImportGroupedByFolderId = groupBy(secretsFromDeeperImports, (i) => i.importFolderId);
 
-  const secrets = allowedImports.map(({ importPath, importEnv, id, folderId }, i) => {
+  const secrets = uniqueImports.map(({ importPath, importEnv, id, folderId }, i) => {
     const sourceImportFolder = importedFolderGroupBySourceImport?.[`${importEnv.id}-${importPath}`]?.[0];
     const folderDeeperImportSecrets =
       secretsFromdeeperImportGroupedByFolderId?.[sourceImportFolder?.id || ""]?.[0]?.secrets || [];
@@ -229,14 +239,16 @@ export const fnSecretsV2FromImports = async ({
   decryptor,
   expandSecretReferences,
   hasSecretAccess,
-  viewSecretValue
+  viewSecretValue,
+  userId,
+  personalOverridesBehavior
 }: {
   secretImports: (Omit<TSecretImports, "importEnv"> & {
     importEnv: { id: string; slug: string; name: string };
   })[];
   folderDAL: Pick<TSecretFolderDALFactory, "findByManySecretPath">;
   viewSecretValue: boolean;
-  secretDAL: Pick<TSecretV2BridgeDALFactory, "find">;
+  secretDAL: Pick<TSecretV2BridgeDALFactory, "find" | "findByFolderIds">;
   secretImportDAL: Pick<TSecretImportDALFactory, "findByFolderIds" | "findByIds">;
   decryptor: (value?: Buffer | null) => string;
   expandSecretReferences?: (inputSecret: {
@@ -247,6 +259,8 @@ export const fnSecretsV2FromImports = async ({
     secretKey: string;
   }) => Promise<string | undefined>;
   hasSecretAccess: (environment: string, secretPath: string, secretName: string, secretTagSlugs: string[]) => boolean;
+  userId?: string;
+  personalOverridesBehavior?: PersonalOverridesBehavior;
 }) => {
   const cyclicDetector = new Set();
   const stack: {
@@ -260,6 +274,11 @@ export const fnSecretsV2FromImports = async ({
 
   const processedImports: TSecretImportSecretsV2[] = [];
 
+  // `find` returns `projectId`, `findByFolderIds` returns `secretReminderRecipients`.
+  // Neither extra field is used downstream for imports, so we define a common base type
+  // by omitting both, allowing either result to be assigned without unsafe casts.
+  type TImportedSecret = Omit<Awaited<ReturnType<typeof secretDAL.find>>[number], "projectId">;
+
   while (stack.length) {
     const { secretImports, depth, parentImportedSecrets } = stack.pop()!;
 
@@ -270,8 +289,17 @@ export const fnSecretsV2FromImports = async ({
 
     if (!sanitizedImports.length) continue;
 
+    // Deduplicate imports with same (env, path) within this batch
+    const seenInBatch = new Set<string>();
+    const uniqueImports = sanitizedImports.filter(({ importPath, importEnv }) => {
+      const key = getImportUniqKey(importEnv.slug, importPath);
+      if (seenInBatch.has(key)) return false;
+      seenInBatch.add(key);
+      return true;
+    });
+
     const importedFolders = await folderDAL.findByManySecretPath(
-      sanitizedImports.map(({ importEnv, importPath }) => ({
+      uniqueImports.map(({ importEnv, importPath }) => ({
         envId: importEnv.id,
         secretPath: importPath
       }))
@@ -284,18 +312,51 @@ export const fnSecretsV2FromImports = async ({
 
     const importedFolderGroupBySourceImport = groupBy(importedFolders, (i) => `${i?.envId}-${i?.path}`);
 
-    const importedSecrets = await secretDAL.find(
-      {
-        $in: { folderId: importedFolderIds },
-        type: SecretType.Shared
-      },
-      {
-        sort: [["id", "asc"]]
+    const shouldIncludePersonal =
+      userId &&
+      (personalOverridesBehavior === PersonalOverridesBehavior.Priority ||
+        personalOverridesBehavior === PersonalOverridesBehavior.IncludeAll);
+
+    let importedSecrets: TImportedSecret[];
+
+    if (shouldIncludePersonal) {
+      const allSecrets = await secretDAL.findByFolderIds({
+        folderIds: importedFolderIds,
+        userId,
+        filters: { orderBy: SecretsOrderBy.Name }
+      });
+
+      if (personalOverridesBehavior === PersonalOverridesBehavior.Priority) {
+        // Personal overrides replace shared secrets with the same key per folder
+        const secretMap = new Map<string, (typeof allSecrets)[number]>();
+        allSecrets.forEach((el) => {
+          const key = `${el.key}-${el.folderId}`;
+          const existing = secretMap.get(key);
+          if (!existing) {
+            secretMap.set(key, el);
+          } else if (el.type === SecretType.Personal) {
+            secretMap.set(key, el);
+          }
+        });
+        importedSecrets = Array.from(secretMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+      } else {
+        importedSecrets = allSecrets;
       }
-    );
+    } else {
+      importedSecrets = await secretDAL.find(
+        {
+          $in: { folderId: importedFolderIds },
+          type: SecretType.Shared
+        },
+        {
+          sort: [["key", "asc"]]
+        }
+      );
+    }
+
     const importedSecretsGroupByFolderId = groupBy(importedSecrets, (i) => i.folderId);
 
-    const processedBatchImports = await processReservedImports(sanitizedImports, secretImportDAL);
+    const processedBatchImports = await processReservedImports(uniqueImports, secretImportDAL);
 
     processedBatchImports.forEach(({ importPath, importEnv }) => {
       cyclicDetector.add(getImportUniqKey(importEnv.slug, importPath));
@@ -320,6 +381,11 @@ export const fnSecretsV2FromImports = async ({
         .map((item) => ({
           ...item,
           secretKey: item.key,
+          secretMetadata: item.secretMetadata.map((metadata) => ({
+            key: metadata.key,
+            value: metadata.encryptedValue ? decryptor(metadata.encryptedValue) : metadata.value || "",
+            isEncrypted: Boolean(metadata.encryptedValue)
+          })),
           secretValue: viewSecretValue ? decryptor(item.encryptedValue) : INFISICAL_SECRET_VALUE_HIDDEN_MASK,
           secretValueHidden: !viewSecretValue,
           secretTags: item.tags,

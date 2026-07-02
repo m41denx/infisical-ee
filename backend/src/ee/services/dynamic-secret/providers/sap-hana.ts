@@ -9,35 +9,26 @@ import hdb from "hdb";
 import { customAlphabet } from "nanoid";
 import { z } from "zod";
 
+import { TDynamicSecrets } from "@app/db/schemas";
 import { BadRequestError } from "@app/lib/errors";
 import { sanitizeString } from "@app/lib/fn";
-import { alphaNumericNanoId } from "@app/lib/nanoid";
 import { validateHandlebarTemplate } from "@app/lib/template/validate-handlebars";
 
+import { ActorIdentityAttributes } from "../../dynamic-secret-lease/dynamic-secret-lease-types";
 import { verifyHostInputValidity } from "../dynamic-secret-fns";
 import { DynamicSecretSapHanaSchema, TDynamicProviderFns } from "./models";
-import { compileUsernameTemplate } from "./templateUtils";
+import { generateUsername } from "./templateUtils";
 
 const generatePassword = (size = 48) => {
   const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   return customAlphabet(charset, 48)(size);
 };
 
-const generateUsername = (usernameTemplate?: string | null, identity?: { name: string }) => {
-  const randomUsername = alphaNumericNanoId(32); // Username must start with an ascii letter, so we prepend the username with "inf-"
-  if (!usernameTemplate) return randomUsername;
-  return compileUsernameTemplate({
-    usernameTemplate,
-    randomUsername,
-    identity
-  });
-};
-
 export const SapHanaProvider = (): TDynamicProviderFns => {
   const validateProviderInputs = async (inputs: unknown) => {
     const providerInputs = await DynamicSecretSapHanaSchema.parseAsync(inputs);
 
-    await verifyHostInputValidity(providerInputs.host);
+    await verifyHostInputValidity({ host: providerInputs.host, isDynamicSecret: true });
     validateHandlebarTemplate("SAP Hana creation", providerInputs.creationStatement, {
       allowedExpressions: (val) => ["username", "password", "expiration"].includes(val)
     });
@@ -60,7 +51,8 @@ export const SapHanaProvider = (): TDynamicProviderFns => {
       password: providerInputs.password,
       ...(providerInputs.ca
         ? {
-            ca: providerInputs.ca
+            ca: providerInputs.ca,
+            rejectUnauthorized: providerInputs.sslRejectUnauthorized
           }
         : {})
     });
@@ -110,12 +102,17 @@ export const SapHanaProvider = (): TDynamicProviderFns => {
     inputs: unknown;
     expireAt: number;
     usernameTemplate?: string | null;
-    identity?: { name: string };
+    identity: ActorIdentityAttributes;
+    dynamicSecret: TDynamicSecrets;
   }) => {
-    const { inputs, expireAt, usernameTemplate, identity } = data;
+    const { inputs, expireAt, usernameTemplate, identity, dynamicSecret } = data;
     const providerInputs = await validateProviderInputs(inputs);
 
-    const username = generateUsername(usernameTemplate, identity);
+    const username = await generateUsername(usernameTemplate, {
+      decryptedDynamicSecretInputs: inputs,
+      dynamicSecret,
+      identity
+    });
     const password = generatePassword();
     const expiration = new Date(expireAt).toISOString();
 
@@ -152,7 +149,7 @@ export const SapHanaProvider = (): TDynamicProviderFns => {
   const revoke = async (inputs: unknown, username: string) => {
     const providerInputs = await validateProviderInputs(inputs);
     const client = await $getClient(providerInputs);
-    const revokeStatement = handlebars.compile(providerInputs.revocationStatement)({ username });
+    const revokeStatement = handlebars.compile(providerInputs.revocationStatement, { noEscape: true })({ username });
     const queries = revokeStatement.toString().split(";").filter(Boolean);
     try {
       for await (const query of queries) {
@@ -186,7 +183,10 @@ export const SapHanaProvider = (): TDynamicProviderFns => {
     try {
       const expiration = new Date(expireAt).toISOString();
 
-      const renewStatement = handlebars.compile(providerInputs.renewStatement)({ username: entityId, expiration });
+      const renewStatement = handlebars.compile(providerInputs.renewStatement, { noEscape: true })({
+        username: entityId,
+        expiration
+      });
       const queries = renewStatement.toString().split(";").filter(Boolean);
       for await (const query of queries) {
         await new Promise((resolve, reject) => {

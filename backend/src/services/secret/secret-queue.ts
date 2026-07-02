@@ -1,12 +1,12 @@
 /* eslint-disable no-await-in-loop */
 import opentelemetry from "@opentelemetry/api";
 import { AxiosError } from "axios";
+import { randomUUID } from "crypto";
 import { Knex } from "knex";
 
 import {
   AccessScope,
   ProjectMembershipRole,
-  ProjectType,
   ProjectUpgradeStatus,
   ProjectVersion,
   SecretType,
@@ -14,11 +14,10 @@ import {
   TSecretVersionsV2
 } from "@app/db/schemas";
 import { Actor, EventType, TAuditLogServiceFactory } from "@app/ee/services/audit-log/audit-log-types";
-import { TEventBusService } from "@app/ee/services/event/event-bus-service";
-import { BusEventName, PublishableEvent, TopicName } from "@app/ee/services/event/types";
 import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
+import { TProjectEventsService } from "@app/ee/services/project-events/project-events-service";
+import { ProjectEvents, TProjectEventPayload } from "@app/ee/services/project-events/project-events-types";
 import { TSecretApprovalRequestDALFactory } from "@app/ee/services/secret-approval-request/secret-approval-request-dal";
-import { TSecretRotationDALFactory } from "@app/ee/services/secret-rotation/secret-rotation-dal";
 import { TSnapshotDALFactory } from "@app/ee/services/secret-snapshot/snapshot-dal";
 import { TSnapshotSecretV2DALFactory } from "@app/ee/services/secret-snapshot/snapshot-secret-v2-dal";
 import { KeyStorePrefixes, KeyStoreTtls, TKeyStoreFactory } from "@app/keystore/keystore";
@@ -27,6 +26,8 @@ import { crypto, SymmetricKeySize } from "@app/lib/crypto/cryptography";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { getTimeDifferenceInSeconds, groupBy, isSamePath, unique } from "@app/lib/fn";
 import { logger } from "@app/lib/logger";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue";
 import { TProjectBotDALFactory } from "@app/services/project-bot/project-bot-dal";
 import { createManySecretsRawFnFactory, updateManySecretsRawFnFactory } from "@app/services/secret/secret-fns";
@@ -38,6 +39,7 @@ import { TSecretTagDALFactory } from "@app/services/secret-tag/secret-tag-dal";
 
 import { ActorType } from "../auth/auth-type";
 import { TFolderCommitServiceFactory } from "../folder-commit/folder-commit-service";
+import { TIdentityDALFactory } from "../identity/identity-dal";
 import { TIntegrationDALFactory } from "../integration/integration-dal";
 import { TIntegrationAuthDALFactory } from "../integration-auth/integration-auth-dal";
 import { TIntegrationAuthServiceFactory } from "../integration-auth/integration-auth-service";
@@ -59,10 +61,11 @@ import { ResourceMetadataDTO } from "../resource-metadata/resource-metadata-sche
 import { TSecretFolderDALFactory } from "../secret-folder/secret-folder-dal";
 import { TSecretImportDALFactory } from "../secret-import/secret-import-dal";
 import { fnSecretsV2FromImports } from "../secret-import/secret-import-fns";
+import { expandSecretReferencesFactory, getAllSecretReferences } from "../secret-v2-bridge/secret-reference-fns";
 import { TSecretV2BridgeDALFactory } from "../secret-v2-bridge/secret-v2-bridge-dal";
-import { expandSecretReferencesFactory, getAllSecretReferences } from "../secret-v2-bridge/secret-v2-bridge-fns";
 import { TSecretVersionV2DALFactory } from "../secret-v2-bridge/secret-version-dal";
 import { TSecretVersionV2TagDALFactory } from "../secret-v2-bridge/secret-version-tag-dal";
+import { TServiceTokenDALFactory } from "../service-token/service-token-dal";
 import { SmtpTemplates, TSmtpService } from "../smtp/smtp-service";
 import { TTelemetryServiceFactory } from "../telemetry/telemetry-service";
 import { PostHogEventTypes } from "../telemetry/telemetry-types";
@@ -103,13 +106,14 @@ type TSecretQueueFactoryDep = {
   secretVersionDAL: TSecretVersionDALFactory;
   secretBlindIndexDAL: TSecretBlindIndexDALFactory;
   secretTagDAL: TSecretTagDALFactory;
+  identityDAL: Pick<TIdentityDALFactory, "findById">;
   userDAL: Pick<TUserDALFactory, "findById">;
+  serviceTokenDAL: Pick<TServiceTokenDALFactory, "findById">;
   secretVersionTagDAL: TSecretVersionTagDALFactory;
   kmsService: TKmsServiceFactory;
   secretV2BridgeDAL: TSecretV2BridgeDALFactory;
   secretVersionV2BridgeDAL: Pick<TSecretVersionV2DALFactory, "batchInsert" | "insertMany" | "findLatestVersionMany">;
   secretVersionTagV2BridgeDAL: Pick<TSecretVersionV2TagDALFactory, "insertMany" | "batchInsert">;
-  secretRotationDAL: Pick<TSecretRotationDALFactory, "secretOutputV2InsertMany" | "find">;
   secretApprovalRequestDAL: Pick<TSecretApprovalRequestDALFactory, "deleteByProjectId">;
   snapshotDAL: Pick<TSnapshotDALFactory, "findNSecretV1SnapshotByFolderId" | "deleteSnapshotsAboveLimit">;
   snapshotSecretV2BridgeDAL: Pick<TSnapshotSecretV2DALFactory, "insertMany" | "batchInsert">;
@@ -120,7 +124,7 @@ type TSecretQueueFactoryDep = {
   folderCommitService: Pick<TFolderCommitServiceFactory, "createCommit">;
   secretSyncQueue: Pick<TSecretSyncQueueFactory, "queueSecretSyncsSyncSecretsByPath">;
   reminderService: Pick<TReminderServiceFactory, "createReminderInternal" | "deleteReminderBySecretId">;
-  eventBusService: TEventBusService;
+  projectEventsService: TProjectEventsService;
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
   telemetryService: Pick<TTelemetryServiceFactory, "sendPostHogEvents">;
 };
@@ -157,7 +161,9 @@ export const secretQueueFactory = ({
   secretDAL,
   secretImportDAL,
   folderDAL,
+  identityDAL,
   userDAL,
+  serviceTokenDAL,
   webhookDAL,
   projectEnvDAL,
   smtpService,
@@ -172,8 +178,8 @@ export const secretQueueFactory = ({
   secretVersionV2BridgeDAL,
   kmsService,
   secretVersionTagV2BridgeDAL,
-  secretRotationDAL,
   snapshotDAL,
+
   snapshotSecretV2BridgeDAL,
   secretApprovalRequestDAL,
   keyStore,
@@ -184,7 +190,7 @@ export const secretQueueFactory = ({
   secretSyncQueue,
   folderCommitService,
   reminderService,
-  eventBusService,
+  projectEventsService,
   licenseService,
   membershipUserDAL,
   membershipRoleDAL,
@@ -224,6 +230,35 @@ export const secretQueueFactory = ({
       type: ActorType.PLATFORM,
       metadata: {}
     };
+  };
+
+  const resolveChangedByDisplayName = async (changedBy: string, changedByActorType: ActorType) => {
+    try {
+      switch (changedByActorType) {
+        case ActorType.USER: {
+          const user = await userDAL.findById(changedBy);
+          return user?.email || user?.username || changedBy;
+        }
+        case ActorType.IDENTITY: {
+          const identity = await requestMemoize(requestMemoKeys.identityFindById(changedBy), () =>
+            identityDAL.findById(changedBy)
+          );
+          return identity?.name || changedBy;
+        }
+        case ActorType.SERVICE: {
+          const token = await serviceTokenDAL.findById(changedBy);
+          return token?.name || "Service Token";
+        }
+        default:
+          return `Unknown Actor [${String(changedByActorType)}]`;
+      }
+    } catch (error) {
+      logger.error(
+        error,
+        `Failed to resolve changed by display name for [changedBy=${changedBy}] [changedByActorType=${changedByActorType}]`
+      );
+      return `Failed to resolve display name`;
+    }
   };
 
   const $getJobKey = (projectId: string, environmentSlug: string, secretPath: string) => {
@@ -383,7 +418,11 @@ export const secretQueueFactory = ({
         }
 
         content[secretKey].skipMultilineEncoding = Boolean(secret.skipMultilineEncoding);
-        content[secretKey].secretMetadata = secret.secretMetadata;
+        content[secretKey].secretMetadata = secret.secretMetadata.map((el) => ({
+          isEncrypted: Boolean(el.encryptedValue),
+          key: el.key,
+          value: el.encryptedValue ? dto.decryptor(el.encryptedValue) : el.value || ""
+        }));
       })
     );
 
@@ -534,7 +573,8 @@ export const secretQueueFactory = ({
         delay: 3000
       },
       removeOnComplete: true,
-      removeOnFail: true
+      removeOnFail: true,
+      jobId: randomUUID()
     });
   };
 
@@ -546,54 +586,9 @@ export const secretQueueFactory = ({
         delay: 3000
       },
       removeOnComplete: true,
-      removeOnFail: true
+      removeOnFail: true,
+      jobId: randomUUID()
     });
-  };
-
-  const publishEvents = async (event: PublishableEvent) => {
-    if (event.created) {
-      await eventBusService.publish(TopicName.CoreServers, {
-        type: ProjectType.SecretManager,
-        source: "infiscal",
-        data: {
-          event: BusEventName.CreateSecret,
-          payload: event.created
-        }
-      });
-    }
-
-    if (event.updated) {
-      await eventBusService.publish(TopicName.CoreServers, {
-        type: ProjectType.SecretManager,
-        source: "infiscal",
-        data: {
-          event: BusEventName.UpdateSecret,
-          payload: event.updated
-        }
-      });
-    }
-
-    if (event.deleted) {
-      await eventBusService.publish(TopicName.CoreServers, {
-        type: ProjectType.SecretManager,
-        source: "infiscal",
-        data: {
-          event: BusEventName.DeleteSecret,
-          payload: event.deleted
-        }
-      });
-    }
-
-    if (event.importMutation) {
-      await eventBusService.publish(TopicName.CoreServers, {
-        type: ProjectType.SecretManager,
-        source: "infiscal",
-        data: {
-          event: BusEventName.ImportMutation,
-          payload: event.importMutation
-        }
-      });
-    }
   };
 
   const syncSecrets = async <T extends boolean = false>({
@@ -601,9 +596,9 @@ export const secretQueueFactory = ({
     _deDupeQueue: deDupeQueue = {},
     _depth: depth = 0,
     _deDupeReplicationQueue: deDupeReplicationQueue = {},
-    event,
+    events: event,
     ...dto
-  }: TSyncSecretsDTO<T> & { event?: PublishableEvent }) => {
+  }: TSyncSecretsDTO<T> & { events?: TProjectEventPayload[] }) => {
     logger.info(
       `syncSecrets: syncing project secrets where [projectId=${dto.projectId}]  [environment=${dto.environmentSlug}] [path=${dto.secretPath}]`
     );
@@ -611,7 +606,9 @@ export const secretQueueFactory = ({
     const plan = await licenseService.getPlan(dto.orgId);
 
     if (event && plan.eventSubscriptions) {
-      await publishEvents(event);
+      for await (const singleEvent of event) {
+        await projectEventsService.publish(singleEvent);
+      }
     }
 
     const deDuplicationKey = uniqueSecretQueueKey(dto.environmentSlug, dto.secretPath);
@@ -669,6 +666,7 @@ export const secretQueueFactory = ({
       projectId,
       orgId,
       environmentSlug: environment,
+      environmentName,
       excludeReplication,
       actorId,
       actor
@@ -681,8 +679,11 @@ export const secretQueueFactory = ({
         type: WebhookEvents.SecretModified,
         payload: {
           environment,
+          environmentName,
           projectId,
-          secretPath
+          secretPath,
+          changedBy: actorId,
+          changedByActorType: actor
         }
       },
       {
@@ -715,7 +716,8 @@ export const secretQueueFactory = ({
         actorId,
         actor,
         excludeReplication,
-        environmentSlug: environment
+        environmentSlug: environment,
+        environmentName
       });
     }
   });
@@ -806,15 +808,18 @@ export const secretQueueFactory = ({
                 orgId: project.orgId,
                 secretPath: foldersGroupedById[folderId][0]?.path as string,
                 environmentSlug: foldersGroupedById[folderId][0]?.environmentSlug as string,
+                environmentName: foldersGroupedById[folderId][0]?.environmentName as string,
                 _deDupeQueue: deDupeQueue,
                 _depth: depth + 1,
                 excludeReplication: true,
-                event: {
-                  importMutation: {
+                events: [
+                  {
+                    type: ProjectEvents.SecretImportMutation,
+                    projectId,
                     secretPath: foldersGroupedById[folderId][0]?.path as string,
                     environment: foldersGroupedById[folderId][0]?.environmentSlug as string
                   }
-                }
+                ]
               })
             )
         );
@@ -865,15 +870,18 @@ export const secretQueueFactory = ({
                 orgId: project.orgId,
                 secretPath: referencedFoldersGroupedById[folderId][0]?.path as string,
                 environmentSlug: referencedFoldersGroupedById[folderId][0]?.environmentSlug as string,
+                environmentName: referencedFoldersGroupedById[folderId][0]?.environmentName as string,
                 _deDupeQueue: deDupeQueue,
                 _depth: depth + 1,
                 excludeReplication: true,
-                event: {
-                  importMutation: {
+                events: [
+                  {
+                    type: ProjectEvents.SecretImportMutation,
+                    projectId,
                     secretPath: referencedFoldersGroupedById[folderId][0]?.path as string,
                     environment: referencedFoldersGroupedById[folderId][0]?.environmentSlug as string
                   }
-                }
+                ]
               })
             )
         );
@@ -1033,9 +1041,18 @@ export const secretQueueFactory = ({
               isSynced: response?.isSynced ?? true
             });
 
+            // Resolve the actor to a canonical telemetry distinct ID consistent with getTelemetryDistinctId
+            let telemetryDistinctId = `platform/${projectId}`;
+            if (isManual && actorId) {
+              const actor = await userDAL.findById(actorId);
+              if (actor) {
+                telemetryDistinctId = actor.username;
+              }
+            }
+
             await telemetryService.sendPostHogEvents({
               event: PostHogEventTypes.IntegrationSynced,
-              distinctId: `project/${projectId}`,
+              distinctId: telemetryDistinctId,
               organizationId: project.orgId,
               properties: {
                 integrationId: integration.id,
@@ -1165,7 +1182,8 @@ export const secretQueueFactory = ({
       { projectId },
       {
         removeOnComplete: true,
-        removeOnFail: true
+        removeOnFail: true,
+        jobId: randomUUID()
       }
     );
   };
@@ -1377,7 +1395,8 @@ export const secretQueueFactory = ({
               reminderNote: el.secretReminderNote,
               reminderRepeatDays: el.secretReminderRepeatDays,
               secretId: el.secretId,
-              envId: el.envId
+              envId: el.envId,
+              isRedacted: false
             };
             el.tags.forEach(({ secretTagId }) => {
               projectV3SecretVersionTags.push({ secret_tagsId: secretTagId, secret_versions_v2Id: el.id });
@@ -1439,7 +1458,8 @@ export const secretQueueFactory = ({
             reminderNote: el.secretReminderNote,
             reminderRepeatDays: el.secretReminderRepeatDays,
             secretId: el.secretId,
-            envId: el.envId
+            envId: el.envId,
+            isRedacted: false
           };
         });
 
@@ -1544,17 +1564,6 @@ export const secretQueueFactory = ({
         "id",
         tx
       );
-      /*
-       * Secret Rotation Secret Migration
-       * Saving the new encrypted colum
-       * */
-      const projectV1SecretRotations = await secretRotationDAL.find({ projectId }, tx);
-      await secretRotationDAL.secretOutputV2InsertMany(
-        projectV1SecretRotations.flatMap((el) =>
-          el.outputs.map((output) => ({ rotationId: el.id, key: output.key, secretId: output.secret.id }))
-        ),
-        tx
-      );
 
       /*
        * approvals: we will delete all approvals this is because some secret versions may not be added yet
@@ -1584,6 +1593,19 @@ export const secretQueueFactory = ({
       projectId: job.data.payload.projectId
     });
 
+    // Resolve changedBy from UUID to human-readable display name
+    let webhookEvent = job.data;
+    if (job.data.type === WebhookEvents.SecretModified) {
+      const { changedBy, changedByActorType } = job.data.payload;
+      if (changedBy && changedByActorType) {
+        const resolvedName = await resolveChangedByDisplayName(changedBy, changedByActorType as ActorType);
+        webhookEvent = {
+          ...job.data,
+          payload: { ...job.data.payload, changedBy: resolvedName }
+        };
+      }
+    }
+
     await fnTriggerWebhook({
       projectId: job.data.payload.projectId,
       environment: job.data.payload.environment,
@@ -1591,7 +1613,7 @@ export const secretQueueFactory = ({
       projectEnvDAL,
       projectDAL,
       webhookDAL,
-      event: job.data,
+      event: webhookEvent,
       auditLogService,
       secretManagerDecryptor: (value) => secretManagerDecryptor({ cipherTextBlob: value }).toString()
     });

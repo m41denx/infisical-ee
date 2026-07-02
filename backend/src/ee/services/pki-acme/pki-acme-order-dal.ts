@@ -4,6 +4,7 @@ import { TDbClient } from "@app/db";
 import { TableName } from "@app/db/schemas";
 import { DatabaseError } from "@app/lib/errors";
 import { ormify, selectAllTableCols, sqlNestRelationships } from "@app/lib/knex";
+import { CertificateRequestStatus } from "@app/services/certificate-request/certificate-request-types";
 
 export type TPkiAcmeOrderDALFactory = ReturnType<typeof pkiAcmeOrderDALFactory>;
 
@@ -19,6 +20,43 @@ export const pkiAcmeOrderDALFactory = (db: TDbClient) => {
     }
   };
 
+  const findWithCertificateRequestForSync = async (id: string, tx?: Knex) => {
+    try {
+      const order = await (tx || db)(TableName.PkiAcmeOrder)
+        .leftJoin(
+          TableName.CertificateRequests,
+          `${TableName.PkiAcmeOrder}.id`,
+          `${TableName.CertificateRequests}.acmeOrderId`
+        )
+        .select(
+          selectAllTableCols(TableName.PkiAcmeOrder),
+          db.ref("id").withSchema(TableName.CertificateRequests).as("certificateRequestId"),
+          db.ref("status").withSchema(TableName.CertificateRequests).as("certificateRequestStatus"),
+          db.ref("certificateId").withSchema(TableName.CertificateRequests).as("certificateId")
+        )
+        .forUpdate(TableName.PkiAcmeOrder)
+        .where(`${TableName.PkiAcmeOrder}.id`, id)
+        .first();
+      if (!order) {
+        return null;
+      }
+      const { certificateRequestId, certificateRequestStatus, certificateId, ...details } = order;
+      return {
+        ...details,
+        certificateRequest:
+          certificateRequestId && certificateRequestStatus
+            ? {
+                id: certificateRequestId,
+                status: certificateRequestStatus as CertificateRequestStatus,
+                certificateId
+              }
+            : undefined
+      };
+    } catch (error) {
+      throw new DatabaseError({ error, name: "Find PKI ACME order by id with certificate request" });
+    }
+  };
+
   const findByAccountAndOrderIdWithAuthorizations = async (accountId: string, orderId: string, tx?: Knex) => {
     try {
       const rows = await (tx || db)(TableName.PkiAcmeOrder)
@@ -29,6 +67,7 @@ export const pkiAcmeOrderDALFactory = (db: TDbClient) => {
           db.ref("id").withSchema(TableName.PkiAcmeAuth).as("authId"),
           db.ref("identifierType").withSchema(TableName.PkiAcmeAuth).as("identifierType"),
           db.ref("identifierValue").withSchema(TableName.PkiAcmeAuth).as("identifierValue"),
+          db.ref("wildcard").withSchema(TableName.PkiAcmeAuth).as("wildcard"),
           db.ref("expiresAt").withSchema(TableName.PkiAcmeAuth).as("authExpiresAt")
         )
         .where(`${TableName.PkiAcmeOrder}.id`, orderId)
@@ -46,10 +85,11 @@ export const pkiAcmeOrderDALFactory = (db: TDbClient) => {
           {
             key: "authId",
             label: "authorizations" as const,
-            mapper: ({ authId, identifierType, identifierValue, authExpiresAt }) => ({
+            mapper: ({ authId, identifierType, identifierValue, wildcard, authExpiresAt }) => ({
               id: authId,
               identifierType,
               identifierValue,
+              wildcard: wildcard as boolean,
               expiresAt: authExpiresAt
             })
           }
@@ -72,6 +112,7 @@ export const pkiAcmeOrderDALFactory = (db: TDbClient) => {
   return {
     ...pkiAcmeOrderOrm,
     findByIdForFinalization,
+    findWithCertificateRequestForSync,
     findByAccountAndOrderIdWithAuthorizations,
     listByAccountId
   };

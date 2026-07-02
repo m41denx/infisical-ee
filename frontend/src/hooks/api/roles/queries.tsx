@@ -7,6 +7,7 @@ import picomatch from "picomatch";
 import { apiRequest } from "@app/config/request";
 import { OrgPermissionSet } from "@app/context/OrgPermissionContext/types";
 import { ProjectPermissionSet } from "@app/context/ProjectPermissionContext/types";
+import { rolesBase } from "@app/hooks/api/certManagerAccess";
 import { groupBy } from "@app/lib/fn/array";
 import { omit } from "@app/lib/fn/object";
 
@@ -50,43 +51,47 @@ export const roleQueryKeys = {
     ["user-project-permissions", { projectId }] as const
 };
 
-export const getProjectRoles = async (projectId: string) => {
+export const getProjectRoles = async (projectId: string, projectType?: string) => {
   const { data } = await apiRequest.get<{ roles: Array<Omit<TProjectRole, "permissions">> }>(
-    `/api/v1/projects/${projectId}/roles`
+    rolesBase(projectType, projectId)
   );
   return data.roles;
 };
 
-export const useGetProjectRoles = (projectId: string) =>
+export const useGetProjectRoles = (projectId: string, projectType?: string) =>
   useQuery({
     queryKey: roleQueryKeys.getProjectRoles(projectId),
-    queryFn: () => getProjectRoles(projectId),
+    queryFn: () => getProjectRoles(projectId, projectType),
     enabled: Boolean(projectId)
   });
 
-export const useGetProjectRoleBySlug = (projectId: string, roleSlug: string) =>
+export const useGetProjectRoleBySlug = (
+  projectId: string,
+  roleSlug: string,
+  projectType?: string
+) =>
   useQuery({
     queryKey: roleQueryKeys.getProjectRoleBySlug(projectId, roleSlug),
     queryFn: async () => {
       const { data } = await apiRequest.get<{ role: TProjectRole }>(
-        `/api/v1/projects/${projectId}/roles/slug/${roleSlug}`
+        `${rolesBase(projectType, projectId)}/slug/${roleSlug}`
       );
       return data.role;
     },
     enabled: Boolean(projectId && roleSlug)
   });
 
-const getOrgRoles = async (orgId: string) => {
+const getOrgRoles = async () => {
   const { data } = await apiRequest.get<{
-    data: { roles: Array<Omit<TOrgRole, "permissions"> & { permissions: TPermission[] }> };
-  }>(`/api/v1/organization/${orgId}/roles`);
-  return data.data.roles;
+    roles: Array<Omit<TOrgRole, "permissions"> & { permissions: TPermission[] }>;
+  }>("/api/v1/organization/roles");
+  return data.roles;
 };
 
 export const useGetOrgRoles = (orgId: string, enable = true) =>
   useQuery({
     queryKey: roleQueryKeys.getOrgRoles(orgId),
-    queryFn: () => getOrgRoles(orgId),
+    queryFn: () => getOrgRoles(),
     enabled: Boolean(orgId) && enable
   });
 
@@ -96,7 +101,7 @@ export const useGetOrgRole = (orgId: string, roleId: string) =>
     queryFn: async () => {
       const { data } = await apiRequest.get<{
         role: Omit<TOrgRole, "permissions"> & { permissions: unknown };
-      }>(`/api/v1/organization/${orgId}/roles/${roleId}`);
+      }>(`/api/v1/organization/roles/${roleId}`);
       return {
         ...data.role,
         permissions: data.role.permissions as TPermission[]
@@ -111,7 +116,7 @@ export const fetchUserOrgPermissions = async ({ orgId }: TGetUserOrgPermissionsD
   const { data } = await apiRequest.get<{
     permissions: PackRule<RawRuleOf<MongoAbility<OrgPermissionSet>>>[];
     memberships: Array<TUserMembership & { roles: { role: string }[] }>;
-  }>(`/api/v1/organization/${orgId}/permissions`);
+  }>("/api/v1/organization/permissions");
 
   return data;
 };
@@ -137,7 +142,7 @@ export const fetchUserProjectPermissions = async ({ projectId }: TGetUserProject
         actorId: string;
         actorType: ActorType;
         actorEmail: string;
-        actorName: string;
+        actorName: string | null;
       };
     };
   }>(`/api/v1/projects/${projectId}/permissions`, {});

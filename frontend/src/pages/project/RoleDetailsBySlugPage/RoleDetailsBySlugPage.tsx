@@ -1,27 +1,19 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import {
-  faChevronLeft,
-  faCopy,
-  faEdit,
-  faEllipsisV,
-  faTrash
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { ChevronLeftIcon, CopyIcon, EllipsisIcon, PencilIcon, TrashIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
+import { DeleteActionModal, PageHeader } from "@app/components/v2";
 import {
   Button,
-  DeleteActionModal,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger,
-  PageHeader
-} from "@app/components/v2";
+  DropdownMenuTrigger
+} from "@app/components/v3";
 import {
   ProjectPermissionActions,
   ProjectPermissionSub,
@@ -30,6 +22,7 @@ import {
 } from "@app/context";
 import { getProjectBaseURL } from "@app/helpers/project";
 import { useDeleteProjectRole, useGetProjectRoleBySlug } from "@app/hooks/api";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { ProjectMembershipRole } from "@app/hooks/api/roles/types";
 import { usePopUp } from "@app/hooks/usePopUp";
 import { DuplicateProjectRoleModal } from "@app/pages/project/RoleDetailsBySlugPage/components/DuplicateProjectRoleModal";
@@ -49,7 +42,9 @@ const Page = () => {
   const projectId = currentProject?.id || "";
   const orgId = currentOrg?.id || "";
 
-  const { data } = useGetProjectRoleBySlug(projectId, roleSlug as string);
+  const isCertManager = currentProject?.type === ProjectType.CertificateManager;
+  const { data } = useGetProjectRoleBySlug(projectId, roleSlug as string, currentProject?.type);
+  const displayName = data?.name ?? "";
 
   const { mutateAsync: deleteProjectRole } = useDeleteProjectRole();
 
@@ -89,7 +84,7 @@ const Page = () => {
   );
 
   return (
-    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
+    <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-foreground">
       {data && (
         <div className="mx-auto mb-6 w-full max-w-8xl">
           <Link
@@ -101,14 +96,14 @@ const Page = () => {
             search={{
               selectedTab: ProjectAccessControlTabs.Roles
             }}
-            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+            className="mb-4 flex items-center gap-x-2 text-sm text-muted"
           >
-            <FontAwesomeIcon icon={faChevronLeft} />
-            Project Roles
+            <ChevronLeftIcon className="size-4" />
+            {isCertManager ? "Roles" : "Project Roles"}
           </Link>
           <PageHeader
             scope={currentProject.type}
-            title={data.name}
+            title={displayName}
             description={
               <>
                 {data.slug} {data.description && `- ${data.description}`}
@@ -117,39 +112,35 @@ const Page = () => {
           >
             {isCustomRole && (
               <DropdownMenu>
-                <DropdownMenuTrigger asChild className="rounded-lg">
-                  <Button
-                    colorSchema="secondary"
-                    rightIcon={<FontAwesomeIcon icon={faEllipsisV} className="ml-2" />}
-                  >
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
                     Options
+                    <EllipsisIcon />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" sideOffset={2} className="p-1">
+                <DropdownMenuContent align="end">
                   <DropdownMenuItem
                     onClick={() => {
                       navigator.clipboard.writeText(data.id);
-
                       createNotification({
                         text: "Copied ID to clipboard",
                         type: "info"
                       });
                     }}
-                    icon={<FontAwesomeIcon icon={faCopy} />}
                   >
+                    <CopyIcon />
                     Copy ID
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => {
                       navigator.clipboard.writeText(data.slug);
-
                       createNotification({
                         text: "Copied slug to clipboard",
                         type: "info"
                       });
                     }}
-                    icon={<FontAwesomeIcon icon={faCopy} />}
                   >
+                    <CopyIcon />
                     Copy Slug
                   </DropdownMenuItem>
                   <ProjectPermissionCan
@@ -166,9 +157,9 @@ const Page = () => {
                             roleSlug
                           })
                         }
-                        icon={<FontAwesomeIcon icon={faEdit} />}
-                        disabled={!isAllowed}
+                        isDisabled={!isAllowed}
                       >
+                        <PencilIcon />
                         Edit Role
                       </DropdownMenuItem>
                     )}
@@ -182,12 +173,12 @@ const Page = () => {
                         className={twMerge(
                           !isAllowed && "pointer-events-none cursor-not-allowed opacity-50"
                         )}
-                        icon={<FontAwesomeIcon icon={faCopy} />}
                         onClick={() => {
                           handlePopUpOpen("duplicateRole");
                         }}
-                        disabled={!isAllowed}
+                        isDisabled={!isAllowed}
                       >
+                        <CopyIcon />
                         Duplicate Role
                       </DropdownMenuItem>
                     )}
@@ -198,10 +189,11 @@ const Page = () => {
                   >
                     {(isAllowed) => (
                       <DropdownMenuItem
-                        icon={<FontAwesomeIcon icon={faTrash} />}
+                        variant="danger"
                         onClick={() => handlePopUpOpen("deleteRole")}
                         isDisabled={!isAllowed}
                       >
+                        <TrashIcon />
                         Delete Role
                       </DropdownMenuItem>
                     )}
@@ -210,6 +202,19 @@ const Page = () => {
               </DropdownMenu>
             )}
           </PageHeader>
+          {isCertManager && isCustomRole && (
+            <div className="mb-4 rounded-md border border-mineshaft-600 bg-mineshaft-900 p-4 text-sm text-mineshaft-200">
+              <p className="font-medium text-mineshaft-100">
+                Custom roles act as Member in Certificate Manager
+              </p>
+              <p className="mt-1 text-mineshaft-300">
+                In the new Certificate Manager flow, access is granted through Application
+                memberships (Admin or Member). Permissions defined here only apply to legacy
+                endpoints — users with this role are treated as Member at the project level and only
+                see resources inside Applications they are explicitly added to.
+              </p>
+            </div>
+          )}
           <RolePermissionsSection roleSlug={roleSlug} isDisabled={!isCustomRole} />
         </div>
       )}

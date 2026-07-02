@@ -24,6 +24,7 @@ export enum DynamicSecretProviders {
   AwsIam = "aws-iam",
   Redis = "redis",
   AwsElastiCache = "aws-elasticache",
+  AwsMemoryDb = "aws-memorydb",
   MongoAtlas = "mongo-db-atlas",
   ElasticSearch = "elastic-search",
   MongoDB = "mongo-db",
@@ -39,7 +40,11 @@ export enum DynamicSecretProviders {
   Vertica = "vertica",
   GcpIam = "gcp-iam",
   Github = "github",
-  Couchbase = "couchbase"
+  Couchbase = "couchbase",
+  Clickhouse = "clickhouse",
+  Milvus = "milvus",
+  Ssh = "ssh",
+  IbmApiConnect = "ibm-api-connect"
 }
 
 export enum KubernetesDynamicSecretCredentialType {
@@ -60,10 +65,23 @@ export enum DynamicSecretAwsIamAuth {
   IRSA = "irsa"
 }
 
+// currently the only option, but we may want to extend this later to ACL-based auth
+export enum AwsMemoryDbAuthType {
+  IAM = "iam"
+}
+
 export enum DynamicSecretAwsIamCredentialType {
   IamUser = "iam-user",
   TemporaryCredentials = "temporary-credentials"
 }
+
+export const MILVUS_OBJECT_TYPES = [
+  { label: "Collection", value: "Collection" },
+  { label: "Database", value: "Database" },
+  { label: "Global", value: "Global" },
+  { label: "Cluster", value: "Cluster" },
+  { label: "User", value: "User" }
+] as const;
 
 export type TDynamicSecretProvider =
   | {
@@ -155,6 +173,20 @@ export type TDynamicSecretProvider =
         creationStatement: string;
         revocationStatement: string;
         ca?: string | undefined;
+      };
+    }
+  | {
+      type: DynamicSecretProviders.AwsMemoryDb;
+      inputs: {
+        clusterName: string;
+        region: string;
+        auth: {
+          type: AwsMemoryDbAuthType.IAM;
+          accessKeyId: string;
+          secretAccessKey: string;
+        };
+        creationStatement: string;
+        revocationStatement: string;
       };
     }
   | {
@@ -382,6 +414,7 @@ export type TDynamicSecretProvider =
       type: DynamicSecretProviders.GcpIam;
       inputs: {
         serviceAccountEmail: string;
+        tokenScopes: string[];
       };
     }
   | {
@@ -422,6 +455,73 @@ export type TDynamicSecretProvider =
         auth: {
           apiKey: string;
         };
+      };
+    }
+  | {
+      type: DynamicSecretProviders.Clickhouse;
+      inputs: {
+        host: string;
+        port: number;
+        database: string;
+        username: string;
+        password: string;
+        creationStatement: string;
+        revocationStatement: string;
+        renewStatement?: string;
+        ca?: string;
+        gatewayId?: string;
+        passwordRequirements?: {
+          length: number;
+          required: {
+            lowercase: number;
+            uppercase: number;
+            digits: number;
+            symbols: number;
+          };
+          allowedSymbols?: string;
+        };
+      };
+    }
+  | {
+      type: DynamicSecretProviders.Milvus;
+      inputs: {
+        host: string;
+        port: number;
+        username: string;
+        password: string;
+        database?: string;
+        privileges: Array<{
+          objectType: string;
+          objectName: string;
+          privilege: string;
+          dbName?: string;
+        }>;
+        ca?: string;
+        sslRejectUnauthorized?: boolean;
+        gatewayId?: string | null;
+        gatewayPoolId?: string | null;
+      };
+    }
+  | {
+      type: DynamicSecretProviders.Ssh;
+      inputs: {
+        caPublicKey?: string;
+        principals: string[];
+        keyAlgorithm: string;
+      };
+    }
+  | {
+      type: DynamicSecretProviders.IbmApiConnect;
+      inputs: {
+        clientId: string;
+        clientSecret: string;
+        instanceUrl: string;
+        apiKey: string;
+        orgId: string;
+        catalogId: string;
+        appId: string;
+        gatewayId?: string;
+        gatewayPoolId?: string;
       };
     };
 

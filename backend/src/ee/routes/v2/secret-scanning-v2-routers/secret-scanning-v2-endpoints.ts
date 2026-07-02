@@ -14,8 +14,10 @@ import {
 import { ApiDocsTags, SecretScanningDataSources } from "@app/lib/api-docs";
 import { startsWithVowel } from "@app/lib/fn";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 export const registerSecretScanningEndpoints = <
   T extends TSecretScanningDataSource,
@@ -46,6 +48,7 @@ export const registerSecretScanningEndpoints = <
   responseSchema: z.ZodTypeAny;
 }) => {
   const sourceType = SECRET_SCANNING_DATA_SOURCE_NAME_MAP[type];
+  const sourceTypeId = sourceType.replace(/\s+/g, "");
 
   server.route({
     method: "GET",
@@ -55,6 +58,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `list${sourceTypeId}DataSources`,
       tags: [ApiDocsTags.SecretScanning],
       description: `List the ${sourceType} Data Sources for the specified project.`,
       querystring: z.object({
@@ -104,6 +108,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `get${sourceTypeId}DataSource`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Get the specified ${sourceType} Data Source by ID.`,
       params: z.object({
@@ -140,12 +145,13 @@ export const registerSecretScanningEndpoints = <
 
   server.route({
     method: "GET",
-    url: `/data-source-name/:dataSourceName`,
+    url: "/data-source-name/:sourceName",
     config: {
       rateLimit: readLimit
     },
     schema: {
       hide: false,
+      operationId: `get${sourceTypeId}DataSourceByName`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Get the specified ${sourceType} Data Source by name and project ID.`,
       params: z.object({
@@ -200,6 +206,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `create${sourceTypeId}DataSource`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Create ${
         startsWithVowel(sourceType) ? "an" : "a"
@@ -229,6 +236,19 @@ export const registerSecretScanningEndpoints = <
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretScanningDataSourceCreated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            dataSourceId: dataSource.id,
+            projectId: dataSource.projectId,
+            type
+          }
+        })
+        .catch(() => {});
+
       return { dataSource };
     }
   });
@@ -241,6 +261,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `update${sourceTypeId}DataSource`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Update the specified ${sourceType} Data Source.`,
       params: z.object({
@@ -285,6 +306,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `delete${sourceTypeId}DataSource`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Delete the specified ${sourceType} Data Source.`,
       params: z.object({
@@ -327,6 +349,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `trigger${sourceTypeId}DataSourceScan`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Trigger a scan for the specified ${sourceType} Data Source.`,
       params: z.object({
@@ -369,6 +392,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `trigger${sourceTypeId}DataSourceResourceScan`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Trigger a scan for the specified ${sourceType} Data Source resource.`,
       params: z.object({
@@ -413,6 +437,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `list${sourceTypeId}DataSourceResources`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Get the resources associated with the specified ${sourceType} Data Source by ID.`,
       params: z.object({
@@ -457,6 +482,7 @@ export const registerSecretScanningEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `list${sourceTypeId}DataSourceScans`,
       tags: [ApiDocsTags.SecretScanning],
       description: `Get the scans associated with the specified ${sourceType} Data Source by ID.`,
       params: z.object({
@@ -500,6 +526,7 @@ export const registerSecretScanningEndpoints = <
       rateLimit: readLimit
     },
     schema: {
+      operationId: `list${sourceTypeId}DataSourceResourcesDashboard`,
       tags: [ApiDocsTags.SecretScanning],
       params: z.object({
         dataSourceId: z.string().uuid()
@@ -550,6 +577,7 @@ export const registerSecretScanningEndpoints = <
       rateLimit: readLimit
     },
     schema: {
+      operationId: `list${sourceTypeId}DataSourceScansDashboard`,
       tags: [ApiDocsTags.SecretScanning],
       params: z.object({
         dataSourceId: z.string().uuid()

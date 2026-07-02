@@ -1,6 +1,7 @@
 import { TDbClient } from "@app/db";
 import { IdentityAuthMethod, TableName, TIdentities } from "@app/db/schemas";
 import { DatabaseError } from "@app/lib/errors";
+import { sanitizeSqlLikeString } from "@app/lib/fn";
 import { ormify, selectAllTableCols } from "@app/lib/knex";
 
 export type TIdentityDALFactory = ReturnType<typeof identityDALFactory>;
@@ -21,7 +22,8 @@ export const identityDALFactory = (db: TDbClient) => {
       [IdentityAuthMethod.OCI_AUTH]: TableName.IdentityOciAuth,
       [IdentityAuthMethod.OIDC_AUTH]: TableName.IdentityOidcAuth,
       [IdentityAuthMethod.JWT_AUTH]: TableName.IdentityJwtAuth,
-      [IdentityAuthMethod.LDAP_AUTH]: TableName.IdentityLdapAuth
+      [IdentityAuthMethod.LDAP_AUTH]: TableName.IdentityLdapAuth,
+      [IdentityAuthMethod.SPIFFE_AUTH]: TableName.IdentitySpiffeAuth
     } as const;
     const tableName = authMethodToTableName[authMethod];
     if (!tableName) return;
@@ -46,7 +48,7 @@ export const identityDALFactory = (db: TDbClient) => {
 
       if (searchTerm) {
         query = query.where((qb) => {
-          void qb.whereILike("name", `%${searchTerm}%`);
+          void qb.whereILike("name", `%${sanitizeSqlLikeString(searchTerm)}%`);
         });
       }
 

@@ -11,6 +11,7 @@ import { initLogger } from "@app/lib/logger";
 import { main } from "@app/server/app";
 import { AuthMethod, AuthTokenType } from "@app/services/auth/auth-type";
 
+import { buildClickHouseFromConfig } from "@app/lib/config/clickhouse";
 import { mockSmtpServer } from "./mocks/smtp";
 import { initDbConnection } from "@app/db";
 import { queueServiceFactory } from "@app/queue";
@@ -55,15 +56,12 @@ export default {
     const redis = buildRedisFromConfig(envCfg);
     await redis.flushdb("SYNC");
 
+    const clickhouseClient = buildClickHouseFromConfig(envCfg);
+
     try {
-      await db.migrate.rollback(
-        {
-          directory: path.join(__dirname, "../src/db/migrations"),
-          extension: "ts",
-          tableName: "infisical_migrations"
-        },
-        true
-      );
+      // called after all tests with this env have been run
+      await db.raw("DROP SCHEMA IF EXISTS public CASCADE");
+      await db.schema.createSchemaIfNotExists("public");
 
       await db.migrate.latest({
         directory: path.join(__dirname, "../src/db/migrations"),
@@ -77,11 +75,9 @@ export default {
       });
 
       const smtp = mockSmtpServer();
-      const queue = queueServiceFactory(envCfg, { dbConnectionUrl: envCfg.DB_CONNECTION_URI });
+      const queue = queueServiceFactory(envCfg);
       const keyValueStoreDAL = keyValueStoreDALFactory(db);
       const keyStore = keyStoreFactory(envCfg, keyValueStoreDAL);
-
-      await queue.initialize();
 
       const server = await main({
         db,
@@ -93,6 +89,7 @@ export default {
         kmsRootConfigDAL,
         superAdminDAL,
         redis,
+        clickhouse: clickhouseClient,
         envConfig: envCfg
       });
 
@@ -100,6 +97,12 @@ export default {
 
       // @ts-expect-error type
       globalThis.testServer = server;
+      // @ts-expect-error type
+      globalThis.testSmtp = smtp;
+      // @ts-expect-error type
+      globalThis.testDb = db;
+      // @ts-expect-error type
+      globalThis.testRedis = redis;
       // @ts-expect-error type
       globalThis.testQueue = queue;
       // @ts-expect-error type
@@ -138,20 +141,13 @@ export default {
         // @ts-expect-error type
         delete globalThis.testServer;
         // @ts-expect-error type
+        delete globalThis.testRedis;
+        // @ts-expect-error type
         delete globalThis.testSuperAdminDAL;
         // @ts-expect-error type
         delete globalThis.jwtAuthToken;
         // @ts-expect-error type
         delete globalThis.testQueue;
-        // called after all tests with this env have been run
-        await db.migrate.rollback(
-          {
-            directory: path.join(__dirname, "../src/db/migrations"),
-            extension: "ts",
-            tableName: "infisical_migrations"
-          },
-          true
-        );
 
         await redis.flushdb("ASYNC");
         redis.disconnect();

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { OrganizationsSchema } from "@app/db/schemas";
 
 export const sanitizedOrganizationSchema = OrganizationsSchema.pick({
@@ -28,5 +30,20 @@ export const sanitizedOrganizationSchema = OrganizationsSchema.pick({
   shareSecretsProductEnabled: true,
   maxSharedSecretLifetime: true,
   maxSharedSecretViewLimit: true,
-  blockDuplicateSecretSyncDestinations: true
+  blockDuplicateSecretSyncDestinations: true,
+  rootOrgId: true,
+  parentOrgId: true,
+  secretShareBrandConfig: true
+});
+
+/** Zod schema for API response: root org (full info) with sub-orgs (basic info) */
+export const OrgWithSubOrgsSchema = sanitizedOrganizationSchema.extend({
+  userJoinedAt: z.date().optional().nullable(),
+  subOrganizations: OrganizationsSchema.pick({
+    id: true,
+    name: true,
+    slug: true
+  })
+    .extend({ userJoinedAt: z.date().optional().nullable() })
+    .array()
 });

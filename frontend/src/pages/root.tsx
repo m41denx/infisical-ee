@@ -1,11 +1,11 @@
-import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createRootRouteWithContext, Outlet, useSearch } from "@tanstack/react-router";
+import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 
 import { NotificationContainer } from "@app/components/notifications";
 import { TooltipProvider } from "@app/components/v2";
 import { adminQueryKeys, fetchServerConfig } from "@app/hooks/api/admin/queries";
 import { TServerConfig } from "@app/hooks/api/admin/types";
+import { authKeys, fetchAuthToken } from "@app/hooks/api/auth/queries";
 import { queryClient } from "@app/hooks/api/reactQuery";
 
 type TRouterContext = {
@@ -14,15 +14,6 @@ type TRouterContext = {
 };
 
 const RootPage = () => {
-  const subOrganization = useSearch({
-    strict: false,
-    select: (el) => el?.subOrganization
-  });
-
-  useEffect(() => {
-    queryClient.invalidateQueries();
-  }, [subOrganization]);
-
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -36,6 +27,17 @@ const RootPage = () => {
 export const Route = createRootRouteWithContext<TRouterContext>()({
   component: RootPage,
   beforeLoad: async ({ context }) => {
+    await context.queryClient
+      .fetchQuery({
+        queryKey: authKeys.getAuthToken,
+        queryFn: fetchAuthToken,
+        staleTime: Infinity
+      })
+      .catch(() => {
+        // No valid refresh cookie — boot continues unauthenticated.
+        // Downstream middlewares handle redirects for protected routes.
+      });
+
     const serverConfig = await context.queryClient.ensureQueryData({
       queryKey: adminQueryKeys.serverConfig(),
       queryFn: fetchServerConfig

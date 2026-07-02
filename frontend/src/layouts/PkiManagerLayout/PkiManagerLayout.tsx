@@ -1,172 +1,19 @@
-import { Link, Outlet, useLocation } from "@tanstack/react-router";
-import { motion } from "framer-motion";
+import { Outlet, useRouterState } from "@tanstack/react-router";
 
-import { Tab, TabList, Tabs } from "@app/components/v2";
-import { useOrganization, useProject, useProjectPermission, useSubscription } from "@app/context";
-import {
-  useListWorkspaceCertificateTemplates,
-  useListWorkspacePkiSubscribers
-} from "@app/hooks/api";
+import { useProjectPermission } from "@app/context";
 
 import { AssumePrivilegeModeBanner } from "../ProjectLayout/components/AssumePrivilegeModeBanner";
+import { CertManagerInstanceBanner } from "./components/CertManagerInstanceBanner";
 
 export const PkiManagerLayout = () => {
-  const { currentOrg } = useOrganization();
-  const { currentProject } = useProject();
   const { assumedPrivilegeDetails } = useProjectPermission();
-  const { subscription } = useSubscription();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isDashboard = /\/cert-manager\/[^/]+\/overview\/?$/.test(pathname);
 
-  const { data: subscribers = [] } = useListWorkspacePkiSubscribers(currentProject?.id || "");
-  const { data: templatesData } = useListWorkspaceCertificateTemplates({
-    projectId: currentProject?.id || ""
-  });
-  const templates = templatesData?.certificateTemplates || [];
-
-  const hasExistingSubscribers = subscribers.length > 0;
-  const hasExistingTemplates = templates.length > 0;
-  const showLegacySection =
-    subscription.pkiLegacyTemplates || hasExistingSubscribers || hasExistingTemplates;
-
-  const location = useLocation();
   return (
-    <div className="dark flex h-full w-full flex-col overflow-x-hidden bg-mineshaft-900">
-      <div className="border-y border-t-project/10 border-b-project/5 bg-gradient-to-b from-project/[0.075] to-project/[0.025] px-4 pt-0.5">
-        <motion.div
-          key="menu-project-items"
-          initial={{ x: -150 }}
-          animate={{ x: 0 }}
-          exit={{ x: -150 }}
-          transition={{ duration: 0.2 }}
-          className="px-4"
-        >
-          <nav className="w-full">
-            <Tabs value="selected">
-              <TabList className="border-b-0">
-                <Link
-                  to="/organizations/$orgId/projects/cert-management/$projectId/policies"
-                  params={{
-                    orgId: currentOrg.id,
-                    projectId: currentProject.id
-                  }}
-                >
-                  {({ isActive }) => <Tab value={isActive ? "selected" : ""}>Certificates</Tab>}
-                </Link>
-                <Link
-                  to="/organizations/$orgId/projects/cert-management/$projectId/certificate-authorities"
-                  params={{
-                    orgId: currentOrg.id,
-                    projectId: currentProject.id
-                  }}
-                >
-                  {({ isActive }) => (
-                    <Tab value={isActive || location.pathname.match(/\/ca\//) ? "selected" : ""}>
-                      Certificate Authorities
-                    </Tab>
-                  )}
-                </Link>
-                <Link
-                  to="/organizations/$orgId/projects/cert-management/$projectId/alerting"
-                  params={{
-                    orgId: currentOrg.id,
-                    projectId: currentProject.id
-                  }}
-                >
-                  {({ isActive }) => <Tab value={isActive ? "selected" : ""}>Alerting</Tab>}
-                </Link>
-                <Link
-                  to="/organizations/$orgId/projects/cert-management/$projectId/integrations"
-                  params={{
-                    orgId: currentOrg.id,
-                    projectId: currentProject.id
-                  }}
-                >
-                  {({ isActive }) => <Tab value={isActive ? "selected" : ""}>Integrations</Tab>}
-                </Link>
-                <Link
-                  to="/organizations/$orgId/projects/cert-management/$projectId/app-connections"
-                  params={{
-                    orgId: currentOrg.id,
-                    projectId: currentProject.id
-                  }}
-                >
-                  {({ isActive }) => <Tab value={isActive ? "selected" : ""}>App Connections</Tab>}
-                </Link>
-                {showLegacySection && (
-                  <>
-                    {(subscription.pkiLegacyTemplates || hasExistingSubscribers) && (
-                      <Link
-                        to="/organizations/$orgId/projects/cert-management/$projectId/subscribers"
-                        params={{
-                          orgId: currentOrg.id,
-                          projectId: currentProject.id
-                        }}
-                      >
-                        {({ isActive }) => (
-                          <Tab value={isActive ? "selected" : ""}>Subscribers (Legacy)</Tab>
-                        )}
-                      </Link>
-                    )}
-                    {(subscription.pkiLegacyTemplates || hasExistingTemplates) && (
-                      <Link
-                        to="/organizations/$orgId/projects/cert-management/$projectId/certificate-templates"
-                        params={{
-                          orgId: currentOrg.id,
-                          projectId: currentProject.id
-                        }}
-                      >
-                        {({ isActive }) => (
-                          <Tab value={isActive ? "selected" : ""}>
-                            Certificate Templates (Legacy)
-                          </Tab>
-                        )}
-                      </Link>
-                    )}
-                  </>
-                )}
-                <Link
-                  to="/organizations/$orgId/projects/cert-management/$projectId/access-management"
-                  params={{
-                    orgId: currentOrg.id,
-                    projectId: currentProject.id
-                  }}
-                >
-                  {({ isActive }) => (
-                    <Tab
-                      value={
-                        isActive ||
-                        location.pathname.match(/\/groups\/|\/identities\/|\/members\/|\/roles\//)
-                          ? "selected"
-                          : ""
-                      }
-                    >
-                      Access Control
-                    </Tab>
-                  )}
-                </Link>
-                <Link
-                  to="/organizations/$orgId/projects/cert-management/$projectId/audit-logs"
-                  params={{
-                    orgId: currentOrg.id,
-                    projectId: currentProject.id
-                  }}
-                >
-                  {({ isActive }) => <Tab value={isActive ? "selected" : ""}>Audit Logs</Tab>}
-                </Link>
-                <Link
-                  to="/organizations/$orgId/projects/cert-management/$projectId/settings"
-                  params={{
-                    orgId: currentOrg.id,
-                    projectId: currentProject.id
-                  }}
-                >
-                  {({ isActive }) => <Tab value={isActive ? "selected" : ""}>Settings</Tab>}
-                </Link>
-              </TabList>
-            </Tabs>
-          </nav>
-        </motion.div>
-      </div>
+    <div className="flex h-full w-full flex-col overflow-x-hidden">
       {assumedPrivilegeDetails && <AssumePrivilegeModeBanner />}
+      {isDashboard && <CertManagerInstanceBanner />}
       <div className="flex-1 overflow-x-hidden overflow-y-auto bg-bunker-800 px-12 pt-10 pb-4">
         <Outlet />
       </div>

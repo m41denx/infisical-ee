@@ -73,6 +73,8 @@ export type TToggleProjectDeleteProtectionDTO = {
   hasDeleteProtection: boolean;
 } & TProjectPermission;
 
+export type TEnableSecretBlindIndexDTO = TProjectPermission;
+
 export type TUpdateProjectVersionLimitDTO = {
   pitVersionLimit: number;
   workspaceSlug: string;
@@ -100,6 +102,7 @@ export type TUpdateProjectDTO = {
     secretSharing?: boolean;
     showSnapshotsLegacy?: boolean;
     secretDetectionIgnoreValues?: string[];
+    enforceEncryptedSecretManagerSecretMetadata?: boolean;
   };
 } & Omit<TProjectPermission, "projectId">;
 
@@ -144,6 +147,36 @@ export type TListProjectCertsDTO = {
   friendlyName?: string;
   commonName?: string;
   forPkiSync?: boolean;
+  search?: string;
+  status?: string | string[];
+  profileIds?: string[];
+  fromDate?: Date;
+  toDate?: Date;
+  metadataFilter?: Array<{ key: string; value?: string }>;
+  extendedKeyUsage?: string;
+  keyAlgorithm?: string | string[];
+  signatureAlgorithm?: string;
+  keySizes?: number[];
+  caIds?: string[];
+  enrollmentTypes?: string[];
+  source?: string | string[];
+  notAfterFrom?: Date;
+  notAfterTo?: Date;
+  notBeforeFrom?: Date;
+  notBeforeTo?: Date;
+  applicationId?: string;
+  applicationIds?: string[];
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
+} & Omit<TProjectPermission, "projectId">;
+
+export type TGetDashboardStatsDTO = {
+  filter: Filter;
+} & Omit<TProjectPermission, "projectId">;
+
+export type TGetActivityTrendDTO = {
+  filter: Filter;
+  range?: string;
 } & Omit<TProjectPermission, "projectId">;
 
 export type TListProjectAlertsDTO = TProjectPermission;

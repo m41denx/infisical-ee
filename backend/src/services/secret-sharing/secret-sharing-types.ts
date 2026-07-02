@@ -23,21 +23,22 @@ export type TSharedSecretPermission = {
   name?: string;
   password?: string;
   emails?: string[];
+  allowExternalEmails?: boolean;
 };
 
 export type TCreatePublicSharedSecretDTO = {
   secretValue: string;
-  expiresAt: string;
-  expiresAfterViews?: number;
+  expiresIn: string;
+  maxViews?: number;
   password?: string;
   accessType: SecretSharingAccessType;
 };
 
 export type TGetActiveSharedSecretByIdDTO = {
   sharedSecretId: string;
-  hashedHex?: string;
   orgId?: string;
   actorId?: string;
+  actor?: ActorType;
   password?: string;
 };
 
@@ -50,7 +51,7 @@ export type TCreateSharedSecretDTO = TSharedSecretPermission & TCreatePublicShar
 export type TCreateSecretRequestDTO = {
   name?: string;
   accessType: SecretSharingAccessType;
-  expiresAt: string;
+  expiresIn: string;
 } & TOrgPermission;
 
 export type TRevealSecretRequestValueDTO = {

@@ -1,4 +1,28 @@
 import { IdentityAuthMethod } from "@app/db/schemas";
+import { KeyStorePrefixes, TKeyStoreFactory } from "@app/keystore/keystore";
+
+export const getIdentityActiveLockoutAuthMethods = async (
+  identityId: string,
+  keyStore: Pick<TKeyStoreFactory, "getKeysByPattern" | "getItem">
+) => {
+  const activeLockouts = await keyStore.getKeysByPattern(KeyStorePrefixes.IdentityLockoutStatePattern(identityId));
+
+  const activeLockoutAuthMethods = new Set<string>();
+  for await (const key of activeLockouts) {
+    const parts = key.split(":");
+    if (parts.length > 3) {
+      const lockoutRaw = await keyStore.getItem(key);
+      if (lockoutRaw) {
+        const lockout = JSON.parse(lockoutRaw) as { lockedOut: boolean };
+        if (lockout.lockedOut) {
+          activeLockoutAuthMethods.add(parts[3]);
+        }
+      }
+    }
+  }
+
+  return Array.from(activeLockoutAuthMethods);
+};
 
 export const buildAuthMethods = ({
   uaId,
@@ -12,7 +36,8 @@ export const buildAuthMethods = ({
   tokenId,
   jwtId,
   ldapId,
-  tlsCertId
+  tlsCertId,
+  spiffeId
 }: {
   uaId?: string;
   gcpId?: string;
@@ -26,6 +51,7 @@ export const buildAuthMethods = ({
   jwtId?: string;
   ldapId?: string;
   tlsCertId?: string;
+  spiffeId?: string;
 }) => {
   return [
     ...[uaId ? IdentityAuthMethod.UNIVERSAL_AUTH : null],
@@ -39,6 +65,7 @@ export const buildAuthMethods = ({
     ...[tokenId ? IdentityAuthMethod.TOKEN_AUTH : null],
     ...[jwtId ? IdentityAuthMethod.JWT_AUTH : null],
     ...[ldapId ? IdentityAuthMethod.LDAP_AUTH : null],
-    ...[tlsCertId ? IdentityAuthMethod.TLS_CERT_AUTH : null]
+    ...[tlsCertId ? IdentityAuthMethod.TLS_CERT_AUTH : null],
+    ...[spiffeId ? IdentityAuthMethod.SPIFFE_AUTH : null]
   ].filter((authMethod) => authMethod) as IdentityAuthMethod[];
 };

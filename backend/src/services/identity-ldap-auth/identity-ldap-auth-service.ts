@@ -20,7 +20,6 @@ import { TPermissionServiceFactory } from "@app/ee/services/permission/permissio
 import { ProjectPermissionIdentityActions, ProjectPermissionSub } from "@app/ee/services/permission/project-permission";
 import { KeyStorePrefixes, TKeyStoreFactory } from "@app/keystore/keystore";
 import { getConfig } from "@app/lib/config/env";
-import { crypto } from "@app/lib/crypto";
 import {
   BadRequestError,
   ForbiddenRequestError,
@@ -29,14 +28,23 @@ import {
   RateLimitError,
   UnauthorizedError
 } from "@app/lib/errors";
-import { extractIPDetails, isValidIpOrCidr } from "@app/lib/ip";
+import { extractIPDetails, isValidIpOrCidr, TIp } from "@app/lib/ip";
 import { logger } from "@app/lib/logger";
-import { AuthAttemptAuthMethod, AuthAttemptAuthResult, authAttemptCounter } from "@app/lib/telemetry/metrics";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { RequestContextKey } from "@app/lib/request-context/request-context-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
+import {
+  AuthAttemptAuthMethod,
+  AuthAttemptAuthResult,
+  authAttemptCounter,
+  recordAuthAttemptMetric
+} from "@app/lib/telemetry/metrics";
+import { blockLocalAndPrivateIpAddresses } from "@app/lib/validator";
 
-import { ActorType, AuthTokenType } from "../auth/auth-type";
+import { ActorType } from "../auth/auth-type";
 import { TIdentityDALFactory } from "../identity/identity-dal";
 import { TIdentityAccessTokenDALFactory } from "../identity-access-token/identity-access-token-dal";
-import { TIdentityAccessTokenJwtPayload } from "../identity-access-token/identity-access-token-types";
+import { TIdentityAccessTokenServiceFactory } from "../identity-access-token/identity-access-token-service";
 import { TKmsServiceFactory } from "../kms/kms-service";
 import { KmsDataKey } from "../kms/kms-types";
 import { TMembershipIdentityDALFactory } from "../membership-identity/membership-identity-dal";
@@ -55,7 +63,7 @@ import {
 } from "./identity-ldap-auth-types";
 
 type TIdentityLdapAuthServiceFactoryDep = {
-  identityAccessTokenDAL: Pick<TIdentityAccessTokenDALFactory, "create" | "delete">;
+  identityAccessTokenDAL: Pick<TIdentityAccessTokenDALFactory, "delete">;
   identityLdapAuthDAL: Pick<
     TIdentityLdapAuthDALFactory,
     "findOne" | "transaction" | "create" | "updateById" | "delete"
@@ -70,7 +78,11 @@ type TIdentityLdapAuthServiceFactoryDep = {
     TKeyStoreFactory,
     "setItemWithExpiry" | "getItem" | "deleteItem" | "getKeysByPattern" | "deleteItems" | "acquireLock"
   >;
-  orgDAL: Pick<TOrgDALFactory, "findById">;
+  orgDAL: Pick<TOrgDALFactory, "findById" | "findOne" | "findEffectiveOrgMembership">;
+  identityAccessTokenService: Pick<
+    TIdentityAccessTokenServiceFactory,
+    "issueIdentityAccessToken" | "revokeTokensForIdentityAuthMethod"
+  >;
 };
 
 export type TIdentityLdapAuthServiceFactory = ReturnType<typeof identityLdapAuthServiceFactory>;
@@ -90,7 +102,8 @@ export const identityLdapAuthServiceFactory = ({
   kmsService,
   identityAuthTemplateDAL,
   keyStore,
-  orgDAL
+  orgDAL,
+  identityAccessTokenService
 }: TIdentityLdapAuthServiceFactoryDep) => {
   const getLdapConfig = async (identityId: string) => {
     const identity = await identityDAL.findOne({ id: identityId });
@@ -153,7 +166,8 @@ export const identityLdapAuthServiceFactory = ({
     return { opts, ldapConfig };
   };
 
-  const login = async ({ identityId }: TLoginLdapAuthDTO) => {
+  const login = async ({ identityId, organizationSlug }: TLoginLdapAuthDTO) => {
+    const authMetricStartTime = performance.now();
     const appCfg = getConfig();
     const identityLdapAuth = await identityLdapAuthDAL.findOne({ identityId });
 
@@ -163,10 +177,22 @@ export const identityLdapAuthServiceFactory = ({
       });
     }
 
-    const identity = await identityDAL.findById(identityLdapAuth.identityId);
-    if (!identity) throw new UnauthorizedError({ message: "Identity not found" });
+    const identity = await requestMemoize(requestMemoKeys.identityFindById(identityLdapAuth.identityId), () =>
+      identityDAL.findById(identityLdapAuth.identityId)
+    );
+    if (!identity)
+      throw new UnauthorizedError({
+        message: "Identity not found"
+      });
 
-    const org = await orgDAL.findById(identity.orgId);
+    const org = await requestMemoize(requestMemoKeys.orgFindById(identity.orgId), () =>
+      orgDAL.findById(identity.orgId)
+    );
+    const isSubOrgIdentity = Boolean(org.rootOrgId);
+
+    // If the identity is a sub-org identity, then the scope is always the org.id, and if it's a root org identity, then we need to resolve the scope if a organizationSlug is specified
+    let subOrganizationId = isSubOrgIdentity ? org.id : null;
+
     const plan = await licenseService.getPlan(identity.orgId);
     if (!plan.ldap) {
       throw new BadRequestError({
@@ -174,9 +200,38 @@ export const identityLdapAuthServiceFactory = ({
           "Failed to login to identity due to plan restriction. Upgrade plan to login to use LDAP authentication."
       });
     }
+    if (organizationSlug && org.slug !== organizationSlug) {
+      if (!isSubOrgIdentity) {
+        const subOrg = await orgDAL.findOne({ rootOrgId: org.id, slug: organizationSlug });
+
+        if (!subOrg) {
+          throw new NotFoundError({ message: `Sub organization with slug ${organizationSlug} not found` });
+        }
+
+        const subOrgMembership = await orgDAL.findEffectiveOrgMembership({
+          actorType: ActorType.IDENTITY,
+          actorId: identity.id,
+          orgId: subOrg.id
+        });
+
+        if (!subOrgMembership) {
+          throw new UnauthorizedError({
+            message: `Identity not authorized to access sub organization ${organizationSlug}`,
+            detail: {
+              reasonCode: "sub_org_unauthorized",
+              identityId: identity.id,
+              orgId: identity.orgId,
+              identityName: identity.name
+            }
+          });
+        }
+
+        subOrganizationId = subOrg.id;
+      }
+    }
 
     try {
-      const identityAccessToken = await identityLdapAuthDAL.transaction(async (tx) => {
+      await identityLdapAuthDAL.transaction(async (tx) => {
         await membershipIdentityDAL.update(
           identity.projectId
             ? {
@@ -196,35 +251,28 @@ export const identityLdapAuthServiceFactory = ({
           },
           tx
         );
-        const newToken = await identityAccessTokenDAL.create(
-          {
-            identityId: identityLdapAuth.identityId,
-            isAccessTokenRevoked: false,
-            accessTokenTTL: identityLdapAuth.accessTokenTTL,
-            accessTokenMaxTTL: identityLdapAuth.accessTokenMaxTTL,
-            accessTokenNumUses: 0,
-            accessTokenNumUsesLimit: identityLdapAuth.accessTokenNumUsesLimit,
-            authMethod: IdentityAuthMethod.LDAP_AUTH
-          },
-          tx
-        );
-        return newToken;
       });
 
-      const accessToken = crypto.jwt().sign(
-        {
-          identityId: identityLdapAuth.identityId,
-          identityAccessTokenId: identityAccessToken.id,
-          authTokenType: AuthTokenType.IDENTITY_ACCESS_TOKEN
-        } as TIdentityAccessTokenJwtPayload,
-        appCfg.AUTH_SECRET,
-        // akhilmhdh: for non-expiry tokens you should not even set the value, including undefined. Even for undefined jsonwebtoken throws error
-        Number(identityAccessToken.accessTokenTTL) === 0
-          ? undefined
-          : {
-              expiresIn: Number(identityAccessToken.accessTokenTTL)
-            }
-      );
+      const subOrgDetails =
+        subOrganizationId && subOrganizationId !== org.id ? await orgDAL.findById(subOrganizationId) : null;
+      const tokenScopeOrg = subOrgDetails ?? org;
+      const tokenRootOrgId = tokenScopeOrg.rootOrgId ?? tokenScopeOrg.id;
+      const tokenParentOrgId = tokenScopeOrg.parentOrgId ?? tokenRootOrgId;
+
+      const { accessToken, identityAccessToken } = await identityAccessTokenService.issueIdentityAccessToken({
+        identityId: identityLdapAuth.identityId,
+        identityName: identity.name,
+        authMethod: IdentityAuthMethod.LDAP_AUTH,
+        orgId: tokenScopeOrg.id,
+        rootOrgId: tokenRootOrgId,
+        parentOrgId: tokenParentOrgId,
+        subOrganizationId,
+        accessTokenTTL: Number(identityLdapAuth.accessTokenTTL),
+        accessTokenMaxTTL: Number(identityLdapAuth.accessTokenMaxTTL),
+        accessTokenNumUsesLimit: Number(identityLdapAuth.accessTokenNumUsesLimit),
+        accessTokenPeriod: Number(identityLdapAuth.accessTokenPeriod) || 0,
+        accessTokenTrustedIps: identityLdapAuth.accessTokenTrustedIps as TIp[]
+      });
 
       if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
         authAttemptCounter.add(1, {
@@ -234,10 +282,17 @@ export const identityLdapAuthServiceFactory = ({
           "infisical.organization.name": org.name,
           "infisical.identity.auth_method": AuthAttemptAuthMethod.LDAP_AUTH,
           "infisical.identity.auth_result": AuthAttemptAuthResult.SUCCESS,
-          "client.address": requestContext.get("ip"),
-          "user_agent.original": requestContext.get("userAgent")
+          "client.address": requestContext.get(RequestContextKey.Ip),
+          "user_agent.original": requestContext.get(RequestContextKey.UserAgent)
         });
       }
+
+      recordAuthAttemptMetric({
+        startTime: authMetricStartTime,
+        method: AuthAttemptAuthMethod.LDAP_AUTH,
+        result: AuthAttemptAuthResult.SUCCESS,
+        orgId: org.id
+      });
 
       return { accessToken, identityLdapAuth, identityAccessToken, identity };
     } catch (error) {
@@ -249,10 +304,18 @@ export const identityLdapAuthServiceFactory = ({
           "infisical.organization.name": org.name,
           "infisical.identity.auth_method": AuthAttemptAuthMethod.LDAP_AUTH,
           "infisical.identity.auth_result": AuthAttemptAuthResult.FAILURE,
-          "client.address": requestContext.get("ip"),
-          "user_agent.original": requestContext.get("userAgent")
+          "client.address": requestContext.get(RequestContextKey.Ip),
+          "user_agent.original": requestContext.get(RequestContextKey.UserAgent)
         });
       }
+
+      recordAuthAttemptMetric({
+        startTime: authMetricStartTime,
+        method: AuthAttemptAuthMethod.LDAP_AUTH,
+        result: AuthAttemptAuthResult.FAILURE,
+        orgId: org.id,
+        error
+      });
       throw error;
     }
   };
@@ -303,6 +366,10 @@ export const identityLdapAuthServiceFactory = ({
 
     if (accessTokenMaxTTL > 0 && accessTokenTTL > accessTokenMaxTTL) {
       throw new BadRequestError({ message: "Access token TTL cannot be greater than max TTL" });
+    }
+
+    if (url) {
+      await blockLocalAndPrivateIpAddresses(url);
     }
 
     const { permission: orgPermission } = await permissionService.getOrgPermission({
@@ -503,6 +570,10 @@ export const identityLdapAuthServiceFactory = ({
       (accessTokenTTL || identityLdapAuth.accessTokenTTL) > (accessTokenMaxTTL || identityLdapAuth.accessTokenMaxTTL)
     ) {
       throw new BadRequestError({ message: "Access token TTL cannot be greater than max TTL" });
+    }
+
+    if (url) {
+      await blockLocalAndPrivateIpAddresses(url);
     }
 
     const { permission: orgPermission } = await permissionService.getOrgPermission({
@@ -783,7 +854,10 @@ export const identityLdapAuthServiceFactory = ({
         scope: OrganizationActionScope.Any
       });
 
-      const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(identityMembershipOrg.scopeOrgId);
+      const { shouldUseNewPrivilegeSystem } = await requestMemoize(
+        requestMemoKeys.orgFindById(identityMembershipOrg.scopeOrgId),
+        () => orgDAL.findById(identityMembershipOrg.scopeOrgId)
+      );
       const permissionBoundary = validatePrivilegeChangeOperation(
         shouldUseNewPrivilegeSystem,
         OrgPermissionIdentityActions.RevokeAuth,
@@ -810,6 +884,15 @@ export const identityLdapAuthServiceFactory = ({
 
       return { ...deletedLdapAuth, orgId: identityMembershipOrg.scopeOrgId };
     });
+
+    // Detaching the auth method must invalidate any tokens already issued
+    // through it; without this, leaked tokens authenticate up to MAX_AGE
+    // even after the admin pulled the auth method.
+    await identityAccessTokenService.revokeTokensForIdentityAuthMethod({
+      identityId,
+      authMethod: IdentityAuthMethod.LDAP_AUTH
+    });
+
     return revokedIdentityLdapAuth;
   };
 
@@ -819,74 +902,105 @@ export const identityLdapAuthServiceFactory = ({
   ): Promise<T> => {
     const usernameSlug = slugify(username.trim().toLowerCase());
 
-    const LOCKOUT_KEY = `lockout:identity:${identityId}:${IdentityAuthMethod.LDAP_AUTH}:${usernameSlug}`;
+    const identity = await requestMemoize(requestMemoKeys.identityFindById(identityId), () =>
+      identityDAL.findById(identityId)
+    );
+    const orgId = identity?.orgId ?? null;
 
-    let lock: Awaited<ReturnType<typeof keyStore.acquireLock>>;
-    try {
-      lock = await keyStore.acquireLock([KeyStorePrefixes.IdentityLockoutLock(LOCKOUT_KEY)], 3000, {
-        retryCount: 3,
-        retryDelay: 1500,
-        retryJitter: 100
+    const lockoutKey = KeyStorePrefixes.IdentityLockoutState(identityId, IdentityAuthMethod.LDAP_AUTH, usernameSlug);
+
+    const lockoutRaw = await keyStore.getItem(lockoutKey);
+
+    let lockout: LockoutObject | undefined;
+    if (lockoutRaw) {
+      lockout = JSON.parse(lockoutRaw) as LockoutObject;
+    }
+
+    const identityLdapAuth = await identityLdapAuthDAL.findOne({ identityId });
+    if (!identityLdapAuth) {
+      throw new UnauthorizedError({
+        message: "Invalid credentials",
+        detail: { reasonCode: "ldap_auth_not_found", identityId, orgId, identityName: identity?.name }
       });
-    } catch (e) {
-      logger.info(
-        `identity login failed to acquire lock [identityId=${identityId}] [authMethod=${IdentityAuthMethod.LDAP_AUTH}]`
-      );
-      throw new RateLimitError({ message: "Failed to acquire lock: rate limit exceeded" });
+    }
+
+    if (lockout && lockout?.lockedOut && identityLdapAuth.lockoutEnabled) {
+      throw new UnauthorizedError({
+        message: "This identity auth method is temporarily locked, please try again later",
+        detail: { reasonCode: "temporarily_locked", identityId, orgId, identityName: identity?.name }
+      });
     }
 
     try {
-      const lockoutRaw = await keyStore.getItem(LOCKOUT_KEY);
-      if (lockoutRaw) {
-        const lockout = JSON.parse(lockoutRaw) as LockoutObject;
-        if (lockout.lockedOut) {
-          throw new UnauthorizedError({
-            message: "This identity auth method is temporarily locked, please try again later"
-          });
-        }
-      }
-
       const result = await authFn();
 
-      await keyStore.deleteItem(LOCKOUT_KEY);
+      // If auth succeeds, clear any existing lockout
+      if (lockout) {
+        await keyStore.deleteItem(lockoutKey);
+      }
 
       return result;
     } catch (error) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-      if ((error as any).status === 401) {
-        const identityLdapAuth = await identityLdapAuthDAL.findOne({ identityId });
-        if (!identityLdapAuth) {
-          throw new UnauthorizedError({ message: "Invalid credentials" });
-        }
-
+      if ((error as any).status === 401 || error instanceof UnauthorizedError) {
         if (identityLdapAuth.lockoutEnabled) {
-          let lockout: LockoutObject = {
-            lockedOut: false,
-            failedAttempts: 0
-          };
+          let lock: Awaited<ReturnType<typeof keyStore.acquireLock>> | undefined;
+          try {
+            lock = await keyStore.acquireLock([KeyStorePrefixes.IdentityLockoutLock(lockoutKey)], 500, {
+              retryCount: 10,
+              retryDelay: 300,
+              retryJitter: 100
+            });
 
-          const lockoutRaw = await keyStore.getItem(LOCKOUT_KEY);
-          if (lockoutRaw) {
-            lockout = JSON.parse(lockoutRaw) as LockoutObject;
+            // Re-fetch the latest lockout data while holding the lock
+            const lockoutRawNew = await keyStore.getItem(lockoutKey);
+            if (lockoutRawNew) {
+              lockout = JSON.parse(lockoutRawNew) as LockoutObject;
+            } else {
+              lockout = {
+                lockedOut: false,
+                failedAttempts: 0
+              };
+            }
+
+            if (lockout.lockedOut) {
+              throw new UnauthorizedError({
+                message: "This identity auth method is temporarily locked, please try again later",
+                detail: { reasonCode: "temporarily_locked", identityId, orgId, identityName: identity?.name }
+              });
+            }
+
+            lockout.failedAttempts += 1;
+            if (lockout.failedAttempts >= identityLdapAuth.lockoutThreshold) {
+              lockout.lockedOut = true;
+            }
+
+            await keyStore.setItemWithExpiry(
+              lockoutKey,
+              lockout.lockedOut ? identityLdapAuth.lockoutDurationSeconds : identityLdapAuth.lockoutCounterResetSeconds,
+              JSON.stringify(lockout)
+            );
+          } catch (e) {
+            if (lock === undefined) {
+              logger.info(
+                `identity login failed to acquire lock [identityId=${identityId}] [authMethod=${IdentityAuthMethod.LDAP_AUTH}]`
+              );
+              throw new RateLimitError({ message: "Failed to acquire lock: rate limit exceeded" });
+            }
+            throw e;
+          } finally {
+            if (lock) {
+              await lock.release();
+            }
           }
-
-          lockout.failedAttempts += 1;
-          if (lockout.failedAttempts >= identityLdapAuth.lockoutThreshold) {
-            lockout.lockedOut = true;
-          }
-
-          await keyStore.setItemWithExpiry(
-            LOCKOUT_KEY,
-            lockout.lockedOut ? identityLdapAuth.lockoutDurationSeconds : identityLdapAuth.lockoutCounterResetSeconds,
-            JSON.stringify(lockout)
-          );
         }
 
-        throw new UnauthorizedError({ message: "Invalid credentials" });
+        throw new UnauthorizedError({
+          message: "Invalid credentials",
+          detail: { reasonCode: "invalid_credentials", identityId, orgId, identityName: identity?.name }
+        });
       }
       throw error;
-    } finally {
-      await lock.release();
     }
   };
 
@@ -939,7 +1053,7 @@ export const identityLdapAuthServiceFactory = ({
     }
 
     const deleted = await keyStore.deleteItems({
-      pattern: `lockout:identity:${identityId}:${IdentityAuthMethod.LDAP_AUTH}:*`
+      pattern: KeyStorePrefixes.IdentityLockoutStateByMethodPattern(identityId, IdentityAuthMethod.LDAP_AUTH)
     });
 
     return { deleted, identityId, orgId: identityMembershipOrg.scopeOrgId };

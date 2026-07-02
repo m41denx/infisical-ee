@@ -1,66 +1,83 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { subject } from "@casl/ability";
-import {
-  faArrowDown,
-  faArrowUp,
-  faCircleXmark,
-  faClock,
-  faEllipsisV,
-  faMagnifyingGlass,
-  faPlus,
-  faServer
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate } from "@tanstack/react-router";
-import { InfoIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  FilterIcon,
+  InfoIcon,
+  LockIcon,
+  MoreHorizontalIcon,
+  PlusIcon,
+  SearchIcon,
+  TrashIcon,
+  XIcon
+} from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
+import { AssumePrivilegesModal } from "@app/components/assume-privileges";
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
-import {
-  Button,
-  DeleteActionModal,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  EmptyState,
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-  IconButton,
-  Input,
-  Modal,
-  ModalContent,
-  Pagination,
-  Spinner,
-  Table,
-  TableContainer,
-  TableSkeleton,
-  Tag,
-  TBody,
-  Td,
-  Th,
-  THead,
-  Tooltip,
-  Tr
-} from "@app/components/v2";
+import { DeleteActionModal, Spinner } from "@app/components/v2";
 import { Blur } from "@app/components/v2/Blur";
 import {
   Badge,
+  Button,
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
   DocumentationLinkBadge,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+  IconButton,
+  IdentityRoleBadges,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
   OrgIcon,
+  Pagination,
   ProjectIcon,
-  SubOrgIcon
+  Skeleton,
+  SubOrgIcon,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
 } from "@app/components/v3";
 import {
   ProjectPermissionActions,
+  ProjectPermissionIdentityActions,
   ProjectPermissionSub,
   useOrganization,
   useProject
 } from "@app/context";
 import { getProjectBaseURL } from "@app/helpers/project";
-import { formatProjectRoleName } from "@app/helpers/roles";
 import {
   getUserTablePreference,
   PreferenceKey,
@@ -69,22 +86,26 @@ import {
 import { withProjectPermission } from "@app/hoc";
 import { usePagination, useResetPageHelper } from "@app/hooks";
 import {
+  IdentityAuthMethod,
+  identityAuthToNameMap,
   useDeleteProjectIdentity,
   useDeleteProjectIdentityMembership,
+  useGetProjectRoles,
   useListProjectIdentityMemberships
 } from "@app/hooks/api";
+import { ActorType } from "@app/hooks/api/auditLogs/enums";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
-import { ProjectIdentityOrderBy } from "@app/hooks/api/projects/types";
+import { ProjectIdentityOrderBy, ProjectType } from "@app/hooks/api/projects/types";
 import { usePopUp } from "@app/hooks/usePopUp";
+import { IdentityAuthMethodModal } from "@app/pages/organization/AccessManagementPage/components/OrgIdentityTab/components/IdentitySection/IdentityAuthMethodModal";
 import { ProjectIdentityModal } from "@app/pages/project/AccessControlPage/components/IdentityTab/components/ProjectIdentityModal";
+import { IdentityAuthMethodSheet } from "@app/views/IdentityAuthMethods";
 
 import { ProjectLinkIdentityModal } from "./components/ProjectLinkIdentityModal";
 
-const MAX_ROLES_TO_BE_SHOWN_IN_TABLE = 2;
-
 enum AddIdentityType {
-  CreateNew,
-  AssignExisting
+  CreateNew = "create-new",
+  AssignExisting = "assign-existing"
 }
 
 export const IdentityTab = withProjectPermission(
@@ -92,6 +113,8 @@ export const IdentityTab = withProjectPermission(
     const { currentProject, projectId } = useProject();
     const navigate = useNavigate();
     const { isSubOrganization, currentOrg } = useOrganization();
+    const isCertManager = currentProject?.type === ProjectType.CertificateManager;
+    const productLabel = isCertManager ? "Certificate Manager" : "Project";
 
     const [addMachineIdentityType, setAddMachineIdentityType] = useState<AddIdentityType>(
       AddIdentityType.CreateNew
@@ -120,14 +143,33 @@ export const IdentityTab = withProjectPermission(
       setUserTablePreference("projectIdentityTable", PreferenceKey.PerPage, newPerPage);
     };
 
-    const { data, isPending, isFetching } = useListProjectIdentityMemberships(
+    const { data: projectRoles } = useGetProjectRoles(projectId, currentProject?.type);
+
+    const [filterRoles, setFilterRoles] = useState<string[]>([]);
+    const isTableFiltered = Boolean(filterRoles.length);
+
+    const handleRoleToggle = useCallback(
+      (roleSlug: string) =>
+        setFilterRoles((prev) => {
+          const next = prev.includes(roleSlug)
+            ? prev.filter((r) => r !== roleSlug)
+            : [...prev, roleSlug];
+          setPage(1);
+          return next;
+        }),
+      []
+    );
+
+    const { data, isPending, isFetching, refetch } = useListProjectIdentityMemberships(
       {
         projectId,
+        projectType: currentProject?.type,
         offset,
         limit,
         orderDirection,
         orderBy,
-        search: debouncedSearch
+        search: debouncedSearch,
+        roles: filterRoles
       },
       { placeholderData: (prevData) => prevData }
     );
@@ -147,8 +189,15 @@ export const IdentityTab = withProjectPermission(
       "createIdentity",
       "deleteIdentity",
       "upgradePlan",
-      "addOptions"
+      "addOptions",
+      "identityAuthMethod",
+      "assumePrivileges"
     ] as const);
+
+    const [viewAuthMethodState, setViewAuthMethodState] = useState<{
+      identityId: string;
+      authMethod: IdentityAuthMethod;
+    } | null>(null);
 
     const onRemoveIdentitySubmit = async (identityId: string, isProjectIdentity: boolean) => {
       if (isProjectIdentity) {
@@ -164,7 +213,8 @@ export const IdentityTab = withProjectPermission(
       } else {
         await deleteMembershipMutateAsync({
           identityId,
-          projectId
+          projectId,
+          projectType: currentProject?.type
         });
 
         createNotification({
@@ -194,393 +244,459 @@ export const IdentityTab = withProjectPermission(
     );
 
     return (
-      <div className="mb-6 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-x-2">
-            <p className="text-xl font-medium text-mineshaft-100">Project Machine Identities</p>
-            <DocumentationLinkBadge href="https://infisical.com/docs/documentation/platform/identities/machine-identities" />
-          </div>
-          <div className="flex items-center">
-            <ProjectPermissionCan
-              I={ProjectPermissionActions.Create}
-              a={ProjectPermissionSub.Identity}
-            >
-              {(isAllowed) => (
-                <Button
-                  variant="outline_bg"
-                  leftIcon={<FontAwesomeIcon icon={faPlus} />}
-                  onClick={() => handlePopUpOpen("createIdentity")}
-                  isDisabled={!isAllowed}
-                >
-                  Add Machine Identity to Project
-                </Button>
-              )}
-            </ProjectPermissionCan>
-          </div>
-        </div>
-        <Input
-          containerClassName="mb-4"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
-          placeholder="Search project machine identities by name..."
-        />
-        <TableContainer>
-          <Table>
-            <THead>
-              <Tr className="h-14">
-                <Th className="w-1/3">
-                  <div className="flex items-center">
-                    Name
-                    <IconButton
-                      variant="plain"
-                      className={`ml-2 ${
-                        orderBy === ProjectIdentityOrderBy.Name ? "" : "opacity-30"
-                      }`}
-                      ariaLabel="sort"
-                      onClick={() => handleSort(ProjectIdentityOrderBy.Name)}
-                    >
-                      <FontAwesomeIcon
-                        icon={
-                          orderDirection === OrderByDirection.DESC &&
-                          orderBy === ProjectIdentityOrderBy.Name
-                            ? faArrowUp
-                            : faArrowDown
-                        }
-                      />
+      <>
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              {isCertManager ? "Machine Identities" : `${productLabel} Machine Identities`}
+              <DocumentationLinkBadge href="https://infisical.com/docs/documentation/platform/identities/machine-identities" />
+            </CardTitle>
+            <CardDescription>
+              {`Create and manage ${productLabel.toLowerCase()} machine identities`}
+            </CardDescription>
+            <CardAction>
+              <ProjectPermissionCan
+                I={ProjectPermissionActions.Create}
+                a={ProjectPermissionSub.Identity}
+              >
+                {(isAllowed) => (
+                  <Button
+                    variant="project"
+                    onClick={() => handlePopUpOpen("createIdentity")}
+                    isDisabled={!isAllowed}
+                  >
+                    <PlusIcon />
+                    {isCertManager
+                      ? "Add Machine Identity"
+                      : `Add Machine Identity to ${productLabel}`}
+                  </Button>
+                )}
+              </ProjectPermissionCan>
+            </CardAction>
+          </CardHeader>
+          <CardContent>
+            <div>
+              <div className="mb-4 flex gap-2">
+                <InputGroup className="flex-1">
+                  <InputGroupAddon>
+                    <SearchIcon />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder={
+                      isCertManager
+                        ? "Search machine identities by name..."
+                        : "Search project machine identities by name..."
+                    }
+                  />
+                </InputGroup>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <IconButton variant={isTableFiltered ? "project" : "outline"}>
+                      <FilterIcon />
                     </IconButton>
-                  </div>
-                </Th>
-                <Th className="w-1/3">Project Role</Th>
-                <Th>Managed by</Th>
-                <Th className="w-5">{isFetching ? <Spinner size="xs" /> : null}</Th>
-              </Tr>
-            </THead>
-            <TBody>
-              {isPending && <TableSkeleton columns={4} innerKey="project-identities" />}
-              {!isPending &&
-                data &&
-                data.identityMemberships.length > 0 &&
-                data.identityMemberships.map((identityMember) => {
-                  const {
-                    identity: { id, name, projectId: identityProjectId, orgId: identityOrgId },
-                    roles
-                  } = identityMember;
-                  return (
-                    <Tr
-                      className="group h-10 cursor-pointer transition-colors duration-100 hover:bg-mineshaft-700"
-                      key={`st-v3-${id}`}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(evt) => {
-                        if (evt.key === "Enter") {
-                          navigate({
-                            to: `${getProjectBaseURL(currentProject.type)}/identities/$identityId` as const,
-                            params: {
-                              orgId: currentOrg.id,
-                              projectId: currentProject.id,
-                              identityId: id
-                            }
-                          });
-                        }
-                      }}
-                      onClick={() =>
-                        navigate({
-                          to: `${getProjectBaseURL(currentProject.type)}/identities/$identityId` as const,
-                          params: {
-                            orgId: currentOrg.id,
-                            projectId: currentProject.id,
-                            identityId: id
-                          }
-                        })
-                      }
-                    >
-                      <Td>{name}</Td>
-
-                      <Td>
-                        <div className="flex items-center space-x-2">
-                          {roles
-                            .slice(0, MAX_ROLES_TO_BE_SHOWN_IN_TABLE)
-                            .map(
-                              ({
-                                role,
-                                customRoleName,
-                                id: roleId,
-                                isTemporary,
-                                temporaryAccessEndTime
-                              }) => {
-                                const isExpired =
-                                  new Date() > new Date(temporaryAccessEndTime || ("" as string));
-                                return (
-                                  <Tag key={roleId}>
-                                    <div className="flex items-center space-x-2">
-                                      <div className="capitalize">
-                                        {formatProjectRoleName(role, customRoleName)}
-                                      </div>
-                                      {isTemporary && (
-                                        <div>
-                                          <Tooltip
-                                            content={
-                                              isExpired ? "Timed role expired" : "Timed role access"
-                                            }
-                                          >
-                                            <FontAwesomeIcon
-                                              icon={faClock}
-                                              className={twMerge(isExpired && "text-red-600")}
-                                            />
-                                          </Tooltip>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </Tag>
-                                );
-                              }
-                            )}
-                          {roles.length > MAX_ROLES_TO_BE_SHOWN_IN_TABLE && (
-                            <HoverCard>
-                              <HoverCardTrigger>
-                                <Tag>+{roles.length - MAX_ROLES_TO_BE_SHOWN_IN_TABLE}</Tag>
-                              </HoverCardTrigger>
-                              <HoverCardContent className="border border-gray-700 bg-mineshaft-800 p-4">
-                                {roles
-                                  .slice(MAX_ROLES_TO_BE_SHOWN_IN_TABLE)
-                                  .map(
-                                    ({
-                                      role,
-                                      customRoleName,
-                                      id: roleId,
-                                      isTemporary,
-                                      temporaryAccessEndTime
-                                    }) => {
-                                      const isExpired =
-                                        new Date() >
-                                        new Date(temporaryAccessEndTime || ("" as string));
-                                      return (
-                                        <Tag key={roleId} className="capitalize">
-                                          <div className="flex items-center space-x-2">
-                                            <div>{formatProjectRoleName(role, customRoleName)}</div>
-                                            {isTemporary && (
-                                              <div>
-                                                <Tooltip
-                                                  content={
-                                                    isExpired
-                                                      ? "Access expired"
-                                                      : "Temporary access"
-                                                  }
-                                                >
-                                                  <FontAwesomeIcon
-                                                    icon={faClock}
-                                                    className={twMerge(
-                                                      new Date() >
-                                                        new Date(
-                                                          temporaryAccessEndTime as string
-                                                        ) && "text-red-600"
-                                                    )}
-                                                  />
-                                                </Tooltip>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </Tag>
-                                      );
-                                    }
-                                  )}
-                              </HoverCardContent>
-                            </HoverCard>
-                          )}
-                        </div>
-                      </Td>
-                      <Td>
-                        <Badge
-                          variant={
-                            // eslint-disable-next-line no-nested-ternary
-                            identityProjectId
-                              ? "project"
-                              : isSubOrganization && currentOrg.id === identityOrgId
-                                ? "sub-org"
-                                : "org"
-                          }
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>
+                      {isCertManager ? "Filter by Role" : `Filter by ${productLabel} Role`}
+                    </DropdownMenuLabel>
+                    {projectRoles?.map(({ id, slug, name }) => (
+                      <DropdownMenuCheckboxItem
+                        key={id}
+                        checked={filterRoles.includes(slug)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleRoleToggle(slug);
+                        }}
+                      >
+                        {name}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              {!isPending && data && data.totalCount === 0 ? (
+                <Empty className="border">
+                  <EmptyHeader>
+                    <EmptyTitle>
+                      {/* eslint-disable-next-line no-nested-ternary */}
+                      {debouncedSearch.trim().length > 0 || isTableFiltered
+                        ? "No machine identities match search"
+                        : isCertManager
+                          ? "No machine identities have been added"
+                          : "No machine identities have been added to this project"}
+                    </EmptyTitle>
+                    <EmptyDescription>
+                      {debouncedSearch.trim().length > 0 || isTableFiltered
+                        ? "Adjust your search or filter criteria."
+                        : "Add a machine identity to get started."}
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : (
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead
+                          className="w-1/4"
+                          onClick={() => handleSort(ProjectIdentityOrderBy.Name)}
                         >
-                          {/* eslint-disable-next-line no-nested-ternary */}
-                          {identityProjectId ? (
-                            <>
-                              <ProjectIcon />
-                              Project
-                            </>
-                          ) : isSubOrganization && currentOrg.id === identityOrgId ? (
-                            <>
-                              <SubOrgIcon />
-                              Sub-Organization
-                            </>
-                          ) : (
-                            <>
-                              <OrgIcon />
-                              Organization
-                            </>
-                          )}
-                        </Badge>
-                      </Td>
-                      <Td className="flex justify-end space-x-2">
-                        <Tooltip className="max-w-sm text-center" content="Options">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <IconButton
-                                ariaLabel="Options"
-                                colorSchema="secondary"
-                                className="w-6"
-                                variant="plain"
-                              >
-                                <FontAwesomeIcon icon={faEllipsisV} />
-                              </IconButton>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent sideOffset={2} align="end">
-                              <ProjectPermissionCan
-                                I={ProjectPermissionActions.Delete}
-                                a={subject(ProjectPermissionSub.Identity, {
-                                  identityId: id
-                                })}
-                              >
-                                {(isAllowed) => (
-                                  <DropdownMenuItem
-                                    icon={<FontAwesomeIcon icon={faCircleXmark} />}
-                                    isDisabled={!isAllowed}
-                                    onClick={(evt) => {
-                                      evt.stopPropagation();
-                                      evt.preventDefault();
-                                      handlePopUpOpen("deleteIdentity", {
-                                        identityId: id,
-                                        name,
-                                        isProjectIdentity: Boolean(identityProjectId)
-                                      });
-                                    }}
-                                  >
-                                    {identityProjectId
-                                      ? "Delete Machine Identity"
-                                      : "Remove From Project"}
-                                  </DropdownMenuItem>
-                                )}
-                              </ProjectPermissionCan>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </Tooltip>
-                      </Td>
-                    </Tr>
-                  );
-                })}
-              {!isPending &&
-                data &&
-                data?.totalCount !== 0 &&
-                Array.from(Array(noAccessIdentityCount)).map((_e, i) => (
-                  <Tr key={`hid-identity-${i + 1}`}>
-                    <Td>No Access</Td>
-                    <Td colSpan={3}>
-                      <Blur
-                        className="w-min"
-                        tooltipText="You do not have permission to view this machine identity."
-                      />
-                    </Td>
-                  </Tr>
-                ))}
-            </TBody>
-          </Table>
-          {!isPending && data && totalCount > 0 && (
-            <Pagination
-              count={totalCount}
-              page={page}
-              perPage={perPage}
-              onChangePage={(newPage) => setPage(newPage)}
-              onChangePerPage={handlePerPageChange}
-            />
-          )}
-          {!isPending &&
-            data &&
-            data?.identityMemberships.length === 0 &&
-            data?.totalCount === 0 && (
-              <EmptyState
-                title={
-                  debouncedSearch.trim().length > 0
-                    ? "No machine identities match search filter"
-                    : "No machine identities have been added to this project"
-                }
-                icon={faServer}
-              />
-            )}
-        </TableContainer>
-        <Modal
-          isOpen={popUp.createIdentity.isOpen}
+                          Name
+                          <ChevronDownIcon
+                            className={twMerge(
+                              "transition-transform",
+                              orderDirection === OrderByDirection.DESC &&
+                                orderBy === ProjectIdentityOrderBy.Name &&
+                                "rotate-180",
+                              orderBy !== ProjectIdentityOrderBy.Name && "opacity-30"
+                            )}
+                          />
+                        </TableHead>
+                        <TableHead className="w-1/4">
+                          {isCertManager ? "Role" : `${productLabel} Role`}
+                        </TableHead>
+                        <TableHead>Managed by</TableHead>
+                        <TableHead className="w-5">
+                          {isFetching ? <Spinner size="xs" /> : null}
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {isPending &&
+                        Array.from({ length: 10 }).map((_, i) => (
+                          <TableRow key={`skeleton-${i + 1}`}>
+                            <TableCell>
+                              <Skeleton className="h-4 w-full" />
+                            </TableCell>
+                            <TableCell>
+                              <Skeleton className="h-4 w-full" />
+                            </TableCell>
+                            <TableCell>
+                              <Skeleton className="h-4 w-full" />
+                            </TableCell>
+                            <TableCell>
+                              <Skeleton className="h-4 w-4" />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      {!isPending &&
+                        data &&
+                        (data.identityMemberships ?? []).length > 0 &&
+                        (data.identityMemberships ?? []).map((identityMember) => {
+                          const {
+                            identity: {
+                              id,
+                              name,
+                              projectId: identityProjectId,
+                              orgId: identityOrgId,
+                              authMethods,
+                              activeLockoutAuthMethods
+                            },
+                            roles
+                          } = identityMember;
+                          return (
+                            <TableRow
+                              className="group cursor-pointer"
+                              key={`st-v3-${id}`}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(evt) => {
+                                if (evt.key === "Enter") {
+                                  navigate({
+                                    to: `${getProjectBaseURL(currentProject.type)}/identities/$identityId` as const,
+                                    params: {
+                                      orgId: currentOrg.id,
+                                      projectId: currentProject.id,
+                                      identityId: id
+                                    }
+                                  });
+                                }
+                              }}
+                              onClick={() =>
+                                navigate({
+                                  to: `${getProjectBaseURL(currentProject.type)}/identities/$identityId` as const,
+                                  params: {
+                                    orgId: currentOrg.id,
+                                    projectId: currentProject.id,
+                                    identityId: id
+                                  }
+                                })
+                              }
+                            >
+                              <TableCell isTruncatable>{name}</TableCell>
+                              <TableCell>
+                                <IdentityRoleBadges roles={roles} />
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={
+                                    // eslint-disable-next-line no-nested-ternary
+                                    identityProjectId
+                                      ? "project"
+                                      : isSubOrganization && currentOrg.id === identityOrgId
+                                        ? "sub-org"
+                                        : "org"
+                                  }
+                                >
+                                  {/* eslint-disable-next-line no-nested-ternary */}
+                                  {identityProjectId ? (
+                                    <>
+                                      <ProjectIcon />
+                                      {productLabel}
+                                    </>
+                                  ) : isSubOrganization && currentOrg.id === identityOrgId ? (
+                                    <>
+                                      <SubOrgIcon />
+                                      Sub-Organization
+                                    </>
+                                  ) : (
+                                    <>
+                                      <OrgIcon />
+                                      Organization
+                                    </>
+                                  )}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center justify-end gap-2">
+                                  {(activeLockoutAuthMethods?.length ?? 0) > 0 && (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Badge isSquare variant="danger">
+                                          <LockIcon />
+                                        </Badge>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        {`Locked out: ${(activeLockoutAuthMethods ?? [])
+                                          .map((m) => identityAuthToNameMap[m])
+                                          .join(", ")}`}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  )}
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <IconButton
+                                        variant="ghost"
+                                        size="xs"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <MoreHorizontalIcon />
+                                      </IconButton>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent sideOffset={2} align="end">
+                                      {identityProjectId && (
+                                        <DropdownMenuSub>
+                                          <DropdownMenuSubTrigger chevronOnLeft>
+                                            Manage Auth Methods
+                                          </DropdownMenuSubTrigger>
+                                          <DropdownMenuSubContent>
+                                            {(authMethods ?? []).map((method) => (
+                                              <DropdownMenuItem
+                                                key={method}
+                                                onClick={(evt) => {
+                                                  evt.stopPropagation();
+                                                  evt.preventDefault();
+                                                  setViewAuthMethodState({
+                                                    identityId: id,
+                                                    authMethod: method
+                                                  });
+                                                }}
+                                              >
+                                                {identityAuthToNameMap[method]}
+                                                {activeLockoutAuthMethods?.includes(method) && (
+                                                  <Badge
+                                                    isSquare
+                                                    variant="danger"
+                                                    className="ml-auto"
+                                                  >
+                                                    <LockIcon className="size-3!" />
+                                                  </Badge>
+                                                )}
+                                              </DropdownMenuItem>
+                                            ))}
+                                            <ProjectPermissionCan
+                                              I={ProjectPermissionActions.Edit}
+                                              a={subject(ProjectPermissionSub.Identity, {
+                                                identityId: id
+                                              })}
+                                            >
+                                              {(isAllowed) => (
+                                                <DropdownMenuItem
+                                                  isDisabled={!isAllowed}
+                                                  onClick={(evt) => {
+                                                    evt.stopPropagation();
+                                                    evt.preventDefault();
+                                                    handlePopUpOpen("identityAuthMethod", {
+                                                      identityId: id,
+                                                      name,
+                                                      allAuthMethods: authMethods ?? []
+                                                    });
+                                                  }}
+                                                >
+                                                  <PlusIcon />
+                                                  Add Auth Method
+                                                </DropdownMenuItem>
+                                              )}
+                                            </ProjectPermissionCan>
+                                          </DropdownMenuSubContent>
+                                        </DropdownMenuSub>
+                                      )}
+                                      <ProjectPermissionCan
+                                        I={ProjectPermissionIdentityActions.AssumePrivileges}
+                                        a={subject(ProjectPermissionSub.Identity, {
+                                          identityId: id
+                                        })}
+                                      >
+                                        {(isAllowed) => (
+                                          <Tooltip>
+                                            <TooltipTrigger className="block w-full">
+                                              <DropdownMenuItem
+                                                isDisabled={!isAllowed}
+                                                onClick={(evt) => {
+                                                  evt.stopPropagation();
+                                                  evt.preventDefault();
+                                                  handlePopUpOpen("assumePrivileges", {
+                                                    identityId: id
+                                                  });
+                                                }}
+                                              >
+                                                Assume Privileges
+                                                {isAllowed && <InfoIcon className="text-muted" />}
+                                              </DropdownMenuItem>
+                                            </TooltipTrigger>
+                                            {isAllowed && (
+                                              <TooltipContent className="max-w-80" side="left">
+                                                Assume the privileges of this machine identity,
+                                                allowing you to replicate their access behavior.
+                                              </TooltipContent>
+                                            )}
+                                          </Tooltip>
+                                        )}
+                                      </ProjectPermissionCan>
+                                      <ProjectPermissionCan
+                                        I={ProjectPermissionActions.Delete}
+                                        a={subject(ProjectPermissionSub.Identity, {
+                                          identityId: id
+                                        })}
+                                      >
+                                        {(isAllowed) => (
+                                          <DropdownMenuItem
+                                            variant="danger"
+                                            isDisabled={!isAllowed}
+                                            onClick={(evt) => {
+                                              evt.stopPropagation();
+                                              evt.preventDefault();
+                                              handlePopUpOpen("deleteIdentity", {
+                                                identityId: id,
+                                                name,
+                                                isProjectIdentity: Boolean(identityProjectId)
+                                              });
+                                            }}
+                                          >
+                                            {identityProjectId ? <TrashIcon /> : <XIcon />}
+                                            {/* eslint-disable-next-line no-nested-ternary */}
+                                            {identityProjectId
+                                              ? "Delete Machine Identity"
+                                              : isCertManager
+                                                ? "Remove From Certificate Manager"
+                                                : "Remove From Project"}
+                                          </DropdownMenuItem>
+                                        )}
+                                      </ProjectPermissionCan>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      {!isPending &&
+                        data &&
+                        data?.totalCount !== 0 &&
+                        Array.from(Array(noAccessIdentityCount)).map((_e, i) => (
+                          <TableRow key={`hid-identity-${i + 1}`}>
+                            <TableCell>No Access</TableCell>
+                            <TableCell colSpan={4}>
+                              <Blur
+                                className="w-min"
+                                tooltipText="You do not have permission to view this machine identity."
+                              />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                  {!isPending && data && totalCount > 0 && (
+                    <Pagination
+                      count={totalCount}
+                      page={page}
+                      perPage={perPage}
+                      onChangePage={(newPage) => setPage(newPage)}
+                      onChangePerPage={handlePerPageChange}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        <Dialog
+          open={popUp.createIdentity.isOpen}
           onOpenChange={(open) => {
             handlePopUpToggle("createIdentity", open);
+            if (!open) {
+              setAddMachineIdentityType(AddIdentityType.CreateNew);
+            }
           }}
         >
-          <ModalContent
-            bodyClassName="overflow-visible"
-            title="Add Machine Identity to Project"
-            subTitle="Create a new machine identity or assign an existing one"
-          >
-            <div className="mb-4 flex items-center justify-center gap-x-2">
-              <div className="flex w-3/4 gap-x-0.5 rounded-md border border-mineshaft-600 bg-mineshaft-800 p-1">
-                <Button
-                  variant="outline_bg"
-                  onClick={() => {
-                    setAddMachineIdentityType(AddIdentityType.CreateNew);
-                  }}
-                  size="xs"
-                  className={twMerge(
-                    "min-w-[2.4rem] flex-1 rounded border-none hover:bg-mineshaft-600",
-                    addMachineIdentityType === AddIdentityType.CreateNew
-                      ? "bg-mineshaft-500"
-                      : "bg-transparent"
-                  )}
-                >
-                  Create New
-                </Button>
-                <Button
-                  variant="outline_bg"
-                  onClick={() => {
-                    setAddMachineIdentityType(AddIdentityType.AssignExisting);
-                  }}
-                  size="xs"
-                  className={twMerge(
-                    "min-w-[2.4rem] flex-1 rounded border-none hover:bg-mineshaft-600",
-                    addMachineIdentityType === AddIdentityType.AssignExisting
-                      ? "bg-mineshaft-500"
-                      : "bg-transparent"
-                  )}
-                >
-                  Assign Existing
-                </Button>
-              </div>
-              <Tooltip
-                className="max-w-sm"
-                position="right"
-                align="start"
-                content={
-                  <>
-                    <p className="mb-2 text-mineshaft-300">
-                      You can add machine identities to your project in one of two ways:
-                    </p>
-                    <ul className="ml-3.5 flex list-disc flex-col gap-y-4">
-                      <li className="text-mineshaft-200">
-                        <strong className="font-medium text-mineshaft-100">Create New</strong> -
-                        Create a dedicated machine identity managed at the project-level.
-                        <p className="mt-2">
-                          This method is recommended for autonomous teams that need to manage
-                          machine identity authentication.
-                        </p>
-                      </li>
-                      <li>
-                        <strong className="font-medium text-mineshaft-100">Assign Existing</strong>{" "}
-                        - Assign an existing machine identity from your organization.
-                        <p className="mt-2">
-                          This method is recommended for organizations that need to maintain
-                          centralized control.
-                        </p>
-                      </li>
-                    </ul>
-                  </>
-                }
+          <DialogContent className="max-w-xl overflow-visible">
+            <DialogHeader>
+              <DialogTitle>{`Add Machine Identity to ${productLabel}`}</DialogTitle>
+              <DialogDescription>
+                Create a new machine identity or assign an existing one
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mx-auto flex items-center gap-2">
+              <Tabs
+                value={addMachineIdentityType}
+                onValueChange={(value) => setAddMachineIdentityType(value as AddIdentityType)}
               >
-                <InfoIcon size={16} className="text-mineshaft-400" />
+                <TabsList>
+                  <TabsTrigger value={AddIdentityType.CreateNew}>Create New</TabsTrigger>
+                  <TabsTrigger value={AddIdentityType.AssignExisting}>Assign Existing</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Tooltip>
+                <TooltipTrigger>
+                  <InfoIcon size={16} className="text-mineshaft-400" />
+                </TooltipTrigger>
+                <TooltipContent side="right" align="start" className="max-w-sm">
+                  <p className="mb-2 text-mineshaft-300">
+                    You can add machine identities to your{" "}
+                    {isCertManager ? "Certificate Manager" : "project"} in one of two ways:
+                  </p>
+                  <ul className="ml-3.5 flex list-disc flex-col gap-y-4">
+                    <li className="text-mineshaft-200">
+                      <strong className="font-medium text-mineshaft-100">Create New</strong> -
+                      Create a dedicated machine identity managed at the{" "}
+                      {isCertManager ? "Certificate Manager-level" : "project-level"}.
+                      <p className="mt-2">
+                        This method is recommended for autonomous teams that need to manage machine
+                        identity authentication.
+                      </p>
+                    </li>
+                    <li>
+                      <strong className="font-medium text-mineshaft-100">Assign Existing</strong> -
+                      Assign an existing machine identity from your organization.
+                      <p className="mt-2">
+                        This method is recommended for organizations that need to maintain
+                        centralized control.
+                      </p>
+                    </li>
+                  </ul>
+                </TooltipContent>
               </Tooltip>
             </div>
             {addMachineIdentityType === AddIdentityType.CreateNew && (
@@ -593,13 +709,13 @@ export const IdentityTab = withProjectPermission(
             {addMachineIdentityType === AddIdentityType.AssignExisting && (
               <ProjectLinkIdentityModal handlePopUpToggle={handlePopUpToggle} />
             )}
-          </ModalContent>
-        </Modal>
+          </DialogContent>
+        </Dialog>
         <DeleteActionModal
           isOpen={popUp.deleteIdentity.isOpen}
           title={`Are you sure you want to remove ${
             (popUp?.deleteIdentity?.data as { name: string })?.name || ""
-          } from the project?`}
+          } from the ${productLabel.toLowerCase()}?`}
           onChange={(isOpen) => handlePopUpToggle("deleteIdentity", isOpen)}
           deleteKey="confirm"
           onDeleteApproved={() =>
@@ -609,7 +725,43 @@ export const IdentityTab = withProjectPermission(
             )
           }
         />
-      </div>
+        <IdentityAuthMethodModal
+          popUp={popUp}
+          handlePopUpOpen={handlePopUpOpen}
+          handlePopUpToggle={handlePopUpToggle}
+        />
+        {viewAuthMethodState &&
+          (() => {
+            const viewedIdentity = data?.identityMemberships?.find(
+              (m) => m.identity.id === viewAuthMethodState.identityId
+            )?.identity;
+            if (!viewedIdentity) return null;
+            return (
+              <IdentityAuthMethodSheet
+                open
+                onOpenChange={(open) => {
+                  if (!open) setViewAuthMethodState(null);
+                }}
+                identityId={viewAuthMethodState.identityId}
+                identityName={viewedIdentity.name}
+                authMethod={viewAuthMethodState.authMethod}
+                allAuthMethods={viewedIdentity.authMethods ?? []}
+                isLockedOut={
+                  viewedIdentity.activeLockoutAuthMethods?.includes(
+                    viewAuthMethodState.authMethod
+                  ) ?? false
+                }
+                onMutated={refetch}
+              />
+            );
+          })()}
+        <AssumePrivilegesModal
+          isOpen={popUp.assumePrivileges.isOpen}
+          onOpenChange={(isOpen) => handlePopUpToggle("assumePrivileges", isOpen)}
+          actorType={ActorType.IDENTITY}
+          actorId={(popUp.assumePrivileges.data as { identityId: string })?.identityId}
+        />
+      </>
     );
   },
   { action: ProjectPermissionActions.Read, subject: ProjectPermissionSub.Identity }

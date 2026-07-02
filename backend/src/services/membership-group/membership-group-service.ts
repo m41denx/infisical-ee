@@ -1,3 +1,5 @@
+import { Knex } from "knex";
+
 import {
   AccessScope,
   ProjectMembershipRole,
@@ -7,6 +9,8 @@ import {
 } from "@app/db/schemas";
 import { TAccessApprovalPolicyApproverDALFactory } from "@app/ee/services/access-approval-policy/access-approval-policy-approver-dal";
 import { TAccessApprovalPolicyDALFactory } from "@app/ee/services/access-approval-policy/access-approval-policy-dal";
+import { TGroupDALFactory } from "@app/ee/services/group/group-dal";
+import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { TSecretApprovalPolicyApproverDALFactory } from "@app/ee/services/secret-approval-policy/secret-approval-policy-approver-dal";
 import { TSecretApprovalPolicyDALFactory } from "@app/ee/services/secret-approval-policy/secret-approval-policy-dal";
@@ -15,8 +19,11 @@ import { groupBy } from "@app/lib/fn";
 import { ms } from "@app/lib/ms";
 import { SearchResourceOperators } from "@app/lib/search-resource/search";
 
+import { TApplicationMembershipCleanupServiceFactory } from "../membership/application-membership-cleanup-service";
 import { TMembershipRoleDALFactory } from "../membership/membership-role-dal";
 import { TOrgDALFactory } from "../org/org-dal";
+import { ApplicationMemberKind } from "../pki-application/pki-application-types";
+import { TProjectDALFactory } from "../project/project-dal";
 import { TRoleDALFactory } from "../role/role-dal";
 import { TMembershipGroupDALFactory } from "./membership-group-dal";
 import {
@@ -26,7 +33,6 @@ import {
   TListMembershipGroupDTO,
   TUpdateMembershipGroupDTO
 } from "./membership-group-types";
-import { newNamespaceMembershipGroupFactory } from "./namespace/namespace-membership-group-factory";
 import { newOrgMembershipGroupFactory } from "./org/org-membership-group-factory";
 import { newProjectMembershipGroupFactory } from "./project/project-membership-group-factory";
 
@@ -40,6 +46,13 @@ type TMembershipGroupServiceFactoryDep = {
   roleDAL: Pick<TRoleDALFactory, "find">;
   permissionService: TPermissionServiceFactory;
   orgDAL: TOrgDALFactory;
+  groupDAL: Pick<TGroupDALFactory, "findById">;
+  licenseService: Pick<TLicenseServiceFactory, "getPlan">;
+  applicationMembershipCleanupService: Pick<
+    TApplicationMembershipCleanupServiceFactory,
+    "cleanupActorApplicationMemberships"
+  >;
+  projectDAL: Pick<TProjectDALFactory, "findById">;
 };
 
 export type TMembershipGroupServiceFactory = ReturnType<typeof membershipGroupServiceFactory>;
@@ -53,18 +66,24 @@ export const membershipGroupServiceFactory = ({
   secretApprovalPolicyApproverDAL,
   membershipRoleDAL,
   orgDAL,
-  permissionService
+  permissionService,
+  groupDAL,
+  licenseService,
+  applicationMembershipCleanupService,
+  projectDAL
 }: TMembershipGroupServiceFactoryDep) => {
   const scopeFactory = {
     [AccessScope.Organization]: newOrgMembershipGroupFactory({
       orgDAL,
-      permissionService
+      permissionService,
+      groupDAL
     }),
-    [AccessScope.Namespace]: newNamespaceMembershipGroupFactory({}),
     [AccessScope.Project]: newProjectMembershipGroupFactory({
       membershipGroupDAL,
       orgDAL,
-      permissionService
+      permissionService,
+      groupDAL,
+      projectDAL
     })
   };
 
@@ -94,10 +113,18 @@ export const membershipGroupServiceFactory = ({
 
     const scopeDatabaseFields = factory.getScopeDatabaseFields(dto.scopeData);
 
-    await factory.onCreateMembershipGroupGuard(dto);
+    const { group } = await factory.onCreateMembershipGroupGuard(dto);
 
     const customInputRoles = data.roles.filter((el) => factory.isCustomRole(el.role));
     const hasCustomRole = customInputRoles.length > 0;
+    if (hasCustomRole) {
+      const plan = await licenseService.getPlan(scopeData.orgId);
+      if (!plan?.rbac)
+        throw new BadRequestError({
+          message:
+            "Failed to assign custom role to group due to plan RBAC restriction. Upgrade to Infisical Enterprise to assign custom roles."
+        });
+    }
 
     const scopeField = factory.getScopeField(dto.scopeData);
     const customRoles = hasCustomRole
@@ -168,17 +195,25 @@ export const membershipGroupServiceFactory = ({
       return doc;
     });
 
-    return { membership };
+    return { membership, group };
   };
 
   const updateMembership = async (dto: TUpdateMembershipGroupDTO) => {
     const { scopeData, data } = dto;
     const factory = scopeFactory[scopeData.scope];
 
-    await factory.onUpdateMembershipGroupGuard(dto);
+    const { group } = await factory.onUpdateMembershipGroupGuard(dto);
 
     const customInputRoles = data.roles.filter((el) => factory.isCustomRole(el.role));
     const hasCustomRole = customInputRoles.length > 0;
+    if (hasCustomRole) {
+      const plan = await licenseService.getPlan(scopeData.orgId);
+      if (!plan?.rbac)
+        throw new BadRequestError({
+          message:
+            "Failed to assign custom role to group due to plan RBAC restriction. Upgrade to Infisical Enterprise to assign custom roles."
+        });
+    }
 
     const hasNoPermanentRole = data.roles.every((el) => el.isTemporary);
     if (hasNoPermanentRole) {
@@ -275,14 +310,14 @@ export const membershipGroupServiceFactory = ({
       return { ...doc, roles };
     });
 
-    return { membership: membershipDoc };
+    return { membership: membershipDoc, group };
   };
 
-  const deleteMembership = async (dto: TDeleteMembershipGroupDTO) => {
+  const deleteMembership = async (dto: TDeleteMembershipGroupDTO, externalTx?: Knex) => {
     const { scopeData } = dto;
     const factory = scopeFactory[scopeData.scope];
 
-    await factory.onDeleteMembershipGroupGuard(dto);
+    const { group } = await factory.onDeleteMembershipGroupGuard(dto);
 
     const scopeDatabaseFields = factory.getScopeDatabaseFields(dto.scopeData);
     const existingMembership = await membershipGroupDAL.findOne({
@@ -316,8 +351,9 @@ export const membershipGroupServiceFactory = ({
       });
 
       if (accessApprovalPolicies.length > 0) {
+        const policyNames = accessApprovalPolicies.map((p) => p.name).join(", ");
         throw new BadRequestError({
-          message: "This group is assigned to an approval policy and cannot be deleted"
+          message: `Cannot remove group from project: group is an approver in access approval ${accessApprovalPolicies.length > 1 ? "policies" : "policy"}: ${policyNames}`
         });
       }
     }
@@ -336,18 +372,34 @@ export const membershipGroupServiceFactory = ({
         deletedAt: null
       });
       if (secretApprovalPolicies.length > 0) {
+        const policyNames = secretApprovalPolicies.map((p) => p.name).join(", ");
         throw new BadRequestError({
-          message: "This group is assigned to a secret approval policy and cannot be deleted"
+          message: `Cannot remove group from project: group is an approver in secret approval ${secretApprovalPolicies.length > 1 ? "policies" : "policy"}: ${policyNames}`
         });
       }
     }
 
-    const membershipDoc = await membershipGroupDAL.transaction(async (tx) => {
+    const performDelete = async (tx: Knex) => {
+      if (scopeData.scope === AccessScope.Project && existingMembership.scopeProjectId) {
+        await applicationMembershipCleanupService.cleanupActorApplicationMemberships(
+          {
+            projectId: existingMembership.scopeProjectId,
+            actorKind: ApplicationMemberKind.Group,
+            actorId: dto.selector.groupId
+          },
+          tx
+        );
+      }
+
       await membershipRoleDAL.delete({ membershipId: existingMembership.id }, tx);
       const doc = await membershipGroupDAL.deleteById(existingMembership.id, tx);
       return doc;
-    });
-    return { membership: membershipDoc };
+    };
+
+    const membershipDoc = externalTx
+      ? await performDelete(externalTx)
+      : await membershipGroupDAL.transaction(performDelete);
+    return { membership: membershipDoc, group };
   };
 
   const listMemberships = async (dto: TListMembershipGroupDTO) => {
@@ -360,9 +412,11 @@ export const membershipGroupServiceFactory = ({
       filter: {
         limit: dto.data.limit,
         offset: dto.data.offset,
-        name: dto.data.groupName
+        orderBy: dto.data.orderBy,
+        orderDirection: dto.data.orderDirection,
+        name: dto.data.search
           ? {
-              [SearchResourceOperators.$contains]: dto.data.groupName
+              [SearchResourceOperators.$contains]: dto.data.search
             }
           : undefined,
         role: dto.data.roles?.length

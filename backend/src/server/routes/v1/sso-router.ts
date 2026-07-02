@@ -21,17 +21,60 @@ import { getConfig } from "@app/lib/config/env";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 import { ms } from "@app/lib/ms";
-import { fetchGithubEmails, fetchGithubUser } from "@app/lib/requests/github";
-import { AuthAttemptAuthMethod, AuthAttemptAuthResult, authAttemptCounter } from "@app/lib/telemetry/metrics";
+import { RequestContextKey } from "@app/lib/request-context/request-context-keys";
+import { fetchGithubEmails, fetchGithubUser, selectGithubLoginEmail } from "@app/lib/requests/github";
+import {
+  AuthAttemptAuthMethod,
+  AuthAttemptAuthResult,
+  authAttemptCounter,
+  recordAuthAttemptMetric
+} from "@app/lib/telemetry/metrics";
 import { authRateLimit } from "@app/server/config/rateLimiter";
 import { addAuthOriginDomainCookie } from "@app/server/lib/cookie";
-import { AuthMethod } from "@app/services/auth/auth-type";
+import { AuthMethod, ProviderAuthResult } from "@app/services/auth/auth-type";
 import { OrgAuthMethod } from "@app/services/org/org-types";
 import { getServerCfg } from "@app/services/super-admin/super-admin-service";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 const passport = new Authenticator({ key: "sso", userProperty: "passportUser" });
 
 let serverInstance: FastifyZodProvider | null = null;
+
+// Build a set of trusted hosts from SITE_URL and CORS_ALLOWED_ORIGINS to prevent
+// open-redirect attacks via Host header injection on OAuth callback endpoints.
+const getTrustedHosts = (): Set<string> => {
+  const appCfg = getConfig();
+  const hosts = new Set<string>();
+  if (appCfg.SITE_URL) {
+    try {
+      hosts.add(new URL(appCfg.SITE_URL).host);
+    } catch {
+      // ignore malformed SITE_URL
+    }
+  }
+  if (appCfg.CORS_ALLOWED_ORIGINS) {
+    for (const origin of appCfg.CORS_ALLOWED_ORIGINS) {
+      try {
+        hosts.add(new URL(origin).host);
+      } catch {
+        // ignore malformed origins
+      }
+    }
+  }
+  return hosts;
+};
+
+// Derive the OAuth callback URL from the incoming request so that the session cookie domain
+// matches the callback domain. Uses req.host (includes port) to support non-default ports.
+// Returns null if the request host is not in the trusted set, allowing callers to fall back
+// to SITE_URL.
+const getOAuthCallbackUrl = (req: { protocol: string; host: string }, path: string): string | null => {
+  const trustedHosts = getTrustedHosts();
+  if (!req.host || !trustedHosts.has(req.host)) {
+    return null;
+  }
+  return `${req.protocol}://${req.host}${path}`;
+};
 
 export const registerOauthMiddlewares = (server: FastifyZodProvider) => {
   serverInstance = server;
@@ -53,6 +96,7 @@ export const registerOauthMiddlewares = (server: FastifyZodProvider) => {
         },
         // eslint-disable-next-line
         async (req, _accessToken, _refreshToken, profile, cb) => {
+          const authMetricStartTime = performance.now();
           // @ts-expect-error this is because this is express type and not fastify
           const callbackPort = req.session.get("callbackPort");
           // @ts-expect-error this is because this is express type and not fastify
@@ -65,31 +109,61 @@ export const registerOauthMiddlewares = (server: FastifyZodProvider) => {
               name: "OauthGoogleRegister"
             });
 
+          // Google maps its email_verified claim onto emails[0].verified (a string "true"/"false"
+          // per the userinfo response, occasionally a boolean); when verified we skip our own
+          // email verification.
+          const isEmailVerifiedByProvider = String(profile?.emails?.[0]?.verified) === "true";
+
           try {
-            const { isUserCompleted, providerAuthToken, user, orgId, orgName } =
-              await server.services.login.oauth2Login({
-                email,
-                firstName: profile?.name?.givenName || "",
-                lastName: profile?.name?.familyName || "",
-                authMethod: AuthMethod.GOOGLE,
-                callbackPort,
-                orgSlug
-              });
+            const loginResult = await server.services.login.oauth2Login({
+              email,
+              firstName: profile?.name?.givenName || "",
+              lastName: profile?.name?.familyName || "",
+              authMethod: AuthMethod.GOOGLE,
+              callbackPort,
+              orgSlug,
+              providerUserId: profile.id,
+              isEmailVerifiedByProvider,
+              ip: requestContext.get("ip") || "",
+              userAgent: requestContext.get("userAgent") || ""
+            });
+
+            const googleDistinctId = loginResult.user.username ?? loginResult.user.email ?? "";
+            if (googleDistinctId) {
+              void server.services.telemetry.identifyUser(
+                googleDistinctId,
+                {
+                  email: loginResult.user.email ?? undefined,
+                  username: loginResult.user.username,
+                  userId: loginResult.user.id,
+                  firstName: loginResult.user.firstName ?? undefined,
+                  lastName: loginResult.user.lastName ?? undefined
+                },
+                { skipDedup: true }
+              );
+            }
+
+            cb(null, loginResult);
 
             if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
               authAttemptCounter.add(1, {
                 "infisical.user.email": email,
-                "infisical.user.id": user.id,
-                "infisical.organization.id": orgId,
-                "infisical.organization.name": orgName,
+                "infisical.user.id": loginResult.user.id,
+                "infisical.organization.id": loginResult.orgId,
+                "infisical.organization.name": loginResult.orgName,
                 "infisical.auth.method": AuthAttemptAuthMethod.GOOGLE,
                 "infisical.auth.result": AuthAttemptAuthResult.SUCCESS,
-                "client.address": requestContext.get("ip"),
-                "user_agent.original": requestContext.get("userAgent")
+                "client.address": requestContext.get(RequestContextKey.Ip),
+                "user_agent.original": requestContext.get(RequestContextKey.UserAgent)
               });
             }
 
-            cb(null, { isUserCompleted, providerAuthToken });
+            recordAuthAttemptMetric({
+              startTime: authMetricStartTime,
+              method: AuthAttemptAuthMethod.GOOGLE,
+              result: AuthAttemptAuthResult.SUCCESS,
+              orgId: loginResult.orgId
+            });
           } catch (error) {
             logger.error(error);
             if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
@@ -97,10 +171,16 @@ export const registerOauthMiddlewares = (server: FastifyZodProvider) => {
                 "infisical.user.email": email,
                 "infisical.auth.method": AuthAttemptAuthMethod.GOOGLE,
                 "infisical.auth.result": AuthAttemptAuthResult.FAILURE,
-                "client.address": requestContext.get("ip"),
-                "user_agent.original": requestContext.get("userAgent")
+                "client.address": requestContext.get(RequestContextKey.Ip),
+                "user_agent.original": requestContext.get(RequestContextKey.UserAgent)
               });
             }
+            recordAuthAttemptMetric({
+              startTime: authMetricStartTime,
+              method: AuthAttemptAuthMethod.GOOGLE,
+              result: AuthAttemptAuthResult.FAILURE,
+              error
+            });
             cb(error as Error, false);
           }
         }
@@ -127,10 +207,11 @@ export const registerOauthMiddlewares = (server: FastifyZodProvider) => {
         },
         // eslint-disable-next-line
         async (req: any, accessToken: string, _refreshToken: string, _profile: any, done: Function) => {
+          const authMetricStartTime = performance.now();
           const ghEmails = await fetchGithubEmails(accessToken);
-          const { email } = ghEmails.filter((gitHubEmail) => gitHubEmail.primary)[0];
-
-          if (!email) throw new Error("No primary email found");
+          const selectedEmail = selectGithubLoginEmail(ghEmails);
+          if (!selectedEmail) throw new Error("No email found for GitHub account");
+          const { email, isEmailVerifiedByProvider } = selectedEmail;
 
           try {
             // profile does not get automatically populated so we need to manually fetch user info
@@ -138,39 +219,70 @@ export const registerOauthMiddlewares = (server: FastifyZodProvider) => {
 
             const callbackPort = req.session.get("callbackPort");
 
-            const { isUserCompleted, providerAuthToken, user, orgId, orgName } =
-              await server.services.login.oauth2Login({
-                email,
-                firstName: githubUser.name || githubUser.login,
-                lastName: "",
-                authMethod: AuthMethod.GITHUB,
-                callbackPort
-              });
+            const loginResult = await server.services.login.oauth2Login({
+              email,
+              firstName: githubUser.name || githubUser.login,
+              lastName: "",
+              authMethod: AuthMethod.GITHUB,
+              callbackPort,
+              providerUserId: String(githubUser.id),
+              isEmailVerifiedByProvider,
+              ip: requestContext.get("ip") || "",
+              userAgent: requestContext.get("userAgent") || ""
+            });
+
+            const githubDistinctId = loginResult.user.username ?? loginResult.user.email ?? "";
+            if (githubDistinctId) {
+              void server.services.telemetry.identifyUser(
+                githubDistinctId,
+                {
+                  email: loginResult.user.email ?? undefined,
+                  username: loginResult.user.username,
+                  userId: loginResult.user.id,
+                  firstName: loginResult.user.firstName ?? undefined,
+                  lastName: loginResult.user.lastName ?? undefined
+                },
+                { skipDedup: true }
+              );
+            }
+
+            done(null, { ...loginResult, externalProviderAccessToken: accessToken });
 
             if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
               authAttemptCounter.add(1, {
                 "infisical.user.email": email,
-                "infisical.user.id": user.id,
-                "infisical.organization.id": orgId,
-                "infisical.organization.name": orgName,
+                "infisical.user.id": loginResult.user.id,
+                "infisical.organization.id": loginResult.orgId,
+                "infisical.organization.name": loginResult.orgName,
                 "infisical.auth.method": AuthAttemptAuthMethod.GITHUB,
                 "infisical.auth.result": AuthAttemptAuthResult.SUCCESS,
-                "client.address": requestContext.get("ip"),
-                "user_agent.original": requestContext.get("userAgent")
+                "client.address": requestContext.get(RequestContextKey.Ip),
+                "user_agent.original": requestContext.get(RequestContextKey.UserAgent)
               });
             }
 
-            done(null, { isUserCompleted, providerAuthToken, externalProviderAccessToken: accessToken });
+            recordAuthAttemptMetric({
+              startTime: authMetricStartTime,
+              method: AuthAttemptAuthMethod.GITHUB,
+              result: AuthAttemptAuthResult.SUCCESS,
+              orgId: loginResult.orgId
+            });
           } catch (err) {
             if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
               authAttemptCounter.add(1, {
                 "infisical.user.email": email,
                 "infisical.auth.method": AuthAttemptAuthMethod.GITHUB,
                 "infisical.auth.result": AuthAttemptAuthResult.FAILURE,
-                "client.address": requestContext.get("ip"),
-                "user_agent.original": requestContext.get("userAgent")
+                "client.address": requestContext.get(RequestContextKey.Ip),
+                "user_agent.original": requestContext.get(RequestContextKey.UserAgent)
               });
             }
+            recordAuthAttemptMetric({
+              startTime: authMetricStartTime,
+              method: AuthAttemptAuthMethod.GITHUB,
+              result: AuthAttemptAuthResult.FAILURE,
+              error: err
+            });
             logger.error(err);
             done(err as Error, false);
           }
@@ -196,44 +308,83 @@ export const registerOauthMiddlewares = (server: FastifyZodProvider) => {
           pkce: true
         },
         async (req: any, _accessToken: string, _refreshToken: string, profile: any, cb: any) => {
+          const authMetricStartTime = performance.now();
           const email = profile.emails[0].value;
+          // GitLab's /user API exposes confirmed_at as a non-empty ISO timestamp when the email is
+          // confirmed, or null otherwise (it is not a boolean). Treat a present, non-empty string as
+          // verified rather than coercing with Boolean(), so no non-string truthy value can slip in.
+          // eslint-disable-next-line no-underscore-dangle
+          const confirmedAt = profile?._json?.confirmed_at as unknown;
+          const isEmailVerifiedByProvider = typeof confirmedAt === "string" && confirmedAt.length > 0;
 
           try {
             const callbackPort = req.session.get("callbackPort");
 
-            const { isUserCompleted, providerAuthToken, user, orgId, orgName } =
-              await server.services.login.oauth2Login({
-                email,
-                firstName: profile.displayName || profile.username || "",
-                lastName: "",
-                authMethod: AuthMethod.GITLAB,
-                callbackPort
-              });
+            const loginResult = await server.services.login.oauth2Login({
+              email,
+              firstName: profile.displayName || profile.username || "",
+              lastName: "",
+              authMethod: AuthMethod.GITLAB,
+              callbackPort,
+              providerUserId: String(profile.id),
+              isEmailVerifiedByProvider,
+              ip: requestContext.get("ip") || "",
+              userAgent: requestContext.get("userAgent") || ""
+            });
+
+            const gitlabDistinctId = loginResult.user.username ?? loginResult.user.email ?? "";
+            if (gitlabDistinctId) {
+              void server.services.telemetry.identifyUser(
+                gitlabDistinctId,
+                {
+                  email: loginResult.user.email ?? undefined,
+                  username: loginResult.user.username,
+                  userId: loginResult.user.id,
+                  firstName: loginResult.user.firstName ?? undefined,
+                  lastName: loginResult.user.lastName ?? undefined
+                },
+                { skipDedup: true }
+              );
+            }
+
+            cb(null, loginResult);
 
             if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
               authAttemptCounter.add(1, {
                 "infisical.user.email": email,
-                "infisical.user.id": user.id,
-                "infisical.organization.id": orgId,
-                "infisical.organization.name": orgName,
+                "infisical.user.id": loginResult.user.id,
+                "infisical.organization.id": loginResult.orgId,
+                "infisical.organization.name": loginResult.orgName,
                 "infisical.auth.method": AuthAttemptAuthMethod.GITLAB,
                 "infisical.auth.result": AuthAttemptAuthResult.SUCCESS,
-                "client.address": requestContext.get("ip"),
-                "user_agent.original": requestContext.get("userAgent")
+                "client.address": requestContext.get(RequestContextKey.Ip),
+                "user_agent.original": requestContext.get(RequestContextKey.UserAgent)
               });
             }
 
-            return cb(null, { isUserCompleted, providerAuthToken });
+            recordAuthAttemptMetric({
+              startTime: authMetricStartTime,
+              method: AuthAttemptAuthMethod.GITLAB,
+              result: AuthAttemptAuthResult.SUCCESS,
+              orgId: loginResult.orgId
+            });
           } catch (error) {
             if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
               authAttemptCounter.add(1, {
                 "infisical.user.email": email,
                 "infisical.auth.method": AuthAttemptAuthMethod.GITLAB,
                 "infisical.auth.result": AuthAttemptAuthResult.FAILURE,
-                "client.address": requestContext.get("ip"),
-                "user_agent.original": requestContext.get("userAgent")
+                "client.address": requestContext.get(RequestContextKey.Ip),
+                "user_agent.original": requestContext.get(RequestContextKey.UserAgent)
               });
             }
+
+            recordAuthAttemptMetric({
+              startTime: authMetricStartTime,
+              method: AuthAttemptAuthMethod.GITLAB,
+              result: AuthAttemptAuthResult.FAILURE,
+              error
+            });
 
             logger.error(error);
             cb(error as Error, false);
@@ -290,6 +441,7 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
     url: "/redirect/google",
     method: "GET",
     schema: {
+      operationId: "redirectGoogleSSO",
       querystring: z.object({
         callback_port: z.string().optional(),
         org_slug: z.string().optional(),
@@ -301,7 +453,15 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
     },
     preValidation: [
       async (req, res) => {
-        const { callback_port: callbackPort, is_admin_login: isAdminLogin, org_slug: orgSlug } = req.query;
+        const {
+          callback_port: callbackPort,
+          is_admin_login: isAdminLogin,
+          org_slug: orgSlug
+        } = req.query as {
+          callback_port?: string;
+          is_admin_login?: boolean;
+          org_slug?: string;
+        };
         // ensure fresh session state per login attempt
         await req.session.regenerate();
         if (callbackPort) {
@@ -316,45 +476,107 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
         return (
           passport.authenticate("google", {
             scope: ["profile", "email"],
+            callbackURL: getOAuthCallbackUrl(req, "/api/v1/sso/google") || `${appCfg.SITE_URL}/api/v1/sso/google`,
             authInfo: false
             // this is due to zod type difference
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          }) as any
+          } as any) as any
         )(req, res);
       }
     ],
     handler: () => {}
   });
 
+  // Shared redirect logic for all OAuth provider callbacks
+  const handleOAuthCallbackRedirect = async (req: any, res: any) => {
+    const isAdminLogin = req.session.get("isAdminLogin");
+    await req.session.destroy();
+    const passportResult = req.passportUser;
+    const cbPort = passportResult.callbackPort;
+    const reqOrigin = getOAuthCallbackUrl(req, "") || appCfg.SITE_URL;
+
+    if (passportResult.result === ProviderAuthResult.SESSION) {
+      // This login completed the user's signup (provider-verified email), so it never goes
+      // through complete-account; fire the signup telemetry that route would have sent.
+      if (passportResult.didCompleteSignup) {
+        const { user } = passportResult;
+        // An invited user completing signup via a provider-verified email is tagged as an invite for
+        // parity with the complete-account route that this provider-verified flow bypasses.
+        const signupMethod = passportResult.wasInvited ? "invite" : passportResult.authMethod;
+        if (user.email) {
+          void server.services.telemetry.sendLoopsEvent(user.email, user.firstName || "", user.lastName || "");
+          void server.services.telemetry.sendHubSpotSignupEvent(
+            user.email,
+            signupMethod,
+            user.firstName || "",
+            user.lastName || "",
+            typeof req.cookies?.hubspotutk === "string" ? req.cookies.hubspotutk.slice(0, 512) : undefined
+          );
+        }
+        void server.services.telemetry.sendPostHogEvents({
+          event: PostHogEventTypes.UserSignedUp,
+          distinctId: user.username ?? "",
+          ...(passportResult.orgId ? { organizationId: passportResult.orgId } : {}),
+          properties: {
+            username: user.username,
+            email: user.email ?? "",
+            ...(passportResult.wasInvited ? { attributionSource: "Team Invite" } : {}),
+            signupMethod
+          }
+        });
+      }
+
+      void res.setCookie("jid", passportResult.tokens.refresh, {
+        httpOnly: true,
+        path: "/api",
+        sameSite: "strict",
+        secure: appCfg.HTTPS_ENABLED
+      });
+      addAuthOriginDomainCookie(res);
+      const sessionUrl = new URL("/login/select-organization", reqOrigin);
+      if (isAdminLogin) sessionUrl.searchParams.set("isAdminLogin", isAdminLogin);
+      if (cbPort) sessionUrl.searchParams.set("callback_port", String(cbPort));
+      // Provider-verified signups never render the signup page that pushes the GTM conversion event,
+      // so flag the org-selection page to fire it on arrival.
+      if (passportResult.didCompleteSignup) sessionUrl.searchParams.set("signup_completed", "true");
+      return res.redirect(sessionUrl.toString());
+    }
+
+    if (passportResult.result === ProviderAuthResult.SIGNUP_REQUIRED) {
+      const serverCfg = await getServerCfg();
+      const signupUrl = new URL("/signup/sso", reqOrigin);
+      signupUrl.searchParams.set("token", passportResult.signupToken);
+      if (serverCfg.defaultAuthOrgId && !appCfg.isCloud) signupUrl.searchParams.set("defaultOrgAllowed", "true");
+      if (cbPort) signupUrl.searchParams.set("callback_port", String(cbPort));
+      return res.redirect(signupUrl.toString());
+    }
+
+    throw new BadRequestError({ message: "Unexpected auth result" });
+  };
+
   server.route({
     url: "/google",
     method: "GET",
-    preValidation: passport.authenticate("google", {
-      session: false,
-      failureRedirect: "/login/provider/error",
-      authInfo: false
-      // this is due to zod type difference
-    }) as never,
-    handler: async (req, res) => {
-      const isAdminLogin = req.session.get("isAdminLogin");
-      await req.session.destroy();
-      if (req.passportUser.isUserCompleted) {
-        return res.redirect(
-          `${appCfg.SITE_URL}/login/sso?token=${encodeURIComponent(req.passportUser.providerAuthToken)}${
-            isAdminLogin ? `&isAdminLogin=${isAdminLogin}` : ""
-          }`
-        );
+    preValidation: [
+      async (req, res) => {
+        return (
+          passport.authenticate("google", {
+            session: false,
+            failureRedirect: "/login/provider/error",
+            callbackURL: getOAuthCallbackUrl(req, "/api/v1/sso/google") || `${appCfg.SITE_URL}/api/v1/sso/google`,
+            authInfo: false
+          } as any) as any
+        )(req, res);
       }
-      return res.redirect(
-        `${appCfg.SITE_URL}/signup/sso?token=${encodeURIComponent(req.passportUser.providerAuthToken)}`
-      );
-    }
+    ],
+    handler: handleOAuthCallbackRedirect
   });
 
   server.route({
     url: "/redirect/github",
     method: "GET",
     schema: {
+      operationId: "redirectGitHubSSO",
       querystring: z.object({
         callback_port: z.string().optional(),
         is_admin_login: z
@@ -365,7 +587,10 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
     },
     preValidation: [
       async (req, res) => {
-        const { callback_port: callbackPort, is_admin_login: isAdminLogin } = req.query;
+        const { callback_port: callbackPort, is_admin_login: isAdminLogin } = req.query as {
+          callback_port?: string;
+          is_admin_login?: boolean;
+        };
         // ensure fresh session state per login attempt
         await req.session.regenerate();
         if (callbackPort) {
@@ -379,9 +604,10 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
         return (
           passport.authenticate("github", {
             session: false,
+            callbackURL: getOAuthCallbackUrl(req, "/api/v1/sso/github") || `${appCfg.SITE_URL}/api/v1/sso/github`,
             authInfo: false
             // this is due to zod type difference
-          }) as any
+          } as any) as any
         )(req, res);
       }
     ],
@@ -395,6 +621,7 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
       rateLimit: authRateLimit
     },
     schema: {
+      operationId: "redirectOrgSSO",
       params: z.object({
         orgSlug: z.string().trim()
       }),
@@ -429,40 +656,29 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
   server.route({
     url: "/github",
     method: "GET",
-    preValidation: passport.authenticate("github", {
-      session: false,
-      failureRedirect: "/login/provider/error",
-      authInfo: false
-      // this is due to zod type difference
-    }) as any,
-    handler: async (req, res) => {
-      const isAdminLogin = req.session.get("isAdminLogin");
-      await req.session.destroy();
-
+    preValidation: [
+      async (req: any, res: any) => {
+        return (
+          passport.authenticate("github", {
+            session: false,
+            failureRedirect: "/login/provider/error",
+            callbackURL: getOAuthCallbackUrl(req, "/api/v1/sso/github") || `${appCfg.SITE_URL}/api/v1/sso/github`,
+            authInfo: false
+          } as any) as any
+        )(req, res);
+      }
+    ],
+    handler: async (req: any, res: any) => {
       if (req.passportUser.externalProviderAccessToken) {
         void res.cookie(INFISICAL_PROVIDER_GITHUB_ACCESS_TOKEN, req.passportUser.externalProviderAccessToken, {
           httpOnly: true,
-          path: "/",
+          path: "/api",
           sameSite: "strict",
           secure: appCfg.HTTPS_ENABLED,
           expires: new Date(Date.now() + ms(appCfg.JWT_PROVIDER_AUTH_LIFETIME))
         });
       }
-
-      if (req.passportUser.isUserCompleted) {
-        return res.redirect(
-          `${appCfg.SITE_URL}/login/sso?token=${encodeURIComponent(req.passportUser.providerAuthToken)}${
-            isAdminLogin ? `&isAdminLogin=${isAdminLogin}` : ""
-          }`
-        );
-      }
-
-      const serverCfg = await getServerCfg();
-      return res.redirect(
-        `${appCfg.SITE_URL}/signup/sso?token=${encodeURIComponent(req.passportUser.providerAuthToken)}${
-          serverCfg.defaultAuthOrgId && !appCfg.isCloud ? `&defaultOrgAllowed=true` : ""
-        }`
-      );
+      return handleOAuthCallbackRedirect(req, res);
     }
   });
 
@@ -470,6 +686,7 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
     url: "/redirect/gitlab",
     method: "GET",
     schema: {
+      operationId: "redirectGitLabSSO",
       querystring: z.object({
         callback_port: z.string().optional(),
         is_admin_login: z
@@ -480,7 +697,10 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
     },
     preValidation: [
       async (req, res) => {
-        const { callback_port: callbackPort, is_admin_login: isAdminLogin } = req.query;
+        const { callback_port: callbackPort, is_admin_login: isAdminLogin } = req.query as {
+          callback_port?: string;
+          is_admin_login?: boolean;
+        };
         // ensure fresh session state per login attempt
         await req.session.regenerate();
         if (callbackPort) {
@@ -494,10 +714,11 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
         return (
           passport.authenticate("gitlab", {
             session: false,
+            callbackURL: getOAuthCallbackUrl(req, "/api/v1/sso/gitlab") || `${appCfg.SITE_URL}/api/v1/sso/gitlab`,
             authInfo: false
             // this is due to zod type difference
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          }) as any
+          } as any) as any
         )(req, res);
       }
     ],
@@ -507,71 +728,37 @@ export const registerSsoRouter = async (server: FastifyZodProvider) => {
   server.route({
     url: "/gitlab",
     method: "GET",
-    preValidation: passport.authenticate("gitlab", {
-      session: false,
-      failureRedirect: "/login/provider/error",
-      authInfo: false
-      // this is due to zod type difference
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    }) as any,
-    handler: async (req, res) => {
-      const isAdminLogin = req.session.get("isAdminLogin");
-      await req.session.destroy();
-      if (req.passportUser.isUserCompleted) {
-        return res.redirect(
-          `${appCfg.SITE_URL}/login/sso?token=${encodeURIComponent(req.passportUser.providerAuthToken)}${
-            isAdminLogin ? `&isAdminLogin=${isAdminLogin}` : ""
-          }`
-        );
+    preValidation: [
+      async (req: any, res: any) => {
+        return (
+          passport.authenticate("gitlab", {
+            session: false,
+            failureRedirect: "/login/provider/error",
+            callbackURL: getOAuthCallbackUrl(req, "/api/v1/sso/gitlab") || `${appCfg.SITE_URL}/api/v1/sso/gitlab`,
+            authInfo: false
+          } as any) as any
+        )(req, res);
       }
-      return res.redirect(
-        `${appCfg.SITE_URL}/signup/sso?token=${encodeURIComponent(req.passportUser.providerAuthToken)}`
-      );
-    }
+    ],
+    handler: handleOAuthCallbackRedirect
   });
 
+  // Deprecated: token-exchange is no longer needed — sessions are issued directly from callbacks.
+  // Kept for backward compatibility with old clients.
   server.route({
     url: "/token-exchange",
     method: "POST",
     schema: {
+      operationId: "exchangeOAuthToken",
       body: z.object({
         providerAuthToken: z.string(),
         email: z.string()
       })
     },
-    handler: async (req, res) => {
-      const userAgent = req.headers["user-agent"];
-      if (!userAgent) throw new Error("user agent header is required");
-
-      const data = await server.services.login.oauth2TokenExchange({
-        email: req.body.email,
-        ip: req.realIp,
-        userAgent,
-        providerAuthToken: req.body.providerAuthToken
+    handler: async () => {
+      throw new BadRequestError({
+        message: "Token exchange is no longer supported. Please update your client."
       });
-
-      if ([AuthMethod.GOOGLE, AuthMethod.GITHUB, AuthMethod.GITLAB].includes(data.decodedProviderToken.authMethod)) {
-        void res.setCookie("jid", data.token.refresh, {
-          httpOnly: true,
-          path: "/",
-          sameSite: "strict",
-          secure: appCfg.HTTPS_ENABLED
-        });
-      }
-
-      addAuthOriginDomainCookie(res);
-
-      return {
-        encryptionVersion: data.user.encryptionVersion,
-        token: data.token.access,
-        publicKey: data.user.publicKey,
-        encryptedPrivateKey: data.user.encryptedPrivateKey,
-        iv: data.user.iv,
-        tag: data.user.tag,
-        protectedKey: data.user.protectedKey || null,
-        protectedKeyIV: data.user.protectedKeyIV || null,
-        protectedKeyTag: data.user.protectedKeyTag || null
-      } as const;
     }
   });
 };

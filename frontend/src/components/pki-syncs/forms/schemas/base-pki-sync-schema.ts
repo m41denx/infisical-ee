@@ -9,14 +9,22 @@ export const BasePkiSyncSchema = <T extends AnyZodObject | undefined = undefined
     includeRootCa: z.boolean().default(false),
     certificateNameSchema: z
       .string()
-      .optional()
+      .trim()
+      .min(1, "Certificate name schema is required")
       .refine(
         (val) => {
-          if (!val) return true;
+          const allowedOptionalPlaceholders = [
+            "{{profileId}}",
+            "{{applicationId}}",
+            "{{applicationName}}",
+            "{{commonName}}"
+          ];
 
-          const allowedOptionalPlaceholders = ["{{environment}}"];
-
-          const allowedPlaceholdersRegexPart = ["{{certificateId}}", ...allowedOptionalPlaceholders]
+          const allowedPlaceholdersRegexPart = [
+            "{{certificateId}}",
+            "{{shortCertificateId}}",
+            ...allowedOptionalPlaceholders
+          ]
             .map((p) => p.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")) // Escape regex special characters
             .join("|");
 
@@ -25,17 +33,13 @@ export const BasePkiSyncSchema = <T extends AnyZodObject | undefined = undefined
           );
           const contentIsValid = allowedContentRegex.test(val);
 
-          if (val.trim()) {
-            const certificateIdRegex = /\{\{certificateId\}\}/;
-            const certificateIdIsPresent = certificateIdRegex.test(val);
-            return contentIsValid && certificateIdIsPresent;
-          }
-
-          return contentIsValid;
+          const certificateIdIsPresent =
+            val.includes("{{certificateId}}") || val.includes("{{shortCertificateId}}");
+          return contentIsValid && certificateIdIsPresent;
         },
         {
           message:
-            "Certificate name schema must include exactly one {{certificateId}} placeholder. It can also include {{environment}} placeholders. Only alphanumeric characters (a-z, A-Z, 0-9), dashes (-), underscores (_), and slashes (/) are allowed besides the placeholders."
+            "Certificate name schema must include the {{certificateId}} or {{shortCertificateId}} placeholder. It can also include {{profileId}}, {{applicationId}}, {{applicationName}}, and {{commonName}} placeholders. Only alphanumeric characters (a-z, A-Z, 0-9), dashes (-), underscores (_), and slashes (/) are allowed besides the placeholders."
         }
       )
   });
@@ -51,7 +55,7 @@ export const BasePkiSyncSchema = <T extends AnyZodObject | undefined = undefined
       .string()
       .trim()
       .min(1, "Name is required")
-      .max(255, "Name must be less than 255 characters"),
+      .max(256, "Name must be less than 256 characters"),
     description: z.string().optional(),
     isAutoSyncEnabled: z.boolean().default(true),
     subscriberId: z.string().nullable().optional(),

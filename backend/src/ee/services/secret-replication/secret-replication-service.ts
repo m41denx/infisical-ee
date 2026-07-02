@@ -2,7 +2,7 @@ import { SecretType, TSecrets, TSecretsV2 } from "@app/db/schemas";
 import { TSecretApprovalPolicyServiceFactory } from "@app/ee/services/secret-approval-policy/secret-approval-policy-service";
 import { TSecretApprovalRequestDALFactory } from "@app/ee/services/secret-approval-request/secret-approval-request-dal";
 import { TSecretApprovalRequestSecretDALFactory } from "@app/ee/services/secret-approval-request/secret-approval-request-secret-dal";
-import { KeyStorePrefixes, TKeyStoreFactory } from "@app/keystore/keystore";
+import { KeyStorePrefixes, KeyStoreTtls, TKeyStoreFactory } from "@app/keystore/keystore";
 import { crypto, SymmetricKeySize } from "@app/lib/crypto/cryptography";
 import { NotFoundError } from "@app/lib/errors";
 import { groupBy, unique } from "@app/lib/fn";
@@ -15,7 +15,7 @@ import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { KmsDataKey } from "@app/services/kms/kms-types";
 import { TProjectBotServiceFactory } from "@app/services/project-bot/project-bot-service";
 import { TResourceMetadataDALFactory } from "@app/services/resource-metadata/resource-metadata-dal";
-import { ResourceMetadataDTO } from "@app/services/resource-metadata/resource-metadata-schema";
+import { ResourceMetadataWithEncryptionDTO } from "@app/services/resource-metadata/resource-metadata-schema";
 import { TSecretDALFactory } from "@app/services/secret/secret-dal";
 import { fnSecretBulkInsert, fnSecretBulkUpdate } from "@app/services/secret/secret-fns";
 import { TSecretQueueFactory, uniqueSecretQueueKey } from "@app/services/secret/secret-queue";
@@ -27,11 +27,11 @@ import { ReservedFolders } from "@app/services/secret-folder/secret-folder-types
 import { TSecretImportDALFactory } from "@app/services/secret-import/secret-import-dal";
 import { fnSecretsFromImports, fnSecretsV2FromImports } from "@app/services/secret-import/secret-import-fns";
 import { TSecretTagDALFactory } from "@app/services/secret-tag/secret-tag-dal";
+import { getAllSecretReferences } from "@app/services/secret-v2-bridge/secret-reference-fns";
 import { TSecretV2BridgeDALFactory } from "@app/services/secret-v2-bridge/secret-v2-bridge-dal";
 import {
   fnSecretBulkInsert as fnSecretV2BridgeBulkInsert,
-  fnSecretBulkUpdate as fnSecretV2BridgeBulkUpdate,
-  getAllSecretReferences
+  fnSecretBulkUpdate as fnSecretV2BridgeBulkUpdate
 } from "@app/services/secret-v2-bridge/secret-v2-bridge-fns";
 import { TSecretVersionV2DALFactory } from "@app/services/secret-v2-bridge/secret-version-dal";
 import { TSecretVersionV2TagDALFactory } from "@app/services/secret-v2-bridge/secret-version-tag-dal";
@@ -47,6 +47,7 @@ type TSecretReplicationServiceFactoryDep = {
   secretV2BridgeDAL: Pick<
     TSecretV2BridgeDALFactory,
     | "find"
+    | "findByFolderIds"
     | "findBySecretKeys"
     | "insertMany"
     | "bulkUpdate"
@@ -92,7 +93,6 @@ type TSecretReplicationServiceFactoryDep = {
 };
 
 export type TSecretReplicationServiceFactory = ReturnType<typeof secretReplicationServiceFactory>;
-const SECRET_IMPORT_SUCCESS_LOCK = 10;
 
 const keystoreReplicationSuccessKey = (jobId: string, secretImportId: string) => `${jobId}-${secretImportId}`;
 const getReplicationKeyLockPrefix = (projectId: string, environmentSlug: string, secretPath: string) =>
@@ -167,9 +167,18 @@ export const secretReplicationServiceFactory = ({
   };
 
   const $getReplicatedSecretsV2 = (
-    localSecrets: (TSecretsV2 & { secretKey: string; secretValue?: string; secretMetadata?: ResourceMetadataDTO })[],
+    localSecrets: (TSecretsV2 & {
+      secretKey: string;
+      secretValue?: string;
+      secretMetadata?: ResourceMetadataWithEncryptionDTO;
+      rawSecretMetadata?: { key: string; value?: string | null; encryptedValue?: Buffer | null }[];
+    })[],
     importedSecrets: {
-      secrets: (TSecretsV2 & { secretKey: string; secretValue?: string; secretMetadata?: ResourceMetadataDTO })[];
+      secrets: (TSecretsV2 & {
+        secretKey: string;
+        secretValue?: string;
+        secretMetadata?: ResourceMetadataWithEncryptionDTO;
+      })[];
     }[]
   ) => {
     const deDupe = new Set<string>();
@@ -244,6 +253,7 @@ export const secretReplicationServiceFactory = ({
               orgId,
               secretPath: foldersGroupedById[folderId][0]?.path as string,
               environmentSlug: foldersGroupedById[folderId][0]?.environmentSlug as string,
+              environmentName: foldersGroupedById[folderId][0]?.environmentName as string,
               actorId,
               actor,
               _depth: depth + 1,
@@ -283,6 +293,14 @@ export const secretReplicationServiceFactory = ({
       // secrets that gets replicated across imports
       const sourceDecryptedLocalSecrets = sourceLocalSecrets.map((el) => ({
         ...el,
+        rawSecretMetadata: el.secretMetadata,
+        secretMetadata: el.secretMetadata?.map((metadata) => ({
+          isEncrypted: Boolean(metadata.encryptedValue),
+          key: metadata.key,
+          value: metadata.encryptedValue
+            ? secretManagerDecryptor({ cipherTextBlob: metadata.encryptedValue }).toString()
+            : metadata.value || ""
+        })),
         secretKey: el.key,
         secretValue: el.encryptedValue
           ? secretManagerDecryptor({ cipherTextBlob: el.encryptedValue }).toString()
@@ -291,6 +309,19 @@ export const secretReplicationServiceFactory = ({
 
       const sourceSecrets = $getReplicatedSecretsV2(sourceDecryptedLocalSecrets, sourceImportedSecrets);
       const sourceSecretsGroupByKey = groupBy(sourceSecrets, (i) => i.key);
+
+      // Fetch latest version IDs for all source secrets to track parent-child relationships
+      const sourceSecretsGroupedByFolderId = groupBy(sourceSecrets, (s) => s.folderId);
+      const sourceSecretLatestVersions: Record<string, string> = {};
+      await Promise.all(
+        Object.entries(sourceSecretsGroupedByFolderId).map(async ([folderId, secrets]) => {
+          const secretIds = secrets.map((s) => s.id);
+          const latestVersions = await secretVersionV2BridgeDAL.findLatestVersionMany(folderId, secretIds);
+          Object.entries(latestVersions).forEach(([secretId, version]) => {
+            sourceSecretLatestVersions[secretId] = version.id;
+          });
+        })
+      );
 
       const lock = await keyStore.acquireLock(
         [getReplicationKeyLockPrefix(projectId, environmentSlug, secretPath)],
@@ -342,6 +373,14 @@ export const secretReplicationServiceFactory = ({
             });
             const destinationLocalSecrets = destinationLocalSecretsFromDB.map((el) => ({
               ...el,
+              rawSecretMetadata: el.secretMetadata,
+              secretMetadata: el.secretMetadata?.map((metadata) => ({
+                isEncrypted: Boolean(metadata.encryptedValue),
+                key: metadata.key,
+                value: metadata.encryptedValue
+                  ? secretManagerDecryptor({ cipherTextBlob: metadata.encryptedValue }).toString()
+                  : metadata.value || ""
+              })),
               secretKey: el.key,
               secretValue: el.encryptedValue
                 ? secretManagerDecryptor({ cipherTextBlob: el.encryptedValue }).toString()
@@ -359,14 +398,16 @@ export const secretReplicationServiceFactory = ({
                 const sourceSecretMetadataJson = JSON.stringify(
                   (secretMetadata ?? []).map((entry) => ({
                     key: entry.key,
-                    value: entry.value
+                    value: entry.value,
+                    isEncrypted: entry.isEncrypted
                   }))
                 );
 
                 const destinationSecretMetadataJson = JSON.stringify(
                   (destinationLocalSecretsGroupedByKey[key]?.[0]?.secretMetadata ?? []).map((entry) => ({
                     key: entry.key,
-                    value: entry.value
+                    value: entry.value,
+                    isEncrypted: entry.isEncrypted
                   }))
                 );
 
@@ -425,7 +466,13 @@ export const secretReplicationServiceFactory = ({
                       op: operation,
                       requestId: approvalRequestDoc.id,
                       metadata: doc.metadata ? JSON.stringify(doc.metadata) : [],
-                      secretMetadata: JSON.stringify(doc.secretMetadata),
+                      secretMetadata: JSON.stringify(
+                        (doc.rawSecretMetadata || [])?.map((meta) => ({
+                          key: meta.key,
+                          value: meta.value || undefined,
+                          encryptedValue: meta.encryptedValue?.toString("base64") || undefined
+                        }))
+                      ),
                       key: doc.key,
                       encryptedValue: doc.encryptedValue,
                       encryptedComment: doc.encryptedComment,
@@ -461,8 +508,9 @@ export const secretReplicationServiceFactory = ({
                         encryptedValue: doc.encryptedValue,
                         encryptedComment: doc.encryptedComment,
                         skipMultilineEncoding: doc.skipMultilineEncoding,
-                        secretMetadata: doc.secretMetadata,
-                        references: doc.secretValue ? getAllSecretReferences(doc.secretValue).nestedReferences : []
+                        secretMetadata: doc.rawSecretMetadata,
+                        references: doc.secretValue ? getAllSecretReferences(doc.secretValue).nestedReferences : [],
+                        parentSecretVersionId: sourceSecretLatestVersions[doc.id]
                       };
                     })
                   });
@@ -491,8 +539,9 @@ export const secretReplicationServiceFactory = ({
                           encryptedValue: doc.encryptedValue as Buffer,
                           encryptedComment: doc.encryptedComment,
                           skipMultilineEncoding: doc.skipMultilineEncoding,
-                          secretMetadata: doc.secretMetadata,
-                          references: doc.secretValue ? getAllSecretReferences(doc.secretValue).nestedReferences : []
+                          secretMetadata: doc.rawSecretMetadata,
+                          references: doc.secretValue ? getAllSecretReferences(doc.secretValue).nestedReferences : [],
+                          parentSecretVersionId: sourceSecretLatestVersions[doc.id]
                         }
                       };
                     })
@@ -517,6 +566,7 @@ export const secretReplicationServiceFactory = ({
                 orgId,
                 secretPath: destinationFolder.path,
                 environmentSlug: destinationFolder.environmentSlug,
+                environmentName: destinationFolder.environmentName,
                 actorId,
                 actor,
                 _depth: depth + 1,
@@ -528,7 +578,7 @@ export const secretReplicationServiceFactory = ({
             // this is used to avoid multiple times generating secret approval by failed one
             await keyStore.setItemWithExpiry(
               keystoreReplicationSuccessKey(job.id as string, destinationSecretImport.id),
-              SECRET_IMPORT_SUCCESS_LOCK,
+              KeyStoreTtls.SecretReplicationSuccessInSeconds,
               1,
               KeyStorePrefixes.SecretReplication
             );
@@ -803,6 +853,7 @@ export const secretReplicationServiceFactory = ({
               orgId,
               secretPath: destinationFolder.path,
               environmentSlug: destinationFolder.environmentSlug,
+              environmentName: destinationFolder.environmentName,
               actorId,
               actor,
               _depth: depth + 1,
@@ -814,7 +865,7 @@ export const secretReplicationServiceFactory = ({
           // this is used to avoid multiple times generating secret approval by failed one
           await keyStore.setItemWithExpiry(
             keystoreReplicationSuccessKey(job.id as string, destinationSecretImport.id),
-            SECRET_IMPORT_SUCCESS_LOCK,
+            KeyStoreTtls.SecretReplicationSuccessInSeconds,
             1,
             KeyStorePrefixes.SecretReplication
           );

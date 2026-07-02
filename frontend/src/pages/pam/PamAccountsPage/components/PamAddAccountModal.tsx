@@ -1,10 +1,7 @@
-import { useState } from "react";
-
-import { Modal, ModalContent } from "@app/components/v2";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@app/components/v3";
 import { PamResourceType, TPamAccount } from "@app/hooks/api/pam";
 
 import { PamAccountForm } from "./PamAccountForm/PamAccountForm";
-import { ResourceSelect } from "./ResourceSelect";
 
 type Props = {
   isOpen: boolean;
@@ -12,36 +9,11 @@ type Props = {
   projectId: string;
   onComplete?: (account: TPamAccount) => void;
   currentFolderId: string | null;
-};
-
-type ContentProps = {
-  onComplete: (account: TPamAccount) => void;
-  projectId: string;
-  currentFolderId: string | null;
-};
-
-const Content = ({ onComplete, projectId, currentFolderId }: ContentProps) => {
-  const [selectedResource, setSelectedResource] = useState<{
+  resource: {
     id: string;
     name: string;
     resourceType: PamResourceType;
-  } | null>(null);
-
-  if (selectedResource) {
-    return (
-      <PamAccountForm
-        onComplete={onComplete}
-        onBack={() => setSelectedResource(null)}
-        resourceId={selectedResource.id}
-        resourceName={selectedResource.name}
-        resourceType={selectedResource.resourceType}
-        projectId={projectId}
-        folderId={currentFolderId ?? undefined}
-      />
-    );
-  }
-
-  return <ResourceSelect projectId={projectId} onSubmit={(e) => setSelectedResource(e.resource)} />;
+  };
 };
 
 export const PamAddAccountModal = ({
@@ -49,25 +21,29 @@ export const PamAddAccountModal = ({
   onOpenChange,
   projectId,
   onComplete,
-  currentFolderId
+  currentFolderId,
+  resource
 }: Props) => {
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
-      <ModalContent
-        className="max-w-2xl"
-        title="Add Account"
-        subTitle="Select a resource to add an account under."
-        bodyClassName="overflow-visible"
-      >
-        <Content
-          projectId={projectId}
-          onComplete={(account) => {
-            if (onComplete) onComplete(account);
-            onOpenChange(false);
-          }}
-          currentFolderId={currentFolderId}
-        />
-      </ModalContent>
-    </Modal>
+    <Sheet open={isOpen} onOpenChange={onOpenChange}>
+      <SheetContent className="flex h-full max-h-full flex-col gap-y-0 sm:max-w-lg">
+        <SheetHeader className="border-b">
+          <SheetTitle>Create Account</SheetTitle>
+          <SheetDescription>Input account connection credentials</SheetDescription>
+        </SheetHeader>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <PamAccountForm
+            closeSheet={(account) => {
+              if (account && onComplete) onComplete(account);
+              onOpenChange(false);
+            }}
+            resourceId={resource.id}
+            resourceType={resource.resourceType}
+            projectId={projectId}
+            folderId={currentFolderId ?? undefined}
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 };

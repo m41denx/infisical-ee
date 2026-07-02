@@ -1,14 +1,22 @@
+import { Knex } from "knex";
+
 import { AccessScope, ProjectMembershipRole, TemporaryPermissionMode, TMembershipRolesInsert } from "@app/db/schemas";
+import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
+import { TKeyStoreFactory } from "@app/keystore/keystore";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { groupBy } from "@app/lib/fn";
 import { ms } from "@app/lib/ms";
 import { SearchResourceOperators } from "@app/lib/search-resource/search";
+import { getIdentityActiveLockoutAuthMethods } from "@app/services/identity/identity-fns";
 
 import { TAdditionalPrivilegeDALFactory } from "../additional-privilege/additional-privilege-dal";
 import { TIdentityDALFactory } from "../identity/identity-dal";
+import { TApplicationMembershipCleanupServiceFactory } from "../membership/application-membership-cleanup-service";
 import { TMembershipRoleDALFactory } from "../membership/membership-role-dal";
 import { TOrgDALFactory } from "../org/org-dal";
+import { ApplicationMemberKind } from "../pki-application/pki-application-types";
+import { TProjectDALFactory } from "../project/project-dal";
 import { TRoleDALFactory } from "../role/role-dal";
 import { TMembershipIdentityDALFactory } from "./membership-identity-dal";
 import {
@@ -18,7 +26,6 @@ import {
   TListMembershipIdentityDTO,
   TUpdateMembershipIdentityDTO
 } from "./membership-identity-types";
-import { newNamespaceMembershipIdentityFactory } from "./namespace/namespace-membership-identity-factory";
 import { newOrgMembershipIdentityFactory } from "./org/org-membership-identity-factory";
 import { newProjectMembershipIdentityFactory } from "./project/project-membership-identity-factory";
 
@@ -30,9 +37,16 @@ type TMembershipIdentityServiceFactoryDep = {
     TPermissionServiceFactory,
     "getOrgPermission" | "getProjectPermission" | "getProjectPermissionByRoles" | "getOrgPermissionByRoles"
   >;
-  orgDAL: Pick<TOrgDALFactory, "findById">;
+  orgDAL: Pick<TOrgDALFactory, "findById" | "findEffectiveOrgMembership">;
   additionalPrivilegeDAL: Pick<TAdditionalPrivilegeDALFactory, "delete">;
   identityDAL: Pick<TIdentityDALFactory, "findById">;
+  licenseService: Pick<TLicenseServiceFactory, "getPlan">;
+  applicationMembershipCleanupService: Pick<
+    TApplicationMembershipCleanupServiceFactory,
+    "cleanupActorApplicationMemberships"
+  >;
+  projectDAL: Pick<TProjectDALFactory, "findById">;
+  keyStore: Pick<TKeyStoreFactory, "getKeysByPattern" | "getItem">;
 };
 
 export type TMembershipIdentityServiceFactory = ReturnType<typeof membershipIdentityServiceFactory>;
@@ -44,7 +58,11 @@ export const membershipIdentityServiceFactory = ({
   permissionService,
   orgDAL,
   additionalPrivilegeDAL,
-  identityDAL
+  identityDAL,
+  licenseService,
+  applicationMembershipCleanupService,
+  projectDAL,
+  keyStore
 }: TMembershipIdentityServiceFactoryDep) => {
   const scopeFactory = {
     [AccessScope.Organization]: newOrgMembershipIdentityFactory({
@@ -56,9 +74,9 @@ export const membershipIdentityServiceFactory = ({
       membershipIdentityDAL,
       orgDAL,
       permissionService,
-      identityDAL
-    }),
-    [AccessScope.Namespace]: newNamespaceMembershipIdentityFactory({})
+      identityDAL,
+      projectDAL
+    })
   };
 
   const createMembership = async (dto: TCreateMembershipIdentityDTO) => {
@@ -90,6 +108,14 @@ export const membershipIdentityServiceFactory = ({
 
     const customInputRoles = data.roles.filter((el) => factory.isCustomRole(el.role));
     const hasCustomRole = customInputRoles.length > 0;
+    if (hasCustomRole) {
+      const plan = await licenseService.getPlan(scopeData.orgId);
+      if (!plan?.rbac)
+        throw new BadRequestError({
+          message:
+            "Failed to assign custom role to identity due to plan RBAC restriction. Upgrade to Infisical Enterprise to assign custom roles."
+        });
+    }
 
     const scopeField = factory.getScopeField(dto.scopeData);
     const customRoles = hasCustomRole
@@ -171,6 +197,14 @@ export const membershipIdentityServiceFactory = ({
 
     const customInputRoles = data.roles.filter((el) => factory.isCustomRole(el.role));
     const hasCustomRole = customInputRoles.length > 0;
+    if (hasCustomRole) {
+      const plan = await licenseService.getPlan(scopeData.orgId);
+      if (!plan?.rbac)
+        throw new BadRequestError({
+          message:
+            "Failed to assign custom role to identity due to plan RBAC restriction. Upgrade to Infisical Enterprise to assign custom roles."
+        });
+    }
 
     const hasNoPermanentRole = data.roles.every((el) => el.isTemporary);
     if (hasNoPermanentRole) {
@@ -270,7 +304,7 @@ export const membershipIdentityServiceFactory = ({
     return { membership: membershipDoc };
   };
 
-  const deleteMembership = async (dto: TDeleteMembershipIdentityDTO) => {
+  const deleteMembership = async (dto: TDeleteMembershipIdentityDTO, externalTx?: Knex) => {
     const { scopeData } = dto;
     const factory = scopeFactory[scopeData.scope];
 
@@ -293,7 +327,7 @@ export const membershipIdentityServiceFactory = ({
         message: "You can't delete your own membership"
       });
 
-    const membershipDoc = await membershipIdentityDAL.transaction(async (tx) => {
+    const performDelete = async (tx: Knex) => {
       await additionalPrivilegeDAL.delete(
         {
           actorIdentityId: dto.selector.identityId,
@@ -303,8 +337,27 @@ export const membershipIdentityServiceFactory = ({
       );
       await membershipRoleDAL.delete({ membershipId: existingMembership.id }, tx);
       const doc = await membershipIdentityDAL.deleteById(existingMembership.id, tx);
+
+      if (scopeData.scope === AccessScope.Project) {
+        const projectScopeFields = scopeDatabaseFields as { scopeProjectId?: string };
+        if (projectScopeFields.scopeProjectId) {
+          await applicationMembershipCleanupService.cleanupActorApplicationMemberships(
+            {
+              projectId: projectScopeFields.scopeProjectId,
+              actorKind: ApplicationMemberKind.Identity,
+              actorId: dto.selector.identityId
+            },
+            tx
+          );
+        }
+      }
+
       return doc;
-    });
+    };
+
+    const membershipDoc = externalTx
+      ? await performDelete(externalTx)
+      : await membershipIdentityDAL.transaction(performDelete);
     return { membership: membershipDoc };
   };
 
@@ -330,7 +383,17 @@ export const membershipIdentityServiceFactory = ({
           : undefined
       }
     });
-    return { ...memberships, data: memberships.data.filter((el) => listFilter({ identityId: el.identity.id })) };
+    const filtered = memberships.data.filter((el) => listFilter({ identityId: el.identity.id }));
+    const withLockouts = await Promise.all(
+      filtered.map(async (el) => ({
+        ...el,
+        identity: {
+          ...el.identity,
+          activeLockoutAuthMethods: await getIdentityActiveLockoutAuthMethods(el.identity.id, keyStore)
+        }
+      }))
+    );
+    return { ...memberships, data: withLockouts };
   };
 
   const getMembershipByIdentityId = async (dto: TGetMembershipIdentityByIdentityIdDTO) => {

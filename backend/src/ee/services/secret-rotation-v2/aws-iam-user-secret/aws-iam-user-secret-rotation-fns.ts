@@ -1,4 +1,11 @@
-import AWS from "aws-sdk";
+import {
+  type AccessKeyMetadata,
+  CreateAccessKeyCommand,
+  DeleteAccessKeyCommand,
+  IAMClient,
+  ListAccessKeysCommand
+} from "@aws-sdk/client-iam";
+import { GetCallerIdentityCommand, STSClient, STSServiceException } from "@aws-sdk/client-sts";
 
 import {
   TAwsIamUserSecretRotationGeneratedCredentials,
@@ -6,14 +13,16 @@ import {
 } from "@app/ee/services/secret-rotation-v2/aws-iam-user-secret/aws-iam-user-secret-rotation-types";
 import {
   TRotationFactory,
+  TRotationFactoryCheckActiveCredentials,
   TRotationFactoryGetSecretsPayload,
   TRotationFactoryIssueCredentials,
   TRotationFactoryRevokeCredentials,
   TRotationFactoryRotateCredentials
 } from "@app/ee/services/secret-rotation-v2/secret-rotation-v2-types";
+import { BadRequestError } from "@app/lib/errors";
 import { getAwsConnectionConfig } from "@app/services/app-connection/aws";
 
-const getCreateDate = (key: AWS.IAM.AccessKeyMetadata): number => {
+const getCreateDate = (key: AccessKeyMetadata): number => {
   return key.CreateDate ? new Date(key.CreateDate).getTime() : 0;
 };
 
@@ -28,10 +37,10 @@ export const awsIamUserSecretRotationFactory: TRotationFactory<
   } = secretRotation;
 
   const $rotateClientSecret = async () => {
-    const { credentials } = await getAwsConnectionConfig(connection, region);
-    const iam = new AWS.IAM({ credentials });
+    const { credentials, region: resolvedRegion } = await getAwsConnectionConfig(connection, region);
+    const iam = new IAMClient({ credentials, region: resolvedRegion });
 
-    const { AccessKeyMetadata } = await iam.listAccessKeys({ UserName: userName }).promise();
+    const { AccessKeyMetadata } = await iam.send(new ListAccessKeysCommand({ UserName: userName }));
 
     if (AccessKeyMetadata && AccessKeyMetadata.length > 0) {
       // Sort keys by creation date (oldest first)
@@ -41,21 +50,21 @@ export const awsIamUserSecretRotationFactory: TRotationFactory<
       if (sortedKeys.length >= 2) {
         const accessId = sortedKeys[0].AccessKeyId || sortedKeys[1].AccessKeyId;
         if (accessId) {
-          await iam
-            .deleteAccessKey({
+          await iam.send(
+            new DeleteAccessKeyCommand({
               UserName: userName,
               AccessKeyId: accessId
             })
-            .promise();
+          );
         }
       }
     }
 
-    const { AccessKey } = await iam.createAccessKey({ UserName: userName }).promise();
+    const { AccessKey } = await iam.send(new CreateAccessKeyCommand({ UserName: userName }));
 
     return {
-      accessKeyId: AccessKey.AccessKeyId,
-      secretAccessKey: AccessKey.SecretAccessKey
+      accessKeyId: AccessKey?.AccessKeyId ?? "",
+      secretAccessKey: AccessKey?.SecretAccessKey ?? ""
     };
   };
 
@@ -71,17 +80,17 @@ export const awsIamUserSecretRotationFactory: TRotationFactory<
     generatedCredentials,
     callback
   ) => {
-    const { credentials } = await getAwsConnectionConfig(connection, region);
-    const iam = new AWS.IAM({ credentials });
+    const { credentials, region: resolvedRegion } = await getAwsConnectionConfig(connection, region);
+    const iam = new IAMClient({ credentials, region: resolvedRegion });
 
     await Promise.all(
       generatedCredentials.map((generatedCredential) =>
-        iam
-          .deleteAccessKey({
+        iam.send(
+          new DeleteAccessKeyCommand({
             UserName: userName,
             AccessKeyId: generatedCredential.accessKeyId
           })
-          .promise()
+        )
       )
     );
 
@@ -114,10 +123,38 @@ export const awsIamUserSecretRotationFactory: TRotationFactory<
     return secrets;
   };
 
+  const checkActiveCredentials: TRotationFactoryCheckActiveCredentials<
+    TAwsIamUserSecretRotationGeneratedCredentials
+  > = async ({ accessKeyId, secretAccessKey }) => {
+    const { region: resolvedRegion } = await getAwsConnectionConfig(connection, region);
+
+    const sts = new STSClient({
+      credentials: {
+        accessKeyId: accessKeyId.trim(),
+        secretAccessKey: secretAccessKey.trim()
+      },
+      region: resolvedRegion,
+      maxAttempts: 2
+    });
+
+    try {
+      await sts.send(new GetCallerIdentityCommand({}));
+    } catch (err) {
+      if (err instanceof STSServiceException) {
+        throw new BadRequestError({
+          message: `Unable to validate credentials: ${
+            err.message ?? `AWS responded with a status code of ${err.$metadata.httpStatusCode}.`
+          }`
+        });
+      }
+    }
+  };
+
   return {
     issueCredentials,
     revokeCredentials,
     rotateCredentials,
-    getSecretsPayload
+    getSecretsPayload,
+    checkActiveCredentials
   };
 };

@@ -1,36 +1,39 @@
 import {
-  faArrowDown,
-  faArrowUp,
-  faBan,
-  faEdit,
-  faEllipsisV,
-  faEye,
-  faMagnifyingGlass,
-  faServer,
-  faTrash
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+  ChevronDownIcon,
+  EditIcon,
+  EyeIcon,
+  MoreHorizontalIcon,
+  SearchIcon,
+  TrashIcon
+} from "lucide-react";
+import { twMerge } from "tailwind-merge";
 
 import { OrgPermissionCan } from "@app/components/permissions";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  EmptyState,
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
   IconButton,
-  Input,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
   Pagination,
-  Spinner,
+  Skeleton,
   Table,
-  TableContainer,
-  TableSkeleton,
-  TBody,
-  Td,
-  Th,
-  THead,
-  Tr
-} from "@app/components/v2";
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@app/components/v3";
+import { INFISICAL_SCHEDULE_DEMO_LINK } from "@app/const/links";
 import { OrgPermissionSubjects, useOrganization, useSubscription } from "@app/context";
 import { OrgPermissionMachineIdentityAuthTemplateActions } from "@app/context/OrgPermissionContext/types";
 import {
@@ -61,7 +64,7 @@ type Props = {
 };
 
 export const IdentityAuthTemplatesTable = ({ handlePopUpOpen }: Props) => {
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isSubOrganization } = useOrganization();
 
   const {
     offset,
@@ -89,7 +92,7 @@ export const IdentityAuthTemplatesTable = ({ handlePopUpOpen }: Props) => {
   const organizationId = currentOrg?.id || "";
   const { subscription } = useSubscription();
 
-  const { data, isPending, isFetching } = useGetIdentityAuthTemplates({
+  const { data, isPending } = useGetIdentityAuthTemplates({
     organizationId,
     limit,
     offset,
@@ -116,106 +119,124 @@ export const IdentityAuthTemplatesTable = ({ handlePopUpOpen }: Props) => {
     setOrderDirection(OrderByDirection.ASC);
   };
 
-  return (
-    <div>
-      <div className="mb-4 flex items-center space-x-2">
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
-          placeholder="Search templates by name..."
-        />
-      </div>
-      <TableContainer>
-        <Table>
-          <THead>
-            <Tr className="h-14">
-              <Th className="w-1/6">
-                <div className="flex items-center">
-                  Name
-                  <IconButton
-                    variant="plain"
-                    className={`ml-2 ${orderBy === TemplatesOrderBy.Name ? "" : "opacity-30"}`}
-                    ariaLabel="sort"
-                    onClick={() => handleSort(TemplatesOrderBy.Name)}
-                  >
-                    <FontAwesomeIcon
-                      icon={
-                        orderDirection === OrderByDirection.DESC &&
-                        orderBy === TemplatesOrderBy.Name
-                          ? faArrowUp
-                          : faArrowDown
-                      }
-                    />
-                  </IconButton>
-                </div>
-              </Th>
-              <Th className="w-1/6">
-                <div className="flex items-center">
-                  Method
-                  <IconButton
-                    variant="plain"
-                    className={`ml-2 ${orderBy === TemplatesOrderBy.AuthMethod ? "" : "opacity-30"}`}
-                    ariaLabel="sort"
-                    onClick={() => handleSort(TemplatesOrderBy.AuthMethod)}
-                  >
-                    <FontAwesomeIcon
-                      icon={
-                        orderDirection === OrderByDirection.DESC &&
-                        orderBy === TemplatesOrderBy.AuthMethod
-                          ? faArrowUp
-                          : faArrowDown
-                      }
-                    />
-                  </IconButton>
-                </div>
-              </Th>
-              <Th className="w-2/3">URL</Th>
-              <Th className="w-16">{isFetching ? <Spinner size="xs" /> : null}</Th>
-            </Tr>
-          </THead>
-          <TBody>
-            {subscription.machineIdentityAuthTemplates && isPending && (
-              <TableSkeleton columns={4} innerKey="identity-auth-templates" />
-            )}
+  const isFiltered = debouncedSearch.trim().length > 0;
 
+  const renderContent = () => {
+    if (!subscription.machineIdentityAuthTemplates) {
+      return (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>This feature has not been activated for your license.</EmptyTitle>
+            <EmptyDescription>Contact us to learn more.</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button size="sm" variant={isSubOrganization ? "sub-org" : "org"} asChild>
+              <a href={INFISICAL_SCHEDULE_DEMO_LINK} target="_blank" rel="noopener noreferrer">
+                Talk to Us
+              </a>
+            </Button>
+          </EmptyContent>
+        </Empty>
+      );
+    }
+
+    if (!isPending && !templates.length) {
+      return (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>
+              {isFiltered
+                ? "No templates match search filter"
+                : "No identity auth templates have been added"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {isFiltered ? "Adjust your search criteria." : "Create a template to get started."}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      );
+    }
+
+    return (
+      <>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead
+                className="w-1/4 cursor-pointer"
+                onClick={() => handleSort(TemplatesOrderBy.Name)}
+              >
+                Name
+                <ChevronDownIcon
+                  className={twMerge(
+                    "transition-transform",
+                    orderBy === TemplatesOrderBy.Name &&
+                      orderDirection === OrderByDirection.DESC &&
+                      "rotate-180",
+                    orderBy !== TemplatesOrderBy.Name && "opacity-30"
+                  )}
+                />
+              </TableHead>
+              <TableHead
+                className="w-1/4 cursor-pointer"
+                onClick={() => handleSort(TemplatesOrderBy.AuthMethod)}
+              >
+                Method
+                <ChevronDownIcon
+                  className={twMerge(
+                    "transition-transform",
+                    orderBy === TemplatesOrderBy.AuthMethod &&
+                      orderDirection === OrderByDirection.DESC &&
+                      "rotate-180",
+                    orderBy !== TemplatesOrderBy.AuthMethod && "opacity-30"
+                  )}
+                />
+              </TableHead>
+              <TableHead>URL</TableHead>
+              <TableHead className="w-5" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isPending &&
+              Array.from({ length: perPage }).map((_, i) => (
+                <TableRow key={`skeleton-${i + 1}`}>
+                  <TableCell>
+                    <Skeleton className="h-4 w-full" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-full" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-full" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-4" />
+                  </TableCell>
+                </TableRow>
+              ))}
             {!isPending &&
               templates?.map((template) => (
-                <Tr
-                  className="h-10 cursor-pointer transition-colors duration-100 hover:bg-mineshaft-700"
-                  key={`template-${template.id}`}
-                >
-                  <Td>{template.name}</Td>
-                  <Td>
-                    <div className="flex items-center">
-                      <span className="uppercase">{template.authMethod}</span>
-                    </div>
-                  </Td>
-                  <Td>
-                    <span className="text-sm text-mineshaft-400">
-                      {template.templateFields.url}
-                    </span>
-                  </Td>
-                  <Td>
+                <TableRow key={`template-${template.id}`}>
+                  <TableCell isTruncatable>{template.name}</TableCell>
+                  <TableCell>
+                    <span className="uppercase">{template.authMethod}</span>
+                  </TableCell>
+                  <TableCell isTruncatable>{template.templateFields.url}</TableCell>
+                  <TableCell>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <IconButton
-                          ariaLabel="Options"
-                          className="w-6"
-                          colorSchema="secondary"
-                          variant="plain"
-                        >
-                          <FontAwesomeIcon icon={faEllipsisV} />
+                        <IconButton variant="ghost" size="xs" onClick={(e) => e.stopPropagation()}>
+                          <MoreHorizontalIcon />
                         </IconButton>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent sideOffset={2} align="end">
+                      <DropdownMenuContent align="end">
                         <DropdownMenuItem
-                          icon={<FontAwesomeIcon icon={faEye} />}
                           onClick={(e) => {
                             e.stopPropagation();
                             handlePopUpOpen("viewUsages", { template });
                           }}
                         >
+                          <EyeIcon />
                           {TEMPLATE_UI_LABELS.VIEW_USAGES}
                         </DropdownMenuItem>
                         <OrgPermissionCan
@@ -224,13 +245,13 @@ export const IdentityAuthTemplatesTable = ({ handlePopUpOpen }: Props) => {
                         >
                           {(isAllowed) => (
                             <DropdownMenuItem
-                              icon={<FontAwesomeIcon icon={faEdit} />}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handlePopUpOpen("editTemplate", { template });
                               }}
                               isDisabled={!isAllowed}
                             >
+                              <EditIcon />
                               {TEMPLATE_UI_LABELS.EDIT_TEMPLATE}
                             </DropdownMenuItem>
                           )}
@@ -241,6 +262,7 @@ export const IdentityAuthTemplatesTable = ({ handlePopUpOpen }: Props) => {
                         >
                           {(isAllowed) => (
                             <DropdownMenuItem
+                              variant="danger"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handlePopUpOpen("deleteTemplate", {
@@ -249,42 +271,47 @@ export const IdentityAuthTemplatesTable = ({ handlePopUpOpen }: Props) => {
                                 });
                               }}
                               isDisabled={!isAllowed}
-                              icon={<FontAwesomeIcon icon={faTrash} />}
                             >
+                              <TrashIcon />
                               {TEMPLATE_UI_LABELS.DELETE_TEMPLATE}
                             </DropdownMenuItem>
                           )}
                         </OrgPermissionCan>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                  </Td>
-                </Tr>
+                  </TableCell>
+                </TableRow>
               ))}
-          </TBody>
+          </TableBody>
         </Table>
-        {!isPending && data && totalCount > 0 && (
+        {totalCount > 0 && (
           <Pagination
             count={totalCount}
             page={page}
             perPage={perPage}
-            onChangePage={(newPage) => setPage(newPage)}
+            onChangePage={setPage}
             onChangePerPage={handlePerPageChange}
           />
         )}
-        {!subscription.machineIdentityAuthTemplates && (
-          <EmptyState title="This feature has not been activated for your license." icon={faBan} />
-        )}
-        {!isPending && templates.length === 0 && (
-          <EmptyState
-            title={
-              debouncedSearch.trim().length > 0
-                ? "No templates match search filter"
-                : "No identity auth templates have been created"
-            }
-            icon={faServer}
+      </>
+    );
+  };
+
+  return (
+    <div>
+      <div className="mb-4 flex gap-2">
+        <InputGroup className="flex-1">
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search templates by name..."
           />
-        )}
-      </TableContainer>
+        </InputGroup>
+      </div>
+      {renderContent()}
     </div>
   );
 };

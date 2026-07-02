@@ -1,7 +1,8 @@
 export enum EnrollmentType {
   API = "api",
   EST = "est",
-  ACME = "acme"
+  ACME = "acme",
+  SCEP = "scep"
 }
 
 export enum IssuerType {
@@ -9,11 +10,31 @@ export enum IssuerType {
   SELF_SIGNED = "self-signed"
 }
 
+export enum ScepChallengeType {
+  STATIC = "static",
+  DYNAMIC = "dynamic"
+}
+
+export type TCertificateProfileDefaults = {
+  ttlDays?: number;
+  commonName?: string;
+  keyAlgorithm?: string;
+  signatureAlgorithm?: string;
+  keyUsages?: string[];
+  extendedKeyUsages?: string[];
+  basicConstraints?: { isCA: boolean; pathLength?: number };
+  organization?: string;
+  organizationalUnit?: string;
+  country?: string;
+  state?: string;
+  locality?: string;
+};
+
 export type TCertificateProfile = {
   id: string;
   projectId: string;
   caId: string | null;
-  certificateTemplateId: string;
+  certificatePolicyId: string;
   slug: string;
   description?: string;
   enrollmentType: EnrollmentType;
@@ -22,16 +43,28 @@ export type TCertificateProfile = {
   apiConfigId?: string;
   createdAt: string;
   updatedAt: string;
+  externalConfigs?: Record<string, unknown> | null;
+  defaults?: TCertificateProfileDefaults | null;
+  certificateAuthority?: {
+    id: string;
+    projectId?: string;
+    status: string;
+    name: string;
+    isExternal?: boolean;
+    externalType?: string | null;
+  };
 };
 
 export type TCertificateProfileWithDetails = TCertificateProfile & {
   certificateAuthority?: {
     id: string;
-    projectId: string;
+    projectId?: string;
     status: string;
     name: string;
+    isExternal?: boolean;
+    externalType?: string | null;
   };
-  certificateTemplate?: {
+  certificatePolicy?: {
     id: string;
     projectId: string;
     name: string;
@@ -40,7 +73,7 @@ export type TCertificateProfileWithDetails = TCertificateProfile & {
   estConfig?: {
     id: string;
     disableBootstrapCaValidation: boolean;
-    passphrase: string;
+    passphrase?: string;
     caChain: string;
   };
   apiConfig?: {
@@ -51,45 +84,40 @@ export type TCertificateProfileWithDetails = TCertificateProfile & {
   acmeConfig?: {
     id: string;
     directoryUrl: string;
+    skipDnsOwnershipVerification?: boolean;
+    skipEabBinding?: boolean;
+  };
+  scepConfig?: {
+    id: string;
+    scepEndpointUrl: string;
+    raCertificatePem: string;
+    raCertExpiresAt: string;
+    includeCaCertInResponse: boolean;
+    allowCertBasedRenewal: boolean;
+    challengeType: ScepChallengeType;
+    challengeEndpointUrl?: string;
+    dynamicChallengeExpiryMinutes?: number;
+    dynamicChallengeMaxPending?: number;
   };
 };
 
 export type TCreateCertificateProfileDTO = {
-  projectId: string;
   caId?: string;
-  certificateTemplateId: string;
+  certificatePolicyId: string;
   slug: string;
   description?: string;
-  enrollmentType: EnrollmentType;
   issuerType: IssuerType;
-  estConfig?: {
-    disableBootstrapCaValidation?: boolean;
-    passphrase: string;
-    caChain?: string;
-  };
-  apiConfig?: {
-    autoRenew?: boolean;
-    renewBeforeDays?: number;
-  };
-  acmeConfig?: unknown;
+  externalConfigs?: Record<string, unknown> | null;
+  defaults?: TCertificateProfileDefaults | null;
 };
 
 export type TUpdateCertificateProfileDTO = {
   profileId: string;
   slug?: string;
   description?: string;
-  enrollmentType?: EnrollmentType;
   issuerType?: IssuerType;
-  estConfig?: {
-    disableBootstrapCaValidation?: boolean;
-    passphrase?: string;
-    caChain?: string;
-  };
-  apiConfig?: {
-    autoRenew?: boolean;
-    renewBeforeDays?: number;
-  };
-  acmeConfig?: unknown;
+  externalConfigs?: Record<string, unknown> | null;
+  defaults?: TCertificateProfileDefaults | null;
 };
 
 export type TDeleteCertificateProfileDTO = {
@@ -97,7 +125,6 @@ export type TDeleteCertificateProfileDTO = {
 };
 
 export type TListCertificateProfilesDTO = {
-  projectId: string;
   limit?: number;
   offset?: number;
   search?: string;
@@ -105,6 +132,7 @@ export type TListCertificateProfilesDTO = {
   enrollmentType?: EnrollmentType;
   issuerType?: IssuerType;
   caId?: string;
+  applicationId?: string;
 };
 
 export type TGetCertificateProfileByIdDTO = {
@@ -112,7 +140,6 @@ export type TGetCertificateProfileByIdDTO = {
 };
 
 export type TGetCertificateProfileBySlugDTO = {
-  projectId: string;
   slug: string;
 };
 

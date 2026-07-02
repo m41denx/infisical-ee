@@ -1,6 +1,13 @@
+import { AuditLogInfo } from "@app/ee/services/audit-log/audit-log-types";
 import { OrgServiceActor, TOrgPermission } from "@app/lib/types";
 
 import { ActorAuthMethod, ActorType } from "../auth/auth-type";
+import { ExternalMigrationProviders } from "./external-migration-schemas";
+
+export enum KvVersion {
+  V1 = "1",
+  V2 = "2"
+}
 
 export enum VaultMappingType {
   Namespace = "namespace",
@@ -37,6 +44,7 @@ export type TImportVaultDataDTO = {
   mappingType: VaultMappingType;
   vaultUrl: string;
   gatewayId?: string;
+  gatewayPoolId?: string;
 } & Omit<TOrgPermission, "orgId">;
 
 export type TImportInfisicalDataCreate = {
@@ -114,33 +122,22 @@ export type TEnvKeyExportJSON = {
 
 export enum ExternalPlatforms {
   EnvKey = "EnvKey",
-  Vault = "Vault"
+  Vault = "Vault",
+  Doppler = "Doppler"
 }
 
-export enum ExternalMigrationProviders {
-  Vault = "vault",
-  EnvKey = "env-key"
-}
-
-export enum VaultImportStatus {
+export enum ExternalMigrationImportStatus {
   Imported = "imported",
   ApprovalRequired = "approval-required"
 }
 
-export type TCreateVaultExternalMigrationDTO = {
-  namespace: string;
+export type TImportDopplerSecretsDTO = {
   connectionId: string;
+  dopplerProject: string;
+  dopplerEnvironment: string;
+  targetProjectId: string;
+  targetEnvironment: string;
+  targetSecretPath: string;
   actor: OrgServiceActor;
-};
-
-export type TUpdateVaultExternalMigrationDTO = {
-  id: string;
-  namespace: string;
-  connectionId: string | null;
-  actor: OrgServiceActor;
-};
-
-export type TDeleteVaultExternalMigrationDTO = {
-  id: string;
-  actor: OrgServiceActor;
+  auditLogInfo: AuditLogInfo;
 };

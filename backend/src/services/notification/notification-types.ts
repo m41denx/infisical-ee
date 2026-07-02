@@ -2,6 +2,7 @@ export enum NotificationType {
   ACCESS_APPROVAL_REQUEST = "access-approval-request",
   ACCESS_APPROVAL_REQUEST_UPDATED = "access-approval-request-updated",
   ACCESS_POLICY_BYPASSED = "access-policy-bypassed",
+  PAM_ACCESS_POLICY_BYPASSED = "pam-access-policy-bypassed",
   SECRET_CHANGE_REQUEST = "secret-change-request",
   SECRET_CHANGE_POLICY_BYPASSED = "secret-change-policy-bypassed",
   SECRET_ROTATION_FAILED = "secret-rotation-failed",
@@ -17,7 +18,11 @@ export enum NotificationType {
   PROJECT_INVITATION = "project-invitation",
   SECRET_SYNC_FAILED = "secret-sync-failed",
   GATEWAY_HEALTH_ALERT = "gateway-health-alert",
-  RELAY_HEALTH_ALERT = "relay-health-alert"
+  RELAY_HEALTH_ALERT = "relay-health-alert",
+  APPROVAL_REQUIRED = "approval-required",
+  PKI_ALERT_CHANNEL_FAILED = "pki-alert-channel-failed",
+  CREDENTIAL_ROTATION_FAILED = "credential-rotation-failed",
+  AUDIT_LOG_MIGRATION_RECOMMENDED = "audit-log-migration-recommended"
 }
 
 export interface TCreateUserNotificationDTO {

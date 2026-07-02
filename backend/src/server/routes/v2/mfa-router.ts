@@ -10,7 +10,7 @@ import { addAuthOriginDomainCookie } from "@app/server/lib/cookie";
 import { AuthModeMfaJwtTokenPayload, AuthTokenType, MfaMethod } from "@app/services/auth/auth-type";
 
 const handleMfaVerification = async (
-  req: FastifyRequest & { mfa: { userId: string; orgId?: string; user: TUsers } },
+  req: FastifyRequest & { mfa: { userId: string; orgId?: string; user: TUsers; requiredMfaMethod: MfaMethod } },
   res: FastifyReply,
   server: FastifyZodProvider,
   mfaToken: string,
@@ -31,12 +31,13 @@ const handleMfaVerification = async (
     orgId: req.mfa.orgId,
     mfaToken,
     mfaMethod,
+    requiredMfaMethod: req.mfa.requiredMfaMethod,
     isRecoveryCode
   });
 
   void res.setCookie("jid", token.refresh, {
     httpOnly: true,
-    path: "/",
+    path: "/api",
     sameSite: "strict",
     secure: appCfg.HTTPS_ENABLED
   });
@@ -45,17 +46,15 @@ const handleMfaVerification = async (
 
   return {
     ...user,
-    token: token.access,
-    protectedKey: user.protectedKey || null,
-    protectedKeyIV: user.protectedKeyIV || null,
-    protectedKeyTag: user.protectedKeyTag || null
+    hashedPassword: null,
+    token: token.access
   };
 };
 
 export const registerMfaRouter = async (server: FastifyZodProvider) => {
   const cfg = getConfig();
 
-  server.decorateRequest("mfa", null);
+  server.decorateRequest("mfa");
   server.addHook("preValidation", async (req, res) => {
     const authorizationHeader = req.headers.authorization;
 
@@ -74,7 +73,12 @@ export const registerMfaRouter = async (server: FastifyZodProvider) => {
 
     const user = await server.store.user.findById(decodedToken.userId);
     if (!user) throw new Error("User not found");
-    req.mfa = { userId: user.id, user, orgId: decodedToken.organizationId };
+    req.mfa = {
+      userId: user.id,
+      user,
+      orgId: decodedToken.organizationId,
+      requiredMfaMethod: decodedToken.requiredMfaMethod
+    };
   });
 
   server.route({
@@ -84,6 +88,7 @@ export const registerMfaRouter = async (server: FastifyZodProvider) => {
       rateLimit: mfaRateLimit
     },
     schema: {
+      operationId: "resendMfaToken",
       response: {
         200: z.object({
           message: z.string()
@@ -91,7 +96,7 @@ export const registerMfaRouter = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req) => {
-      await server.services.login.resendMfaToken(req.mfa.userId);
+      await server.services.login.resendMfaToken(req.mfa.userId, req.mfa.requiredMfaMethod);
       return { message: "Successfully send new mfa code" };
     }
   });
@@ -103,6 +108,7 @@ export const registerMfaRouter = async (server: FastifyZodProvider) => {
       rateLimit: mfaRateLimit
     },
     schema: {
+      operationId: "checkTotpMfa",
       response: {
         200: z.object({
           isVerified: z.boolean()
@@ -135,6 +141,7 @@ export const registerMfaRouter = async (server: FastifyZodProvider) => {
       rateLimit: mfaRateLimit
     },
     schema: {
+      operationId: "verifyMfa",
       body: z.object({
         mfaToken: z.string().trim(),
         mfaMethod: z.nativeEnum(MfaMethod).optional().default(MfaMethod.EMAIL)
@@ -165,6 +172,7 @@ export const registerMfaRouter = async (server: FastifyZodProvider) => {
       rateLimit: mfaRateLimit
     },
     schema: {
+      operationId: "verifyMfaRecoveryCode",
       body: z.object({
         recoveryCode: z.string().trim().length(8, "Recovery code must be 8 characters")
       }),
@@ -184,6 +192,40 @@ export const registerMfaRouter = async (server: FastifyZodProvider) => {
     },
     handler: async (req, res) => {
       return handleMfaVerification(req, res, server, req.body.recoveryCode, MfaMethod.TOTP, true);
+    }
+  });
+
+  // WebAuthn MFA routes
+  server.route({
+    method: "GET",
+    url: "/mfa/check/webauthn",
+    config: {
+      rateLimit: mfaRateLimit
+    },
+    schema: {
+      operationId: "checkWebauthnMfa",
+      response: {
+        200: z.object({
+          hasPasskeys: z.boolean()
+        })
+      }
+    },
+    handler: async (req) => {
+      try {
+        const credentials = await server.services.webAuthn.getUserWebAuthnCredentials({
+          userId: req.mfa.userId
+        });
+
+        return {
+          hasPasskeys: credentials.length > 0
+        };
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          return { hasPasskeys: false };
+        }
+
+        throw error;
+      }
     }
   });
 };

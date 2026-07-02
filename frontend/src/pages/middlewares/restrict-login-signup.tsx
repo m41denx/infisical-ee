@@ -12,6 +12,7 @@ import { SessionStorageKeys } from "@app/const";
 import { useServerConfig } from "@app/context";
 import { authKeys, fetchAuthToken } from "@app/hooks/api/auth/queries";
 import { setAuthToken } from "@app/hooks/api/reactQuery";
+import { GtmHead } from "@app/hooks/useGtm";
 
 const QueryParamsSchema = z.object({
   callback_port: z.coerce.number().optional().catch(undefined),
@@ -50,6 +51,7 @@ export const AuthConsentWrapper = () => {
 
   return (
     <>
+      <GtmHead />
       {config.authConsentContent && !hasConsented && (
         <div className="bg-opacity-90 fixed inset-0 z-50 flex items-center justify-center bg-mineshaft-700/80">
           <div className="max-h-[80vh] w-4/12 overflow-y-auto rounded-lg bg-bunker-800 p-6 text-white">
@@ -81,46 +83,41 @@ export const Route = createFileRoute("/_restrict-login-signup")({
     }
 
     const data = await context.queryClient
-      .fetchQuery({
+      .ensureQueryData({
         queryKey: authKeys.getAuthToken,
         queryFn: fetchAuthToken
       })
-      .catch(() => {
-        return null;
-      });
+      .catch(() => null);
     if (!data) return;
 
     setAuthToken(data.token);
 
     if (location.pathname === "/signupinvite") return;
 
-    // Avoid redirect if on select-organization page with force=true
-    if (location.pathname.endsWith("select-organization") && search?.force === true) return;
+    const isOnSelectOrg = location.pathname.endsWith("select-organization");
+    const needsOrgSelection =
+      search?.callback_port || search?.force || search?.org_id || !data.organizationId;
 
-    // to do cli login
-    if (search?.callback_port) {
-      if (location.pathname.endsWith("select-organization") || location.pathname.endsWith("login"))
+    if (needsOrgSelection) {
+      if (isOnSelectOrg || (!data.organizationId && location.pathname.endsWith("verify-email")))
         return;
+
+      throw redirect({
+        to: "/login/select-organization",
+        search: {
+          org_id: search?.org_id || data.organizationId,
+          callback_port: search?.callback_port
+        }
+      });
     }
 
-    if (search.org_id) {
-      if (location.pathname.endsWith("select-organization")) return;
-
-      throw redirect({ to: "/login/select-organization", search: { org_id: search.org_id } });
+    const orgId = data.subOrganizationId || data.organizationId;
+    if (orgId) {
+      throw redirect({
+        to: "/organizations/$orgId/projects",
+        params: { orgId }
+      });
     }
-
-    if (!data.organizationId) {
-      if (
-        location.pathname.endsWith("select-organization") ||
-        location.pathname.endsWith("verify-email")
-      )
-        return;
-      throw redirect({ to: "/login/select-organization" });
-    }
-    throw redirect({
-      to: "/organizations/$orgId/projects",
-      params: { orgId: data.organizationId }
-    });
   },
   component: AuthConsentWrapper
 });

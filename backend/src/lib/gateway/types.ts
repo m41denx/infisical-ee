@@ -7,7 +7,12 @@ export type TGatewayTlsOptions = { ca: string; cert: string; key: string };
 export enum GatewayProxyProtocol {
   Http = "http",
   Tcp = "tcp",
-  Ping = "ping"
+  Ping = "ping",
+  Health = "health",
+  Pam = "pam",
+  PamRdpBrowser = "pam-rdp-browser",
+  PamSessionCancellation = "pam-session-cancellation",
+  Pkcs11 = "pkcs11"
 }
 
 export enum GatewayHttpProxyActions {
@@ -18,13 +23,9 @@ export enum GatewayHttpProxyActions {
 export interface IGatewayProxyOptions {
   targetHost?: string;
   targetPort?: number;
-  relayHost: string;
-  relayPort: number;
-  tlsOptions: TGatewayTlsOptions;
-  identityId: string;
-  orgId: string;
   protocol: GatewayProxyProtocol;
   httpsAgent?: https.Agent;
+  relayDetails: TGatewayV1RelayDetails;
 }
 
 export type TPingGatewayAndVerifyDTO = {
@@ -41,4 +42,18 @@ export interface IGatewayProxyServer {
   port: number;
   cleanup: () => Promise<void>;
   getProxyError: () => string;
+}
+
+export type TGatewayV1RelayDetails = {
+  relayAddress: string;
+  tlsOptions: TGatewayTlsOptions;
+  identityId: string;
+  orgId: string;
+  relayHost: string;
+  relayPort: number;
+};
+
+export enum GatewayVersion {
+  V1 = "v1",
+  V2 = "v2"
 }

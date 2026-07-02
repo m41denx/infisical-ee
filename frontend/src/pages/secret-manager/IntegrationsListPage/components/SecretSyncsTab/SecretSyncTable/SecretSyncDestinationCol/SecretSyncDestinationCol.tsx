@@ -5,15 +5,20 @@ import { AwsParameterStoreSyncDestinationCol } from "./AwsParameterStoreSyncDest
 import { AwsSecretsManagerSyncDestinationCol } from "./AwsSecretsManagerSyncDestinationCol";
 import { AzureAppConfigurationDestinationSyncCol } from "./AzureAppConfigurationDestinationSyncCol";
 import { AzureDevOpsSyncDestinationCol } from "./AzureDevOpsSyncDestinationCol";
+import { AzureEntraIdScimSyncDestinationCol } from "./AzureEntraIdScimSyncDestinationCol";
 import { AzureKeyVaultDestinationSyncCol } from "./AzureKeyVaultDestinationSyncCol";
 import { BitbucketSyncDestinationCol } from "./BitbucketSyncDestinationCol";
 import { CamundaSyncDestinationCol } from "./CamundaSyncDestinationCol";
 import { ChecklySyncDestinationCol } from "./ChecklySyncDestinationCol";
 import { ChefSyncDestinationCol } from "./ChefSyncDestinationCol";
+import { CircleCISyncDestinationCol } from "./CircleCISyncDestinationCol";
+import { Cloud66SyncDestinationCol } from "./Cloud66SyncDestinationCol";
 import { CloudflarePagesSyncDestinationCol } from "./CloudflarePagesSyncDestinationCol";
 import { CloudflareWorkersSyncDestinationCol } from "./CloudflareWorkersSyncDestinationCol";
 import { DatabricksSyncDestinationCol } from "./DatabricksSyncDestinationCol";
+import { DevinSyncDestinationCol } from "./DevinSyncDestinationCol";
 import { DigitalOceanAppPlatformSyncDestinationCol } from "./DigitalOceanAppPlatformSyncDestinationCol";
+import { ExternalInfisicalSyncDestinationCol } from "./ExternalInfisicalSyncDestinationCol";
 import { FlyioSyncDestinationCol } from "./FlyioSyncDestinationCol";
 import { GcpSyncDestinationCol } from "./GcpSyncDestinationCol";
 import { GitHubSyncDestinationCol } from "./GitHubSyncDestinationCol";
@@ -25,11 +30,18 @@ import { LaravelForgeSyncDestinationCol } from "./LaravelForgeSyncDestinationCol
 import { NetlifySyncDestinationCol } from "./NetlifySyncDestinationCol";
 import { NorthflankSyncDestinationCol } from "./NorthflankSyncDestinationCol";
 import { OCIVaultSyncDestinationCol } from "./OCIVaultSyncDestinationCol";
+import { OctopusDeploySyncDestinationCol } from "./OctopusDeploySyncDestinationCol";
+import { OnaSyncDestinationCol } from "./OnaSyncDestinationCol";
+import { OvhSyncDestinationCol } from "./OvhSyncDestinationCol";
+import { QoverySyncDestinationCol } from "./QoverySyncDestinationCol";
 import { RailwaySyncDestinationCol } from "./RailwaySyncDestinationCol";
 import { RenderSyncDestinationCol } from "./RenderSyncDestinationCol";
+import { SnowflakeSyncDestinationCol } from "./SnowflakeSyncDestinationCol";
 import { SupabaseSyncDestinationCol } from "./SupabaseSyncDestinationCol";
 import { TeamCitySyncDestinationCol } from "./TeamCitySyncDestinationCol";
 import { TerraformCloudSyncDestinationCol } from "./TerraformCloudSyncDestinationCol";
+import { TravisCISyncDestinationCol } from "./TravisCISyncDestinationCol";
+import { TriggerDevSyncDestinationCol } from "./TriggerDevSyncDestinationCol";
 import { VercelSyncDestinationCol } from "./VercelSyncDestinationCol";
 import { WindmillSyncDestinationCol } from "./WindmillSyncDestinationCol";
 import { ZabbixSyncDestinationCol } from "./ZabbixSyncDestinationCol";
@@ -106,6 +118,30 @@ export const SecretSyncDestinationCol = ({ secretSync }: Props) => {
       return <LaravelForgeSyncDestinationCol secretSync={secretSync} />;
     case SecretSync.Chef:
       return <ChefSyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.OctopusDeploy:
+      return <OctopusDeploySyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.CircleCI:
+      return <CircleCISyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.AzureEntraIdScim:
+      return <AzureEntraIdScimSyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.ExternalInfisical:
+      return <ExternalInfisicalSyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.OVH:
+      return <OvhSyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.Devin:
+      return <DevinSyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.Ona:
+      return <OnaSyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.TravisCI:
+      return <TravisCISyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.Snowflake:
+      return <SnowflakeSyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.TriggerDev:
+      return <TriggerDevSyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.Qovery:
+      return <QoverySyncDestinationCol secretSync={secretSync} />;
+    case SecretSync.Cloud66:
+      return <Cloud66SyncDestinationCol secretSync={secretSync} />;
     default:
       throw new Error(
         `Unhandled Secret Sync Destination Col: ${(secretSync as TSecretSync).destination}`

@@ -15,6 +15,10 @@ import {
   OnePassConnectionListItemSchema,
   SanitizedOnePassConnectionSchema
 } from "@app/services/app-connection/1password";
+import {
+  AnthropicConnectionListItemSchema,
+  SanitizedAnthropicConnectionSchema
+} from "@app/services/app-connection/anthropic";
 import { Auth0ConnectionListItemSchema, SanitizedAuth0ConnectionSchema } from "@app/services/app-connection/auth0";
 import { AwsConnectionListItemSchema, SanitizedAwsConnectionSchema } from "@app/services/app-connection/aws";
 import {
@@ -34,6 +38,14 @@ import {
   SanitizedAzureDevOpsConnectionSchema
 } from "@app/services/app-connection/azure-devops/azure-devops-schemas";
 import {
+  AzureDnsConnectionListItemSchema,
+  SanitizedAzureDnsConnectionSchema
+} from "@app/services/app-connection/azure-dns/azure-dns-connection-schema";
+import {
+  AzureEntraIdConnectionListItemSchema,
+  SanitizedAzureEntraIdConnectionSchema
+} from "@app/services/app-connection/azure-entra-id";
+import {
   AzureKeyVaultConnectionListItemSchema,
   SanitizedAzureKeyVaultConnectionSchema
 } from "@app/services/app-connection/azure-key-vault";
@@ -50,13 +62,32 @@ import {
   SanitizedChecklyConnectionSchema
 } from "@app/services/app-connection/checkly";
 import {
+  CircleCIConnectionListItemSchema,
+  SanitizedCircleCIConnectionSchema
+} from "@app/services/app-connection/circleci";
+import {
+  Cloud66ConnectionListItemSchema,
+  SanitizedCloud66ConnectionSchema
+} from "@app/services/app-connection/cloud-66";
+import {
   CloudflareConnectionListItemSchema,
   SanitizedCloudflareConnectionSchema
 } from "@app/services/app-connection/cloudflare/cloudflare-connection-schema";
+import { ConvexConnectionListItemSchema, SanitizedConvexConnectionSchema } from "@app/services/app-connection/convex";
 import {
   DatabricksConnectionListItemSchema,
   SanitizedDatabricksConnectionSchema
 } from "@app/services/app-connection/databricks";
+import {
+  DatadogConnectionListItemSchema,
+  SanitizedDatadogConnectionSchema
+} from "@app/services/app-connection/datadog";
+import { DbtConnectionListItemSchema, SanitizedDbtConnectionSchema } from "@app/services/app-connection/dbt";
+import { DevinConnectionListItemSchema, SanitizedDevinConnectionSchema } from "@app/services/app-connection/devin";
+import {
+  DigiCertConnectionListItemSchema,
+  SanitizedDigiCertConnectionSchema
+} from "@app/services/app-connection/digicert";
 import {
   DigitalOceanConnectionListItemSchema,
   SanitizedDigitalOceanConnectionSchema
@@ -65,6 +96,18 @@ import {
   DNSMadeEasyConnectionListItemSchema,
   SanitizedDNSMadeEasyConnectionSchema
 } from "@app/services/app-connection/dns-made-easy/dns-made-easy-connection-schema";
+import {
+  DopplerConnectionListItemSchema,
+  SanitizedDopplerConnectionSchema
+} from "@app/services/app-connection/doppler/doppler-connection-schema";
+import {
+  ExternalInfisicalConnectionListItemSchema,
+  SanitizedExternalInfisicalConnectionSchema
+} from "@app/services/app-connection/external-infisical";
+import {
+  F5BigIpConnectionListItemSchema,
+  SanitizedF5BigIpConnectionSchema
+} from "@app/services/app-connection/f5-big-ip";
 import { FlyioConnectionListItemSchema, SanitizedFlyioConnectionSchema } from "@app/services/app-connection/flyio";
 import { GcpConnectionListItemSchema, SanitizedGcpConnectionSchema } from "@app/services/app-connection/gcp";
 import { GitHubConnectionListItemSchema, SanitizedGitHubConnectionSchema } from "@app/services/app-connection/github";
@@ -73,6 +116,10 @@ import {
   SanitizedGitHubRadarConnectionSchema
 } from "@app/services/app-connection/github-radar";
 import { GitLabConnectionListItemSchema, SanitizedGitLabConnectionSchema } from "@app/services/app-connection/gitlab";
+import {
+  GoDaddyConnectionListItemSchema,
+  SanitizedGoDaddyConnectionSchema
+} from "@app/services/app-connection/godaddy";
 import {
   HCVaultConnectionListItemSchema,
   SanitizedHCVaultConnectionSchema
@@ -87,6 +134,10 @@ import {
   SanitizedLaravelForgeConnectionSchema
 } from "@app/services/app-connection/laravel-forge";
 import { LdapConnectionListItemSchema, SanitizedLdapConnectionSchema } from "@app/services/app-connection/ldap";
+import {
+  MongoDBConnectionListItemSchema,
+  SanitizedMongoDBConnectionSchema
+} from "@app/services/app-connection/mongodb";
 import { MsSqlConnectionListItemSchema, SanitizedMsSqlConnectionSchema } from "@app/services/app-connection/mssql";
 import { MySqlConnectionListItemSchema, SanitizedMySqlConnectionSchema } from "@app/services/app-connection/mysql";
 import {
@@ -94,14 +145,29 @@ import {
   SanitizedNetlifyConnectionSchema
 } from "@app/services/app-connection/netlify";
 import {
+  NetScalerConnectionListItemSchema,
+  SanitizedNetScalerConnectionSchema
+} from "@app/services/app-connection/netscaler";
+import {
   NorthflankConnectionListItemSchema,
   SanitizedNorthflankConnectionSchema
 } from "@app/services/app-connection/northflank";
+import {
+  OctopusDeployConnectionListItemSchema,
+  SanitizedOctopusDeployConnectionSchema
+} from "@app/services/app-connection/octopus-deploy";
 import { OktaConnectionListItemSchema, SanitizedOktaConnectionSchema } from "@app/services/app-connection/okta";
+import { OnaConnectionListItemSchema, SanitizedOnaConnectionSchema } from "@app/services/app-connection/ona";
+import {
+  OpenRouterConnectionListItemSchema,
+  SanitizedOpenRouterConnectionSchema
+} from "@app/services/app-connection/open-router";
+import { OvhConnectionListItemSchema, SanitizedOvhConnectionSchema } from "@app/services/app-connection/ovh";
 import {
   PostgresConnectionListItemSchema,
   SanitizedPostgresConnectionSchema
 } from "@app/services/app-connection/postgres";
+import { QoveryConnectionListItemSchema, SanitizedQoveryConnectionSchema } from "@app/services/app-connection/qovery";
 import {
   RailwayConnectionListItemSchema,
   SanitizedRailwayConnectionSchema
@@ -111,6 +177,16 @@ import {
   RenderConnectionListItemSchema,
   SanitizedRenderConnectionSchema
 } from "@app/services/app-connection/render/render-connection-schema";
+import {
+  SalesforceConnectionListItemSchema,
+  SanitizedSalesforceConnectionSchema
+} from "@app/services/app-connection/salesforce";
+import { SanitizedSmbConnectionSchema, SmbConnectionListItemSchema } from "@app/services/app-connection/smb";
+import {
+  SanitizedSnowflakeConnectionSchema,
+  SnowflakeConnectionListItemSchema
+} from "@app/services/app-connection/snowflake";
+import { SanitizedSshConnectionSchema, SshConnectionListItemSchema } from "@app/services/app-connection/ssh";
 import {
   SanitizedSupabaseConnectionSchema,
   SupabaseConnectionListItemSchema
@@ -123,6 +199,19 @@ import {
   SanitizedTerraformCloudConnectionSchema,
   TerraformCloudConnectionListItemSchema
 } from "@app/services/app-connection/terraform-cloud";
+import {
+  SanitizedTravisCIConnectionSchema,
+  TravisCIConnectionListItemSchema
+} from "@app/services/app-connection/travis-ci";
+import {
+  SanitizedTriggerDevConnectionSchema,
+  TriggerDevConnectionListItemSchema
+} from "@app/services/app-connection/trigger-dev";
+import { SanitizedVenafiConnectionSchema, VenafiConnectionListItemSchema } from "@app/services/app-connection/venafi";
+import {
+  SanitizedVenafiTppConnectionSchema,
+  VenafiTppConnectionListItemSchema
+} from "@app/services/app-connection/venafi-tpp";
 import { SanitizedVercelConnectionSchema, VercelConnectionListItemSchema } from "@app/services/app-connection/vercel";
 import {
   SanitizedWindmillConnectionSchema,
@@ -160,12 +249,15 @@ const SanitizedAppConnectionSchema = z.union([
   ...SanitizedHerokuConnectionSchema.options,
   ...SanitizedRenderConnectionSchema.options,
   ...SanitizedFlyioConnectionSchema.options,
+  ...SanitizedTriggerDevConnectionSchema.options,
   ...SanitizedGitLabConnectionSchema.options,
   ...SanitizedCloudflareConnectionSchema.options,
   ...SanitizedBitbucketConnectionSchema.options,
   ...SanitizedZabbixConnectionSchema.options,
   ...SanitizedRailwayConnectionSchema.options,
   ...SanitizedChecklyConnectionSchema.options,
+  ...SanitizedCircleCIConnectionSchema.options,
+  ...SanitizedCloud66ConnectionSchema.options,
   ...SanitizedSupabaseConnectionSchema.options,
   ...SanitizedDigitalOceanConnectionSchema.options,
   ...SanitizedNetlifyConnectionSchema.options,
@@ -173,9 +265,35 @@ const SanitizedAppConnectionSchema = z.union([
   ...SanitizedOktaConnectionSchema.options,
   ...SanitizedAzureADCSConnectionSchema.options,
   ...SanitizedRedisConnectionSchema.options,
+  ...SanitizedMongoDBConnectionSchema.options,
   ...SanitizedLaravelForgeConnectionSchema.options,
   ...SanitizedChefConnectionSchema.options,
-  ...SanitizedDNSMadeEasyConnectionSchema.options
+  ...SanitizedDNSMadeEasyConnectionSchema.options,
+  ...SanitizedAzureDnsConnectionSchema.options,
+  ...SanitizedOctopusDeployConnectionSchema.options,
+  ...SanitizedSmbConnectionSchema.options,
+  ...SanitizedSshConnectionSchema.options,
+  ...SanitizedDbtConnectionSchema.options,
+  ...SanitizedOpenRouterConnectionSchema.options,
+  ...SanitizedAnthropicConnectionSchema.options,
+  ...SanitizedDevinConnectionSchema.options,
+  ...SanitizedAzureEntraIdConnectionSchema.options,
+  ...SanitizedVenafiConnectionSchema.options,
+  ...SanitizedVenafiTppConnectionSchema.options,
+  ...SanitizedExternalInfisicalConnectionSchema.options,
+  ...SanitizedNetScalerConnectionSchema.options,
+  ...SanitizedDopplerConnectionSchema.options,
+  ...SanitizedOvhConnectionSchema.options,
+  ...SanitizedOnaConnectionSchema.options,
+  ...SanitizedDigiCertConnectionSchema.options,
+  ...SanitizedGoDaddyConnectionSchema.options,
+  ...SanitizedTravisCIConnectionSchema.options,
+  ...SanitizedSalesforceConnectionSchema.options,
+  ...SanitizedSnowflakeConnectionSchema.options,
+  ...SanitizedDatadogConnectionSchema.options,
+  ...SanitizedF5BigIpConnectionSchema.options,
+  ...SanitizedConvexConnectionSchema.options,
+  ...SanitizedQoveryConnectionSchema.options
 ]);
 
 const AppConnectionOptionsSchema = z.discriminatedUnion("app", [
@@ -206,12 +324,15 @@ const AppConnectionOptionsSchema = z.discriminatedUnion("app", [
   HerokuConnectionListItemSchema,
   RenderConnectionListItemSchema,
   FlyioConnectionListItemSchema,
+  TriggerDevConnectionListItemSchema,
   GitLabConnectionListItemSchema,
   CloudflareConnectionListItemSchema,
   BitbucketConnectionListItemSchema,
   ZabbixConnectionListItemSchema,
   RailwayConnectionListItemSchema,
   ChecklyConnectionListItemSchema,
+  CircleCIConnectionListItemSchema,
+  Cloud66ConnectionListItemSchema,
   SupabaseConnectionListItemSchema,
   DigitalOceanConnectionListItemSchema,
   NetlifyConnectionListItemSchema,
@@ -219,9 +340,35 @@ const AppConnectionOptionsSchema = z.discriminatedUnion("app", [
   OktaConnectionListItemSchema,
   AzureADCSConnectionListItemSchema,
   RedisConnectionListItemSchema,
+  MongoDBConnectionListItemSchema,
   LaravelForgeConnectionListItemSchema,
   ChefConnectionListItemSchema,
-  DNSMadeEasyConnectionListItemSchema
+  DNSMadeEasyConnectionListItemSchema,
+  AzureDnsConnectionListItemSchema,
+  OctopusDeployConnectionListItemSchema,
+  SmbConnectionListItemSchema,
+  SshConnectionListItemSchema,
+  DbtConnectionListItemSchema,
+  OpenRouterConnectionListItemSchema,
+  AzureEntraIdConnectionListItemSchema,
+  VenafiConnectionListItemSchema,
+  VenafiTppConnectionListItemSchema,
+  ExternalInfisicalConnectionListItemSchema,
+  DopplerConnectionListItemSchema,
+  NetScalerConnectionListItemSchema,
+  AnthropicConnectionListItemSchema,
+  OvhConnectionListItemSchema,
+  DevinConnectionListItemSchema,
+  OnaConnectionListItemSchema,
+  DigiCertConnectionListItemSchema,
+  GoDaddyConnectionListItemSchema,
+  TravisCIConnectionListItemSchema,
+  SalesforceConnectionListItemSchema,
+  SnowflakeConnectionListItemSchema,
+  DatadogConnectionListItemSchema,
+  F5BigIpConnectionListItemSchema,
+  ConvexConnectionListItemSchema,
+  QoveryConnectionListItemSchema
 ]);
 
 export const registerAppConnectionRouter = async (server: FastifyZodProvider) => {
@@ -233,6 +380,7 @@ export const registerAppConnectionRouter = async (server: FastifyZodProvider) =>
     },
     schema: {
       hide: false,
+      operationId: "listAppConnectionOptions",
       tags: [ApiDocsTags.AppConnections],
       description: "List the available App Connection Options.",
       querystring: z.object({
@@ -259,6 +407,7 @@ export const registerAppConnectionRouter = async (server: FastifyZodProvider) =>
     },
     schema: {
       hide: false,
+      operationId: "listAppConnections",
       tags: [ApiDocsTags.AppConnections],
       description: "List all the App Connections for the current organization or project.",
       querystring: z.object({

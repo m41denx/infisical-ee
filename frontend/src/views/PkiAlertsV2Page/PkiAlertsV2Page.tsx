@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { faPlus, faSearch } from "@fortawesome/free-solid-svg-icons";
+import { faSearch } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
 import { createNotification } from "@app/components/notifications";
 import {
-  Button,
   DeleteActionModal,
   Input,
   Pagination,
@@ -17,7 +16,6 @@ import {
   THead,
   Tr
 } from "@app/components/v2";
-import { useProject } from "@app/context";
 import { useDebounce } from "@app/hooks";
 import { useDeletePkiAlertV2, useGetPkiAlertsV2 } from "@app/hooks/api/pkiAlertsV2";
 
@@ -30,7 +28,6 @@ interface Props {
 }
 
 export const PkiAlertsV2Page = ({ hideContainer = false }: Props) => {
-  const { currentProject } = useProject();
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [search, setSearch] = useState("");
@@ -51,7 +48,6 @@ export const PkiAlertsV2Page = ({ hideContainer = false }: Props) => {
   });
 
   const { data: alertsData, isLoading } = useGetPkiAlertsV2({
-    projectId: currentProject?.id || "",
     search: debouncedSearch || undefined,
     limit: perPage,
     offset: (page - 1) * perPage
@@ -95,6 +91,9 @@ export const PkiAlertsV2Page = ({ hideContainer = false }: Props) => {
           <Td>
             <Skeleton className="h-4 w-16" />
           </Td>
+          <Td>
+            <Skeleton className="h-4 w-20" />
+          </Td>
           <Td className="text-right">
             <Skeleton className="ml-auto h-4 w-24" />
           </Td>
@@ -122,7 +121,7 @@ export const PkiAlertsV2Page = ({ hideContainer = false }: Props) => {
 
     return (
       <Tr>
-        <Td colSpan={5} className="py-8 text-center text-gray-400">
+        <Td colSpan={6} className="py-8 text-center text-gray-400">
           {search ? "No alerts found matching your search." : "No PKI alerts configured yet."}
         </Td>
       </Tr>
@@ -131,9 +130,19 @@ export const PkiAlertsV2Page = ({ hideContainer = false }: Props) => {
 
   return (
     <div className={hideContainer ? "" : "container mx-auto p-6"}>
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex w-full items-center space-x-4">
-          <div className="relative mr-2 w-full">
+      <div className="flex w-full flex-col gap-3 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-4 py-3">
+        <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
+          <div className="flex items-center gap-x-2">
+            <h3 className="text-lg font-medium text-mineshaft-100">Certificate Alerts</h3>
+            <span className="rounded bg-mineshaft-600 px-2 py-0.5 text-xs tracking-wide text-mineshaft-200 uppercase">
+              Legacy
+            </span>
+          </div>
+          <p className="text-xs text-bunker-300">Create new alerts inside an Application.</p>
+        </div>
+
+        <div className="mb-4 flex items-center">
+          <div className="relative w-full">
             <FontAwesomeIcon
               icon={faSearch}
               className="absolute top-1/2 left-3 -translate-y-1/2 transform text-gray-400"
@@ -147,42 +156,34 @@ export const PkiAlertsV2Page = ({ hideContainer = false }: Props) => {
           </div>
         </div>
 
-        <Button
-          variant="solid"
-          colorSchema="primary"
-          leftIcon={<FontAwesomeIcon icon={faPlus} />}
-          onClick={() => setAlertModal({ isOpen: true })}
-        >
-          Create Certificate Alert
-        </Button>
+        <TableContainer>
+          <Table>
+            <THead>
+              <Tr>
+                <Th>Name</Th>
+                <Th>Event Type</Th>
+                <Th>Status</Th>
+                <Th>Alert Before</Th>
+                <Th>Last Run</Th>
+                <Th className="text-right">Actions</Th>
+              </Tr>
+            </THead>
+            <TBody>{renderTableContent()}</TBody>
+          </Table>
+        </TableContainer>
+
+        {totalPages > 1 && (
+          <div className="mt-4 flex justify-center">
+            <Pagination
+              count={totalPages}
+              page={page}
+              onChangePage={setPage}
+              perPage={perPage}
+              onChangePerPage={setPerPage}
+            />
+          </div>
+        )}
       </div>
-
-      <TableContainer>
-        <Table>
-          <THead>
-            <Tr>
-              <Th>Name</Th>
-              <Th>Event Type</Th>
-              <Th>Status</Th>
-              <Th>Alert Before</Th>
-              <Th className="text-right">Actions</Th>
-            </Tr>
-          </THead>
-          <TBody>{renderTableContent()}</TBody>
-        </Table>
-      </TableContainer>
-
-      {totalPages > 1 && (
-        <div className="mt-4 flex justify-center">
-          <Pagination
-            count={totalPages}
-            page={page}
-            onChangePage={setPage}
-            perPage={perPage}
-            onChangePerPage={setPerPage}
-          />
-        </div>
-      )}
 
       <CreatePkiAlertV2Modal
         isOpen={alertModal.isOpen}

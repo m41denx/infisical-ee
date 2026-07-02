@@ -5,8 +5,11 @@ import { dashboardKeys } from "@app/hooks/api/dashboard/queries";
 import { secretKeys } from "@app/hooks/api/secrets/queries";
 
 import { projectKeys } from "../projects";
-import { externalMigrationQueryKeys } from "./queries";
-import { TImportVaultSecretsDTO, TVaultExternalMigrationConfig, VaultImportStatus } from "./types";
+import {
+  ExternalMigrationImportStatus,
+  TImportDopplerSecretsDTO,
+  TImportVaultSecretsDTO
+} from "./types";
 
 export const useImportEnvKey = () => {
   const queryClient = useQueryClient();
@@ -73,9 +76,9 @@ export const useImportVault = () => {
 export const useImportVaultSecrets = () => {
   const queryClient = useQueryClient();
 
-  return useMutation<{ status: VaultImportStatus }, object, TImportVaultSecretsDTO>({
+  return useMutation<{ status: ExternalMigrationImportStatus }, object, TImportVaultSecretsDTO>({
     mutationFn: async (dto) => {
-      const { data } = await apiRequest.post<{ status: VaultImportStatus }>(
+      const { data } = await apiRequest.post<{ status: ExternalMigrationImportStatus }>(
         "/api/v3/external-migration/vault/import-secrets",
         dto
       );
@@ -94,71 +97,25 @@ export const useImportVaultSecrets = () => {
   });
 };
 
-export const useCreateVaultExternalMigrationConfig = () => {
+export const useImportDopplerSecrets = () => {
   const queryClient = useQueryClient();
 
-  return useMutation<
-    TVaultExternalMigrationConfig,
-    Error,
-    { connectionId: string; namespace: string }
-  >({
-    mutationFn: async ({ connectionId, namespace }) => {
-      const { data } = await apiRequest.post<{ config: TVaultExternalMigrationConfig }>(
-        "/api/v3/external-migration/vault/configs",
-        {
-          connectionId,
-          namespace
-        }
+  return useMutation<{ status: string; imported: number }, Error, TImportDopplerSecretsDTO>({
+    mutationFn: async (dto) => {
+      const { data } = await apiRequest.post<{ status: string; imported: number }>(
+        "/api/v3/external-migration/doppler/import-secrets",
+        dto
       );
-      return data.config;
+      return data;
     },
-    onSuccess: () => {
+    onSuccess: (_, { targetProjectId, targetEnvironment, targetSecretPath }) => {
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.all() });
       queryClient.invalidateQueries({
-        queryKey: externalMigrationQueryKeys.vaultConfigs()
-      });
-    }
-  });
-};
-
-export const useUpdateVaultExternalMigrationConfig = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation<
-    TVaultExternalMigrationConfig,
-    Error,
-    { id: string; connectionId: string; namespace: string }
-  >({
-    mutationFn: async ({ id, connectionId, namespace }) => {
-      const { data } = await apiRequest.put<{ config: TVaultExternalMigrationConfig }>(
-        `/api/v3/external-migration/vault/configs/${id}`,
-        {
-          connectionId,
-          namespace
-        }
-      );
-      return data.config;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: externalMigrationQueryKeys.vaultConfigs()
-      });
-    }
-  });
-};
-
-export const useDeleteVaultExternalMigrationConfig = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation<TVaultExternalMigrationConfig, Error, { id: string }>({
-    mutationFn: async ({ id }) => {
-      const { data } = await apiRequest.delete<{ config: TVaultExternalMigrationConfig }>(
-        `/api/v3/external-migration/vault/configs/${id}`
-      );
-      return data.config;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: externalMigrationQueryKeys.vaultConfigs()
+        queryKey: secretKeys.getProjectSecret({
+          projectId: targetProjectId,
+          environment: targetEnvironment,
+          secretPath: targetSecretPath
+        })
       });
     }
   });

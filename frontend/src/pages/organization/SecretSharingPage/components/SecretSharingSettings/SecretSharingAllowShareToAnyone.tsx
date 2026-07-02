@@ -1,6 +1,13 @@
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
-import { Switch } from "@app/components/v2";
+import {
+  Card,
+  CardAction,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Switch
+} from "@app/components/v3";
 import { OrgPermissionActions, OrgPermissionSubjects, useOrganization } from "@app/context";
 import { useUpdateOrg } from "@app/hooks/api";
 
@@ -23,28 +30,29 @@ export const SecretSharingAllowShareToAnyone = () => {
   };
 
   return (
-    <div className="mb-4 rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-6">
-      <div className="py-4">
-        <div className="mb-2 flex justify-between">
-          <h3 className="text-md text-mineshaft-100">
-            Allow sharing secrets to members outside of this organization
-          </h3>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          Allow sharing secrets to members outside of this organization
+        </CardTitle>
+        <CardDescription>
+          If enabled, team members will be able to share secrets to members outside of this
+          organization
+        </CardDescription>
+        <CardAction>
           <OrgPermissionCan I={OrgPermissionActions.Edit} a={OrgPermissionSubjects.Settings}>
             {(isAllowed) => (
               <Switch
+                variant="project"
                 id="enable-secret-sharing-outside-org"
                 onCheckedChange={(value) => handleSecretSharingToggle(value)}
-                isChecked={currentOrg?.allowSecretSharingOutsideOrganization ?? false}
-                isDisabled={!isAllowed}
+                checked={currentOrg?.allowSecretSharingOutsideOrganization ?? false}
+                disabled={!isAllowed}
               />
             )}
           </OrgPermissionCan>
-        </div>
-        <p className="text-sm text-mineshaft-300">
-          If enabled, team members will be able to share secrets to members outside of this
-          organization
-        </p>
-      </div>
-    </div>
+        </CardAction>
+      </CardHeader>
+    </Card>
   );
 };

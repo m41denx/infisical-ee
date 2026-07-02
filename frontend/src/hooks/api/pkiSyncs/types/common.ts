@@ -30,6 +30,7 @@ export type TRootPkiSync = {
   updatedAt: string;
   isAutoSyncEnabled: boolean;
   projectId: string;
+  applicationId?: string | null;
   subscriberId?: string | null;
   syncStatus: PkiSyncStatus | null;
   lastSyncJobId: string | null;
@@ -77,4 +78,8 @@ export type TPkiSyncCertificate = {
   certificateRenewalError?: string;
   pkiSyncName?: string;
   pkiSyncDestination?: string;
+  syncMetadata?: {
+    isDefault?: boolean;
+    [key: string]: unknown;
+  } | null;
 };

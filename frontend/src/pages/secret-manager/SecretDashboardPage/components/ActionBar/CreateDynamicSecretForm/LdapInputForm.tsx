@@ -1,9 +1,13 @@
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
+import { faQuestionCircle } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
 import ms from "ms";
 import { z } from "zod";
 
 import { TtlFormLabel } from "@app/components/features";
+import { createNotification } from "@app/components/notifications";
 import {
   Button,
   FilterableSelect,
@@ -11,12 +15,22 @@ import {
   Input,
   Select,
   SelectItem,
-  TextArea
+  Switch,
+  TextArea,
+  Tooltip
 } from "@app/components/v2";
+import { ProjectPermissionSub, useProject } from "@app/context";
+import { useCanUseProjectAppConnectionImport } from "@app/hooks";
 import { useCreateDynamicSecret } from "@app/hooks/api";
+import { useListAvailableAppConnections } from "@app/hooks/api/appConnections";
+import { AppConnection } from "@app/hooks/api/appConnections/enums";
 import { DynamicSecretProviders } from "@app/hooks/api/dynamicSecret/types";
+import { VaultLdapRole } from "@app/hooks/api/migration/types";
 import { ProjectEnv } from "@app/hooks/api/types";
 import { slugSchema } from "@app/lib/schemas";
+
+import { LoadFromVaultBanner } from "./components/LoadFromVaultBanner";
+import { VaultLdapImportModal } from "./VaultLdapImportModal";
 
 enum CredentialType {
   Dynamic = "dynamic",
@@ -41,6 +55,7 @@ const formSchema = z.object({
       binddn: z.string().trim().min(1),
       bindpass: z.string().trim().min(1),
       ca: z.string().optional(),
+      sslRejectUnauthorized: z.boolean().default(true),
       credentialType: z.literal(CredentialType.Dynamic),
       creationLdif: z.string().min(1),
       revocationLdif: z.string().min(1),
@@ -51,6 +66,7 @@ const formSchema = z.object({
       binddn: z.string().trim().min(1),
       bindpass: z.string().trim().min(1),
       ca: z.string().optional(),
+      sslRejectUnauthorized: z.boolean().default(true),
       credentialType: z.literal(CredentialType.Static),
       rotationLdif: z.string().min(1)
     })
@@ -98,6 +114,18 @@ export const LdapInputForm = ({
   environments,
   isSingleEnvironmentMode
 }: Props) => {
+  const [isVaultImportModalOpen, setIsVaultImportModalOpen] = useState(false);
+
+  const { projectId } = useProject();
+  const canUseAppConnectionImport = useCanUseProjectAppConnectionImport(
+    ProjectPermissionSub.Secrets
+  );
+  const { data: vaultAppConnections = [] } = useListAvailableAppConnections(
+    AppConnection.HCVault,
+    projectId,
+    { enabled: canUseAppConnectionImport }
+  );
+
   const {
     control,
     formState: { isSubmitting },
@@ -112,6 +140,7 @@ export const LdapInputForm = ({
         binddn: "",
         bindpass: "",
         ca: "",
+        sslRejectUnauthorized: true,
         creationLdif: "",
         revocationLdif: "",
         rollbackLdif: "",
@@ -125,6 +154,64 @@ export const LdapInputForm = ({
   const selectedCredentialType = watch("provider.credentialType");
 
   const createDynamicSecret = useCreateDynamicSecret();
+
+  const handleVaultImport = (role: VaultLdapRole) => {
+    try {
+      setValue("name", role.name);
+
+      if (role.config.url) {
+        setValue("provider.url", role.config.url);
+      }
+
+      if (role.config.binddn) {
+        setValue("provider.binddn", role.config.binddn);
+      }
+
+      if (role.config.certificate) {
+        setValue("provider.ca", role.config.certificate);
+      }
+
+      // Set credential type to Dynamic if creation_ldif is present
+      if (role.creation_ldif) {
+        setValue("provider.credentialType", CredentialType.Dynamic);
+        setValue("provider.creationLdif", role.creation_ldif);
+
+        if (role.deletion_ldif) {
+          setValue("provider.revocationLdif", role.deletion_ldif);
+        }
+
+        if (role.rollback_ldif) {
+          setValue("provider.rollbackLdif", role.rollback_ldif);
+        }
+      }
+
+      // Set TTLs
+      if (role.default_ttl) {
+        const defaultTTL = `${role.default_ttl}s`;
+        setValue("defaultTTL", defaultTTL);
+      }
+
+      if (role.max_ttl) {
+        const maxTTL = `${role.max_ttl}s`;
+        setValue("maxTTL", maxTTL);
+      }
+
+      // Set username template
+      if (role.username_template) {
+        setValue("usernameTemplate", role.username_template);
+      }
+
+      createNotification({
+        type: "info",
+        text: "Configuration loaded successfully from HashiCorp Vault"
+      });
+    } catch {
+      createNotification({
+        type: "error",
+        text: "Failed to load configuration from HashiCorp Vault"
+      });
+    }
+  };
 
   const handleCreateDynamicSecret = async ({
     name,
@@ -155,6 +242,7 @@ export const LdapInputForm = ({
   return (
     <form onSubmit={handleSubmit(handleCreateDynamicSecret)} autoComplete="off">
       <div>
+        <LoadFromVaultBanner onClick={() => setIsVaultImportModalOpen(true)} />
         <div className="flex items-center space-x-2">
           <div className="grow">
             <Controller
@@ -264,6 +352,38 @@ export const LdapInputForm = ({
                       errorText={error?.message}
                     >
                       <TextArea {...field} placeholder="-----BEGIN CERTIFICATE----- ..." />
+                    </FormControl>
+                  )}
+                />
+
+                <Controller
+                  name="provider.sslRejectUnauthorized"
+                  control={control}
+                  render={({ field: { value, onChange }, fieldState: { error } }) => (
+                    <FormControl isError={Boolean(error?.message)} errorText={error?.message}>
+                      <Switch
+                        className="bg-mineshaft-400/50 shadow-inner data-[state=checked]:bg-green/80"
+                        id="ssl-reject-unauthorized"
+                        thumbClassName="bg-mineshaft-800"
+                        isChecked={value}
+                        onCheckedChange={onChange}
+                      >
+                        <p className="w-full">
+                          SSL Reject Unauthorized
+                          <Tooltip
+                            className="max-w-md"
+                            content={
+                              <p>
+                                If enabled, the server certificate will be verified against the list
+                                of supplied CAs. Disable this option if you are using a self-signed
+                                certificate.
+                              </p>
+                            }
+                          >
+                            <FontAwesomeIcon icon={faQuestionCircle} size="sm" className="ml-1" />
+                          </Tooltip>
+                        </p>
+                      </Switch>
                     </FormControl>
                   )}
                 />
@@ -425,6 +545,12 @@ export const LdapInputForm = ({
           Cancel
         </Button>
       </div>
+      <VaultLdapImportModal
+        isOpen={isVaultImportModalOpen}
+        onOpenChange={setIsVaultImportModalOpen}
+        appConnections={vaultAppConnections}
+        onImport={handleVaultImport}
+      />
     </form>
   );
 };

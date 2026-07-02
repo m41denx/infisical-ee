@@ -29,16 +29,17 @@ export type TCreateSharedSecretRequest = {
   name?: string;
   password?: string;
   secretValue: string;
-  expiresAt: Date;
-  expiresAfterViews?: number;
+  expiresIn: string;
+  maxViews?: number;
   accessType?: SecretSharingAccessType;
-  emails?: string[];
+  authorizedEmails?: string[];
+  allowExternalEmails?: boolean;
 };
 
 export type TCreateSecretRequestRequestDTO = {
   name?: string;
   accessType?: SecretSharingAccessType;
-  expiresAt: Date;
+  expiresIn: string;
 };
 
 export type TSetSecretRequestValueRequest = {
@@ -50,23 +51,49 @@ export type TRevealSecretRequestValueRequest = {
   id: string;
 };
 
-export type TViewSharedSecretResponse = {
+export type TBrandingConfig = {
+  hasLogo: boolean;
+  hasFavicon: boolean;
+  primaryColor?: string;
+  secondaryColor?: string;
+};
+
+// Sanitized shared secret - omits sensitive fields like password, encryptedSecret, etc.
+export type TSanitizedSharedSecret = {
+  id: string;
+  userId: string | null;
+  orgId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  name: string | null;
+  lastViewedAt: string | null;
+  accessType: SecretSharingAccessType;
+  expiresAt: string;
+  expiresAfterViews: number | null;
+};
+
+export type TSharedSecretPublicDetails = TSanitizedSharedSecret & {
   isPasswordProtected: boolean;
-  secret: {
-    secretValue?: string;
-    encryptedValue: string;
-    iv: string;
-    tag: string;
-    accessType: SecretSharingAccessType;
-    orgName?: string;
-    expiresAt?: Date | string;
-    expiresAfterViews?: number | null;
-  };
+  isAuthorizedUser: boolean;
+};
+
+export type TAccessSharedSecretResponse = {
+  secretValue: string;
+  accessType: SecretSharingAccessType;
+  orgName?: string;
+  expiresAt?: Date | string;
+  expiresAfterViews?: number | null;
+};
+
+export type TAccessSharedSecretRequest = {
+  sharedSecretId: string;
+  password?: string;
 };
 
 export type TGetSecretRequestByIdResponse = {
-  secretRequest: {
-    isSecretValueSet: boolean;
+  request: {
+    id: string;
+    orgId: string;
     accessType: SecretSharingAccessType;
     requester: {
       organizationName: string;
@@ -75,6 +102,9 @@ export type TGetSecretRequestByIdResponse = {
       lastName?: string;
     };
   };
+  brandingConfig?: TBrandingConfig;
+  isSecretValueSet: boolean;
+  error?: string;
 };
 
 export type TDeleteSharedSecretRequestDTO = {

@@ -16,6 +16,9 @@ import { CERTIFICATE_AUTHORITIES_TYPE_MAP } from "@app/services/certificate-auth
 import { SecretSync } from "@app/services/secret-sync/secret-sync-enums";
 import { SECRET_SYNC_CONNECTION_MAP, SECRET_SYNC_NAME_MAP } from "@app/services/secret-sync/secret-sync-maps";
 
+const IDENTITY_AUTH_SUB_ORGANIZATION_NAME =
+  "When set, this will scope the login session to the specified organization the machine identity has access to. If omitted, the session defaults to the organization where the machine identity was created in.";
+
 export enum ApiDocsTags {
   Identities = "Identities",
   IdentityTemplates = "Identity Templates",
@@ -29,10 +32,12 @@ export enum ApiDocsTags {
   AzureAuth = "Azure Auth",
   KubernetesAuth = "Kubernetes Auth",
   JwtAuth = "JWT Auth",
+  SpiffeAuth = "SPIFFE Auth",
   OidcAuth = "OIDC Auth",
   LdapAuth = "LDAP Auth",
   Groups = "Groups",
   Organizations = "Organizations",
+  OrganizationRoles = "Organization Roles",
   OrgIdentityMembership = "Organization Identity Membership",
   SubOrganizations = "Sub Organizations",
   Projects = "Projects",
@@ -59,10 +64,17 @@ export enum ApiDocsTags {
   AuditLogs = "Audit Logs",
   PkiCertificateAuthorities = "PKI Certificate Authorities",
   PkiCertificates = "PKI Certificates",
+  PkiCertificatePolicies = "PKI Certificate Policies",
   PkiCertificateTemplates = "PKI Certificate Templates",
   PkiCertificateProfiles = "PKI Certificate Profiles",
+  PkiApplications = "PKI Applications",
+  CertManagerInstance = "Certificate Manager Instance",
   PkiCertificateCollections = "PKI Certificate Collections",
   PkiAlerting = "PKI Alerting",
+  HsmConnectors = "HSM Connectors",
+  PkiDiscovery = "PKI Discovery",
+  PkiInstallations = "PKI Installations",
+  PkiSigners = "PKI Signers",
   PkiSubscribers = "PKI Subscribers",
   PkiAcme = "PKI ACME",
   SshCertificates = "SSH Certificates",
@@ -74,10 +86,14 @@ export enum ApiDocsTags {
   KmsEncryption = "KMS Encryption",
   KmsSigning = "KMS Signing",
   SecretScanning = "Secret Scanning",
+  SecretSharing = "Secret Sharing",
   OidcSso = "OIDC SSO",
   SamlSso = "SAML SSO",
   LdapSso = "LDAP SSO",
-  Events = "Event Subscriptions"
+  Scim = "SCIM",
+  Events = "Event Subscriptions",
+  GatewaysV3 = "Gateways",
+  KmipServers = "KMIP Servers"
 }
 
 export const GROUPS = {
@@ -106,6 +122,25 @@ export const GROUPS = {
     filterUsers:
       "Whether to filter the list of returned users. 'existingMembers' will only return existing users in the group, 'nonMembers' will only return users not in the group, undefined will return all users in the organization."
   },
+  LIST_MACHINE_IDENTITIES: {
+    id: "The ID of the group to list identities for.",
+    offset: "The offset to start from. If you enter 10, it will start from the 10th identity.",
+    limit: "The number of identities to return.",
+    search: "The text string that machine identity name will be filtered by.",
+    filterMachineIdentities:
+      "Whether to filter the list of returned identities. 'assignedMachineIdentities' will only return identities assigned to the group, 'nonAssignedMachineIdentities' will only return identities not assigned to the group, undefined will return all identities in the organization."
+  },
+  LIST_MEMBERS: {
+    id: "The ID of the group to list members for.",
+    offset: "The offset to start from. If you enter 10, it will start from the 10th member.",
+    limit: "The number of members to return.",
+    search:
+      "The text string that member email(in case of users) or name(in case of machine identities) will be filtered by.",
+    orderBy: "The column to order members by.",
+    orderDirection: "The direction to order members in.",
+    memberTypeFilter:
+      "Filter members by type. Can be a single value ('users' or 'machineIdentities') or an array of values. If not specified, both users and machine identities will be returned."
+  },
   LIST_PROJECTS: {
     id: "The ID of the group to list projects for.",
     offset: "The offset to start from. If you enter 10, it will start from the 10th project.",
@@ -120,12 +155,20 @@ export const GROUPS = {
     id: "The ID of the group to add the user to.",
     username: "The username of the user to add to the group."
   },
+  ADD_MACHINE_IDENTITY: {
+    id: "The ID of the group to add the machine identity to.",
+    machineIdentityId: "The ID of the machine identity to add to the group."
+  },
   GET_BY_ID: {
     id: "The ID of the group to fetch."
   },
   DELETE_USER: {
     id: "The ID of the group to remove the user from.",
     username: "The username of the user to remove from the group."
+  },
+  DELETE_MACHINE_IDENTITY: {
+    id: "The ID of the group to remove the machine identity from.",
+    machineIdentityId: "The ID of the machine identity to remove from the group."
   }
 } as const;
 
@@ -170,10 +213,36 @@ export const IDENTITIES = {
   }
 } as const;
 
+export const IDENTITIES_V2 = {
+  SEARCH: {
+    scope:
+      "Array of scopes to search across. Accepts 'organization' to include organization-level identities and/or 'project' to include identities from projects the caller has access to. Defaults to ['organization'].",
+    search: {
+      desc: "The filters to apply to the search.",
+      name: "The name of the identity to filter by.",
+      role: "The role to filter by. Matches against the role name or slug for custom roles and the role type for predefined roles."
+    },
+    offset: "The offset to start from. If you enter 10, it will start from the 10th identity.",
+    limit: "The number of identities to return.",
+    orderBy: "The column to order identities by.",
+    orderDirection: "The direction to order identities in."
+  },
+  SEARCH_COUNT: {
+    scope:
+      "Array of scopes to count. Returns a count for each requested scope. Accepts 'organization' and/or 'project'.",
+    search: {
+      desc: "The filters to apply when counting.",
+      name: "The name of the identity to filter by.",
+      role: "The role to filter by. Matches against the role name or slug for custom roles and the role type for predefined roles."
+    }
+  }
+} as const;
+
 export const UNIVERSAL_AUTH = {
   LOGIN: {
     clientId: "Your Machine Identity Client ID.",
-    clientSecret: "Your Machine Identity Client Secret."
+    clientSecret: "Your Machine Identity Client Secret.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
@@ -247,7 +316,8 @@ export const LDAP_AUTH = {
   LOGIN: {
     identityId: "The ID of the machine identity to login.",
     username: "The username of the LDAP user to login.",
-    password: "The password of the LDAP user to login."
+    password: "The password of the LDAP user to login.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     templateId: "The ID of the identity auth template to attach the configuration onto.",
@@ -312,7 +382,8 @@ export const ALICLOUD_AUTH = {
     Timestamp: "The timestamp of the request in UTC, formatted as 'YYYY-MM-DDTHH:mm:ssZ'.",
     SignatureVersion: "The signature version. For STS GetCallerIdentity, this should be '1.0'.",
     SignatureNonce: "A unique random string to prevent replay attacks.",
-    Signature: "The signature string calculated based on the request parameters and AccessKey Secret."
+    Signature: "The signature string calculated based on the request parameters and AccessKey Secret.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
@@ -340,12 +411,15 @@ export const ALICLOUD_AUTH = {
 
 export const TLS_CERT_AUTH = {
   LOGIN: {
-    identityId: "The ID of the machine identity to login."
+    identityId: "The ID of the machine identity to login.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
     allowedCommonNames:
       "The comma-separated list of trusted common names that are allowed to authenticate with Infisical.",
+    allowedSubjectAltNames:
+      "The comma-separated list of trusted subject alternative names that are allowed to authenticate with Infisical. Prefix entries by type (URI:, DNS:, IP:, EMAIL:). Bare entries are treated as DNS names.",
     caCertificate: "The PEM-encoded CA certificate to validate client certificates.",
     accessTokenTTL: "The lifetime for an access token in seconds.",
     accessTokenMaxTTL: "The maximum lifetime for an access token in seconds.",
@@ -356,6 +430,8 @@ export const TLS_CERT_AUTH = {
     identityId: "The ID of the machine identity to update the auth method for.",
     allowedCommonNames:
       "The comma-separated list of trusted common names that are allowed to authenticate with Infisical.",
+    allowedSubjectAltNames:
+      "The comma-separated list of trusted subject alternative names that are allowed to authenticate with Infisical. Prefix entries by type (URI:, DNS:, IP:, EMAIL:). Bare entries are treated as DNS names.",
     caCertificate: "The PEM-encoded CA certificate to validate client certificates.",
     accessTokenTTL: "The new lifetime for an access token in seconds.",
     accessTokenMaxTTL: "The new maximum lifetime for an access token in seconds.",
@@ -378,7 +454,8 @@ export const AWS_AUTH = {
       "The base64-encoded HTTP URL used in the signed request. Most likely, the base64-encoding of https://sts.amazonaws.com/.",
     iamRequestBody:
       "The base64-encoded body of the signed request. Most likely, the base64-encoding of Action=GetCallerIdentity&Version=2011-06-15.",
-    iamRequestHeaders: "The base64-encoded headers of the sts:GetCallerIdentity signed request."
+    iamRequestHeaders: "The base64-encoded headers of the sts:GetCallerIdentity signed request.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
@@ -416,7 +493,8 @@ export const OCI_AUTH = {
   LOGIN: {
     identityId: "The ID of the machine identity to login.",
     userOcid: "The OCID of the user attempting login.",
-    headers: "The headers of the signed request."
+    headers: "The headers of the signed request.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
@@ -448,7 +526,8 @@ export const OCI_AUTH = {
 
 export const AZURE_AUTH = {
   LOGIN: {
-    identityId: "The ID of the machine identity to login."
+    identityId: "The ID of the machine identity to login.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
@@ -482,7 +561,8 @@ export const AZURE_AUTH = {
 
 export const GCP_AUTH = {
   LOGIN: {
-    identityId: "The ID of the machine identity to login."
+    identityId: "The ID of the machine identity to login.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
@@ -520,12 +600,16 @@ export const GCP_AUTH = {
 
 export const KUBERNETES_AUTH = {
   LOGIN: {
-    identityId: "The ID of the machine identity to login."
+    identityId: "The ID of the machine identity to login.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
     kubernetesHost: "The host string, host:port pair, or URL to the base of the Kubernetes API server.",
-    caCert: "The PEM-encoded CA cert for the Kubernetes API server.",
+    caCert:
+      "The PEM-encoded CA certificate used to validate the Kubernetes API server's TLS certificate. Required when verifyTlsCertificate is true. Supplying a non-empty caCert always implies verifyTlsCertificate=true; explicitly setting the toggle to false in the same request is rejected.",
+    verifyTlsCertificate:
+      "Whether to verify the Kubernetes API server's TLS certificate against the configured CA certificate. When true, caCert is required. When false, the connection is still over HTTPS but the API server's certificate is not verified, and caCert must be empty. If omitted, defaults to true when caCert is provided and false otherwise.",
     tokenReviewerJwt:
       "Optional JWT token for accessing Kubernetes TokenReview API. If provided, this long-lived token will be used to validate service account tokens during authentication. If omitted, the client's own JWT will be used instead, which requires the client to have the system:auth-delegator ClusterRole binding.",
     tokenReviewMode:
@@ -544,7 +628,10 @@ export const KUBERNETES_AUTH = {
   UPDATE: {
     identityId: "The ID of the machine identity to update the auth method for.",
     kubernetesHost: "The new host string, host:port pair, or URL to the base of the Kubernetes API server.",
-    caCert: "The new PEM-encoded CA cert for the Kubernetes API server.",
+    caCert:
+      "The new PEM-encoded CA certificate used to validate the Kubernetes API server's TLS certificate. Required when verifyTlsCertificate is true. Supplying a non-empty caCert always implies verifyTlsCertificate=true; the update is rejected if the resulting effective state would store a CA together with verifyTlsCertificate=false.",
+    verifyTlsCertificate:
+      "Whether to verify the Kubernetes API server's TLS certificate against the configured CA certificate. When true, caCert is required. When false, the connection is still over HTTPS but the API server's certificate is not verified, and the resulting effective CA must be empty. If omitted while supplying a non-empty caCert in the same update, the toggle is auto-promoted to true; otherwise the stored value is preserved.",
     tokenReviewerJwt:
       "Optional JWT token for accessing Kubernetes TokenReview API. If provided, this long-lived token will be used to validate service account tokens during authentication. If omitted, the client's own JWT will be used instead, which requires the client to have the system:auth-delegator ClusterRole binding.",
     tokenReviewMode:
@@ -600,7 +687,8 @@ export const TOKEN_AUTH = {
   },
   CREATE_TOKEN: {
     identityId: "The ID of the machine identity to create the token for.",
-    name: "The name of the token to create."
+    name: "The name of the token to create.",
+    organizationSlug: "The sub organization name to scope the token to."
   },
   UPDATE_TOKEN: {
     tokenId: "The ID of the token to update metadata for.",
@@ -613,7 +701,8 @@ export const TOKEN_AUTH = {
 
 export const OIDC_AUTH = {
   LOGIN: {
-    identityId: "The ID of the machine identity to login."
+    identityId: "The ID of the machine identity to login.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
@@ -653,7 +742,8 @@ export const OIDC_AUTH = {
 
 export const JWT_AUTH = {
   LOGIN: {
-    identityId: "The ID of the machine identity to login."
+    identityId: "The ID of the machine identity to login.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
   },
   ATTACH: {
     identityId: "The ID of the machine identity to attach the configuration onto.",
@@ -694,6 +784,61 @@ export const JWT_AUTH = {
   },
   REVOKE: {
     identityId: "The ID of the machine identity to revoke the auth method for."
+  }
+} as const;
+
+export const SPIFFE_AUTH = {
+  LOGIN: {
+    identityId: "The ID of the machine identity to login.",
+    jwt: "The JWT-SVID token to authenticate with.",
+    organizationSlug: IDENTITY_AUTH_SUB_ORGANIZATION_NAME
+  },
+  ATTACH: {
+    identityId: "The ID of the machine identity to attach the configuration onto.",
+    trustDomain: "The SPIFFE trust domain (e.g. prod.example.com).",
+    allowedSpiffeIds:
+      "Comma-separated list of allowed SPIFFE ID patterns. Supports picomatch glob patterns (e.g. spiffe://prod.example.com/**).",
+    allowedAudiences: "Comma-separated list of allowed audiences for JWT-SVID validation.",
+    trustBundleDistribution: {
+      profile:
+        "The trust bundle distribution profile. Must be one of: 'static' (admin uploads JWKS), 'https_web_bundle' (auto-refresh from HTTPS endpoint).",
+      bundle: "The JWKS JSON containing public keys for JWT-SVID verification. Required when profile is 'static'.",
+      endpointUrl:
+        "The SPIRE bundle endpoint URL for automatic trust bundle retrieval. Required when profile is 'https_web_bundle'.",
+      caCert:
+        "Optional PEM-encoded root CA certificate for verifying the bundle endpoint TLS connection. Defaults to system root CAs when not provided.",
+      refreshHintSeconds: "The interval in seconds between bundle refresh attempts. Defaults to 3600."
+    },
+    accessTokenTrustedIps: "The IPs or CIDR ranges that access tokens can be used from.",
+    accessTokenTTL: "The lifetime for an access token in seconds.",
+    accessTokenMaxTTL: "The maximum lifetime for an access token in seconds.",
+    accessTokenNumUsesLimit: "The maximum number of times that an access token can be used."
+  },
+  UPDATE: {
+    identityId: "The ID of the machine identity to update the auth method for.",
+    trustDomain: "The new SPIFFE trust domain.",
+    allowedSpiffeIds: "The new comma-separated list of allowed SPIFFE ID patterns.",
+    allowedAudiences: "The new comma-separated list of allowed audiences.",
+    trustBundleDistribution: {
+      profile: "The new trust bundle distribution profile.",
+      bundle: "The new JWKS JSON containing public keys.",
+      endpointUrl: "The new SPIRE bundle endpoint URL.",
+      caCert: "The new PEM-encoded CA certificate for the bundle endpoint.",
+      refreshHintSeconds: "The new interval in seconds between bundle refresh attempts."
+    },
+    accessTokenTrustedIps: "The new IPs or CIDR ranges that access tokens can be used from.",
+    accessTokenTTL: "The new lifetime for an access token in seconds.",
+    accessTokenMaxTTL: "The new maximum lifetime for an access token in seconds.",
+    accessTokenNumUsesLimit: "The new maximum number of times that an access token can be used."
+  },
+  RETRIEVE: {
+    identityId: "The ID of the machine identity to retrieve the auth method for."
+  },
+  REVOKE: {
+    identityId: "The ID of the machine identity to revoke the auth method for."
+  },
+  REFRESH: {
+    identityId: "The ID of the machine identity to force-refresh the cached SPIFFE trust bundle for."
   }
 } as const;
 
@@ -786,16 +931,27 @@ export const ORG_IDENTITY_MEMBERSHIP = {
 
 export const SUB_ORGANIZATIONS = {
   CREATE: {
-    name: "The name of the sub organization to create."
+    name: "The display name of the sub-organization (e.g. 'Acme Corp'). Allows alphanumeric characters, spaces, dashes, and underscores.",
+    slug: "Optional. The slug of the sub-organization (e.g. 'acme-corp'). If not provided, it is auto-generated from the name. Must be lowercase with hyphens only."
   },
   UPDATE: {
-    name: "The name of the sub organization to update.",
+    name: "Optional. The display name of the sub-organization. When only the name is provided (no slug), both name and slug are updated.",
+    slug: "Optional. The slug of the sub-organization. Can be updated independently when both name and slug are provided.",
     subOrgId: "The id of the sub organization to update."
   },
   LIST: {
     limit: "The number of sub organizations to return.",
     offset: "The offset to start from. If you enter 10, it will start from the 10th sub organization.",
+    search: "Optional. Filter sub organizations by name (case-insensitive substring match).",
+    orderBy: "The field to order sub organizations by. Currently only 'name' is supported.",
+    orderDirection: "The direction to order sub organizations. Either 'asc' or 'desc'.",
     isAccessible: "Filter to only return sub organizations that the actor has access to."
+  },
+  DELETE: {
+    subOrgId: "The id of the sub organization to delete."
+  },
+  JOIN: {
+    subOrgId: "The id of the sub organization to create a membership in."
   }
 } as const;
 
@@ -823,7 +979,9 @@ export const PROJECTS = {
     secretSharing: "Enable or disable secret sharing for the project.",
     showSnapshotsLegacy: "Enable or disable legacy snapshots for the project.",
     defaultProduct: "The default product in which the project will open",
-    secretDetectionIgnoreValues: "The list of secret values to ignore for secret detection."
+    secretDetectionIgnoreValues: "The list of secret values to ignore for secret detection.",
+    enforceEncryptedSecretManagerSecretMetadata:
+      "Enable or disable enforcement of encrypted secret metadata for the project."
   },
   GET_KEY: {
     projectId: "The ID of the project to get the key from."
@@ -893,6 +1051,34 @@ export const PROJECTS = {
     offset: "The offset to start from. If you enter 10, it will start from the 10th certificate.",
     limit: "The number of certificates to return."
   },
+  SEARCH_CERTIFICATES: {
+    friendlyName: "The friendly name of the certificate to filter by.",
+    commonName: "The common name of the certificate to filter by.",
+    offset: "The offset to start from. If you enter 10, it will start from the 10th certificate.",
+    limit: "The number of certificates to return.",
+    forPkiSync: "Retrieve only certificates available for PKI sync.",
+    search: "Search by SAN, CN, certificate ID, or serial number.",
+    status: "Filter by certificate status.",
+    profileIds: "Filter by certificate profile IDs.",
+    fromDate: "Filter certificates created from this date.",
+    toDate: "Filter certificates created until this date.",
+    metadata:
+      "Filter by metadata key-value pairs. Each entry should have a key (required) and optionally a value to match against.",
+    extendedKeyUsage:
+      "Filter by extended key usage. Only certificates containing this EKU will be returned (e.g. 'codeSigning', 'serverAuth').",
+    keyAlgorithm: "Filter by key algorithm (e.g. 'RSA_2048', 'EC_prime256v1').",
+    signatureAlgorithm: "Filter by signature algorithm (e.g. 'RSA-SHA256', 'ECDSA-SHA256').",
+    keySizes: "Filter by key sizes in bits (e.g. [2048, 4096]).",
+    caIds: "Filter by certificate authority IDs.",
+    enrollmentTypes: "Filter by enrollment types (e.g. 'api', 'est', 'acme', 'scep').",
+    source: "Filter by certificate source ('issued', 'discovered', 'imported').",
+    notAfterFrom: "Filter certificates expiring on or after this date.",
+    notAfterTo: "Filter certificates expiring on or before this date.",
+    notBeforeFrom: "Filter certificates issued on or after this date.",
+    notBeforeTo: "Filter certificates issued on or before this date.",
+    sortBy: "Column to sort by (e.g. 'notAfter', 'notBefore', 'commonName').",
+    sortOrder: "Sort direction: 'asc' or 'desc'."
+  },
   LIST_PKI_SUBSCRIBERS: {
     projectId: "The ID of the project to list PKI subscribers for."
   }
@@ -918,6 +1104,10 @@ export const PROJECT_USERS = {
     projectId: "The ID of the project to get memberships from.",
     membershipId: "The ID of the user's project membership.",
     username: "The username to get project membership of. Email is the default username."
+  },
+  GET_USER_MEMBERSHIP_BY_USER_ID: {
+    projectId: "The ID of the project to get the membership from.",
+    userId: "The ID of the user to get the project membership of."
   },
   UPDATE_USER_MEMBERSHIP: {
     projectId: "The ID of the project to update the membership for.",
@@ -1038,11 +1228,21 @@ export const ENVIRONMENTS = {
   },
   DELETE: {
     projectId: "The ID of the project to delete the environment from.",
-    id: "The ID of the environment to delete."
+    id: "The ID of the environment to delete.",
+    hardDelete:
+      "When true, permanently removes the environment. When false or omitted, the environment is soft-deleted (preserved and scheduled for permanent deletion after a grace period) and hidden from subsequent reads."
+  },
+  RESTORE: {
+    projectId: "The ID of the project the environment belongs to.",
+    id: "The ID of the soft-deleted environment to restore."
   },
   GET: {
     projectId: "The ID of the project the environment belongs to.",
     id: "The ID of the environment to fetch."
+  },
+  GET_BY_SLUG: {
+    projectId: "The ID of the project the environment belongs to.",
+    slug: "The slug of the environment to fetch."
   }
 } as const;
 
@@ -1121,7 +1321,9 @@ export const RAW_SECRETS = {
     includeImports: "Weather to include imported secrets or not.",
     tagSlugs: "The comma separated tag slugs to filter secrets.",
     metadataFilter:
-      "The secret metadata key-value pairs to filter secrets by. When querying for multiple metadata pairs, the query is treated as an AND operation. Secret metadata format is key=value1,value=value2|key=value3,value=value4."
+      "Unencrypted secret metadata key-value pairs used to filter secrets. Only metadata with unencrypted values is supported. When querying for multiple metadata pairs, the query is treated as an AND operation. Secret metadata format is key=value1,value=value2|key=value3,value=value4.",
+    includePersonalOverrides:
+      "Whether or not to include personal secrets in the response. When enabled, personal secrets will be included in the response. Shared secrets will still be included, but personal secrets will take priority, and the corresponding shared secrets will be replaced with the personal secrets."
   },
   CREATE: {
     secretName: "The name of the secret to create.",
@@ -1185,7 +1387,22 @@ export const RAW_SECRETS = {
     secretName: "The name of the secret to get the access list for.",
     projectId: "The ID of the project where the secret is located.",
     environment: "The slug of the environment where the the secret is located.",
-    secretPath: "The folder path where the secret is located."
+    secretPath: "The folder path where the secret is located.",
+    includeAllEntities:
+      "When true, includes all project users, identities, and groups in the response, even those without any access to the secret."
+  },
+  DUPLICATE_SECRET: {
+    projectId: "The ID of the project containing the secret.",
+    sourceEnvironment: "The slug of the source environment.",
+    sourceSecretPath: "The folder path of the source secret.",
+    destinationEnvironment: "The slug of the destination environment.",
+    destinationSecretPath: "The folder path where the secret will be duplicated to.",
+    secretIds:
+      "Array of source secret IDs to duplicate. All secrets must belong to the source environment and path. Rotation and honey-token secrets cannot be duplicated. Maximum 50 secrets per request.",
+    shouldOverwrite:
+      "When true, overwrite an existing secret with the same key at the destination. When false (default), the request fails if the destination already has a secret with that key.",
+    attributesToCopy:
+      "Object specifying which attributes of the source secret to copy to the destination. Each key is optional and defaults to false. Available keys: value, comment, tags, metadata, skipMultilineEncoding."
   }
 } as const;
 
@@ -1239,9 +1456,11 @@ export const DASHBOARD = {
     orderBy: "The column to order secrets/folders by.",
     orderDirection: "The direction to order secrets/folders in.",
     search: "The text string to filter secret keys and folder names by.",
+    tags: "The tags to filter secrets by (comma separated, ie 'tags=billing,engineering').",
     includeSecrets: "Whether to include project secrets in the response.",
     includeFolders: "Whether to include project folders in the response.",
     includeDynamicSecrets: "Whether to include dynamic project secrets in the response.",
+    includeHoneyTokens: "Whether to include honey tokens in the response.",
     includeImports: "Whether to include project secret imports in the response.",
     includeSecretRotations: "Whether to include project secret rotations in the response."
   },
@@ -1259,7 +1478,8 @@ export const DASHBOARD = {
     includeFolders: "Whether to include project folders in the response.",
     includeImports: "Whether to include project secret imports in the response.",
     includeDynamicSecrets: "Whether to include dynamic project secrets in the response.",
-    includeSecretRotations: "Whether to include secret rotations in the response."
+    includeSecretRotations: "Whether to include secret rotations in the response.",
+    includeHoneyTokens: "Whether to include honey tokens in the response."
   }
 } as const;
 
@@ -1281,7 +1501,10 @@ export const AUDIT_LOGS = {
     endDate: "The date to end the export at.",
     offset: "The offset to start from. If you enter 10, it will start from the 10th audit log.",
     limit: "The number of audit logs to return.",
-    actor: "The actor to filter the audit logs by."
+    actor:
+      "The ID of a specific actor to filter audit logs by. For user actors this is the userId; for identity actors this is the identityId. When filtering non-user actor types, the actorType parameter must also be provided.",
+    actorType:
+      "The type of actor to filter audit logs by. Must be provided when the actor parameter targets a non-user actor type (e.g. identity, kmipClient)."
   }
 } as const;
 
@@ -1899,6 +2122,17 @@ export const CERTIFICATE_AUTHORITIES = {
     serialNumber: "The serial number of the CA certificate.",
     version: "The version of the CA certificate. The version is incremented for each CA renewal operation."
   },
+  GENERATE_CA_CERTIFICATE: {
+    caId: "The ID of the CA to generate a certificate for.",
+    parentCaId: "The ID of the parent CA to sign the intermediate certificate with. Not required for root CAs.",
+    notBefore: "The date and time when the CA becomes valid in YYYY-MM-DDTHH:mm:ss.sssZ format.",
+    notAfter: "The date and time when the CA expires in YYYY-MM-DDTHH:mm:ss.sssZ format.",
+    maxPathLength:
+      "The maximum number of intermediate CAs that may follow this CA in the certificate / CA chain. A maxPathLength of -1 implies no path limit on the chain.",
+    certificate: "The generated CA certificate.",
+    certificateChain: "The certificate chain of the CA.",
+    serialNumber: "The serial number of the CA certificate."
+  },
   SIGN_INTERMEDIATE: {
     caId: "The ID of the CA to sign the intermediate certificate with.",
     csr: "The pem-encoded CSR to sign with the CA.",
@@ -1957,6 +2191,27 @@ export const CERTIFICATE_AUTHORITIES = {
     caId: "The ID of the CA to get the certificate revocation lists (CRLs) for.",
     id: "The ID of certificate revocation list (CRL).",
     crl: "The certificate revocation list (CRL)."
+  },
+  INSTALL_CERT_VENAFI: {
+    caId: "The ID of the CA to install the certificate for via Venafi."
+  },
+  INSTALL_CERT_ADCS: {
+    caId: "The ID of the CA to install the certificate for via Azure AD CS."
+  },
+  CREATE_SIGNING_CONFIG: {
+    caId: "The ID of the CA to create a signing configuration for."
+  },
+  GET_SIGNING_CONFIG: {
+    caId: "The ID of the CA to get the signing configuration for."
+  },
+  UPDATE_SIGNING_CONFIG: {
+    caId: "The ID of the CA to update the signing configuration for."
+  },
+  GET_AUTO_RENEWAL: {
+    caId: "The ID of the CA to get the auto-renewal configuration for."
+  },
+  UPDATE_AUTO_RENEWAL: {
+    caId: "The ID of the CA to update the auto-renewal configuration for."
   }
 };
 
@@ -1966,7 +2221,7 @@ export const CERTIFICATES = {
     serialNumber: "The serial number of the certificate to get."
   },
   REVOKE: {
-    id: "The ID of the certificate to revoke.",
+    id: "The ID or SHA-1/SHA-256 thumbprint of the certificate to revoke. Thumbprint colons and casing are ignored.",
     serialNumber:
       "The serial number of the certificate to revoke. The revoked certificate will be added to the certificate revocation list (CRL) of the CA.",
     revocationReason: "The reason for revoking the certificate.",
@@ -1988,15 +2243,17 @@ export const CERTIFICATES = {
   IMPORT: {
     projectSlug: "Slug of the project to import the certificate into.",
     certificatePem: "The PEM-encoded leaf certificate.",
-    privateKeyPem: "The PEM-encoded private key corresponding to the certificate.",
-    chainPem: "The PEM-encoded chain of intermediate certificates.",
+    privateKeyPem: "Optional PEM-encoded private key associated with the certificate.",
+    chainPem: "Optional PEM-encoded chain of intermediate certificates.",
     friendlyName: "A friendly name for the certificate.",
     pkiCollectionId: "The ID of the PKI collection to add the certificate to.",
 
-    certificate: "The issued certificate.",
-    certificateChain: "The certificate chain of the issued certificate.",
-    privateKey: "The private key of the issued certificate.",
-    serialNumber: "The serial number of the issued certificate."
+    certificate: "The imported certificate.",
+    certificateChain:
+      "The certificate chain associated with the imported certificate. Returned only when a chain was supplied at import.",
+    privateKey:
+      "The PEM-encoded private key associated with the imported certificate. Returned only when a private key was supplied at import.",
+    serialNumber: "The serial number of the imported certificate."
   }
 };
 
@@ -2200,10 +2457,39 @@ export const PROJECT_ROLE = {
     projectId: "The ID of the project.",
     roleSlug: "The slug of the role to get details."
   },
+  GET_ROLE_BY_ID: {
+    roleId: "The ID of the role to get."
+  },
   LIST: {
     projectSlug: "The slug of the project to list the roles of.",
     projectId: "The ID of the project."
   }
+};
+
+export const ORG_ROLE = {
+  CREATE: {
+    slug: "The slug of the role.",
+    name: "The name of the role.",
+    description: "The description for the role.",
+    permissions: "The permissions assigned to the role."
+  },
+  UPDATE: {
+    roleId: "The ID of the role to update.",
+    slug: "The slug of the role.",
+    name: "The name of the role.",
+    description: "The description for the role.",
+    permissions: "The permissions assigned to the role."
+  },
+  DELETE: {
+    roleId: "The ID of the role to delete."
+  },
+  GET: {
+    roleId: "The ID of the role to get."
+  },
+  GET_ROLE_BY_SLUG: {
+    roleSlug: "The slug of the role to get details."
+  },
+  LIST: {}
 };
 
 export const KMS = {
@@ -2212,13 +2498,18 @@ export const KMS = {
     name: "The name of the key to be created. Must be slug-friendly.",
     description: "An optional description of the key.",
     encryptionAlgorithm: "The algorithm to use when performing cryptographic operations with the key.",
-    type: "The type of key to be created, either encrypt-decrypt or sign-verify, based on your intended use for the key."
+    type: "The type of key to be created, either encrypt-decrypt or sign-verify, based on your intended use for the key.",
+    isExportable:
+      "Whether the raw key material can be exported after creation. When set to false, the key can never be exported regardless of permissions. This cannot be changed after creation."
   },
   UPDATE_KEY: {
     keyId: "The ID of the key to be updated.",
     name: "The updated name of this key. Must be slug-friendly.",
     description: "The updated description of this key.",
     isDisabled: "The flag to enable or disable this key."
+  },
+  ROTATE_KEY: {
+    keyId: "The ID of the key to be rotated."
   },
   DELETE_KEY: {
     keyId: "The ID of the key to be deleted."
@@ -2255,6 +2546,14 @@ export const KMS = {
     keyId: "The ID of the key to get the public key for. The key must be for signing and verifying."
   },
 
+  GET_PRIVATE_KEY: {
+    keyId: "The ID of the key to export the private key or key material for."
+  },
+
+  BULK_EXPORT_PRIVATE_KEYS: {
+    keyIds: "An array of KMS key IDs to export. Maximum 100 keys per request."
+  },
+
   SIGN: {
     keyId: "The ID of the key to sign the data with.",
     data: "The data in string format to be signed (base64 encoded).",
@@ -2264,7 +2563,7 @@ export const KMS = {
   },
   VERIFY: {
     keyId: "The ID of the key to verify the data with.",
-    data: "The data in string format to be verified (base64 encoded). For data larger than 4096 bytes you must first create a digest of the data and then pass the digest in the data parameter.",
+    data: "The data in string format to be verified (base64 encoded). For data larger than 1MB you must first create a digest of the data and then pass the digest in the data parameter.",
     signature: "The signature to be verified (base64 encoded).",
     isDigest: "Whether the data is already digested or not."
   }
@@ -2279,14 +2578,30 @@ export const ProjectTemplates = {
     type: "The type of project template to be created.",
     description: "An optional description of the project template.",
     roles: "The roles to be created when the template is applied to a project.",
-    environments: "The environments to be created when the template is applied to a project."
+    environments: "The environments to be created when the template is applied to a project.",
+    users:
+      "The users to be automatically added to projects created from this template. Each user is identified by username and assigned one or more roles.",
+    groups:
+      "The groups to be automatically added to projects created from this template. Each group is identified by slug and assigned one or more roles.",
+    identities:
+      "The organization-owned identities to be automatically added to projects created from this template. Each identity is identified by ID and assigned one or more roles.",
+    projectManagedIdentities:
+      "The project-owned identities to be automatically created for projects created from this template. Each identity is identified by name and assigned one or more roles."
   },
   UPDATE: {
     templateId: "The ID of the project template to be updated.",
     name: "The updated name of the project template. Must be slug-friendly.",
     description: "The updated description of the project template.",
     roles: "The updated roles to be created when the template is applied to a project.",
-    environments: "The updated environments to be created when the template is applied to a project."
+    environments: "The updated environments to be created when the template is applied to a project.",
+    users:
+      "The updated users to be automatically added to projects created from this template. Each user is identified by username and assigned one or more roles.",
+    groups:
+      "The updated groups to be automatically added to projects created from this template. Each group is identified by slug and assigned one or more roles.",
+    identities:
+      "The updated organization-owned identities to be automatically added to projects created from this template. Each identity is identified by ID and assigned one or more roles.",
+    projectManagedIdentities:
+      "The updated project-owned identities to be automatically created for projects created from this template. Each identity is identified by name and assigned one or more roles."
   },
   DELETE: {
     templateId: "The ID of the project template to be deleted."
@@ -2315,7 +2630,19 @@ export const CertificateAuthorities = {
       provider: `The DNS provider for the ACME Certificate Authority.`,
       hostedZoneId: `The hosted zone ID for the ACME Certificate Authority.`,
       eabKid: `The External Account Binding (EAB) Key ID for the ACME Certificate Authority. Required if the ACME provider uses EAB.`,
-      eabHmacKey: `The External Account Binding (EAB) HMAC key for the ACME Certificate Authority. Required if the ACME provider uses EAB.`
+      eabHmacKey: `The External Account Binding (EAB) HMAC key for the ACME Certificate Authority. Required if the ACME provider uses EAB.`,
+      dnsResolver: `An optional custom DNS resolver IP address to use for verifying DNS propagation during ACME challenges. Must be a valid IP address (e.g. 8.8.8.8). When not set, the system default DNS resolver is used.`
+    },
+    AWS_PCA: {
+      appConnectionId: `The ID of the AWS App Connection to use for authenticating with AWS Private Certificate Authority (PCA). This connection must have permissions to issue, get, and revoke certificates from the specified PCA.`,
+      certificateAuthorityArn: `The ARN of the AWS Private Certificate Authority to use for issuing certificates.`,
+      region: `The AWS region where the Private Certificate Authority is located.`
+    },
+    AWS_ACM_PUBLIC_CA: {
+      appConnectionId: `The ID of the AWS App Connection to use for authenticating with AWS Certificate Manager (ACM). This connection must have permissions to request, describe, export, renew, and delete certificates.`,
+      dnsAppConnectionId: `The ID of the AWS App Connection to use for creating and managing Route 53 CNAME records required for ACM domain validation.`,
+      hostedZoneId: `The Route 53 hosted zone ID to use for ACM DNS validation CNAME records.`,
+      region: `The AWS region to use for the ACM API calls.`
     },
     INTERNAL: {
       type: "The type of CA to create.",
@@ -2331,7 +2658,11 @@ export const CertificateAuthorities = {
       maxPathLength:
         "The maximum number of intermediate CAs that may follow this CA in the certificate / CA chain. A maxPathLength of -1 implies no path limit on the chain.",
       keyAlgorithm:
-        "The type of public key algorithm and size, in bits, of the key pair for the CA; when you create an intermediate CA, you must use a key algorithm supported by the parent CA."
+        "The type of public key algorithm and size, in bits, of the key pair for the CA; when you create an intermediate CA, you must use a key algorithm supported by the parent CA.",
+      crlDistributionPointUrls:
+        "Additional CRL Distribution Point URLs (HTTP/HTTPS) embedded in every certificate issued by this CA. Up to 4 URLs; the Infisical-managed CRL endpoint is included by default unless disabled.",
+      disableManagedCrlDistributionPointUrl:
+        "When set to true, the Infisical-managed CRL endpoint URL will not be embedded in certificates issued by this CA. Only custom CRL Distribution Point URLs (if any) will be included."
     }
   }
 };
@@ -2354,8 +2685,11 @@ export const AppConnections = {
       description: `An optional description for the ${appName} Connection.`,
       credentials: `The credentials used to connect with ${appName}.`,
       method: `The method used to authenticate with ${appName}.`,
+      stsEndpoint: `An optional custom endpoint URL for the AWS STS API to use when connecting with ${appName}.`,
       isPlatformManagedCredentials: `Whether or not the ${appName} Connection credentials should be managed by Infisical. Once enabled this cannot be reversed.`,
-      projectId: `The ID of the project to create the ${appName} Connection in.`
+      projectId: `The ID of the project to create the ${appName} Connection in.`,
+      isAutoRotationEnabled: `Whether or not automatic credential rotation is enabled for the ${appName} Connection.`,
+      rotation: `The credential rotation configuration for the ${appName} Connection.`
     };
   },
   UPDATE: (app: AppConnection) => {
@@ -2366,11 +2700,17 @@ export const AppConnections = {
       description: `The updated description of the ${appName} Connection.`,
       credentials: `The credentials used to connect with ${appName}.`,
       method: `The method used to authenticate with ${appName}.`,
-      isPlatformManagedCredentials: `Whether or not the ${appName} Connection credentials should be managed by Infisical. Once enabled this cannot be reversed.`
+      stsEndpoint: `An optional custom endpoint URL for the AWS STS API to use when connecting with ${appName}.`,
+      isPlatformManagedCredentials: `Whether or not the ${appName} Connection credentials should be managed by Infisical. Once enabled this cannot be reversed.`,
+      isAutoRotationEnabled: `Whether or not automatic credential rotation is enabled for the ${appName} Connection.`,
+      rotation: `The updated credential rotation configuration for the ${appName} Connection.`
     };
   },
   DELETE: (app: AppConnection) => ({
     connectionId: `The ID of the ${APP_CONNECTION_NAME_MAP[app]} Connection to be deleted.`
+  }),
+  ROTATE_CREDENTIALS: (app: AppConnection) => ({
+    connectionId: `The ID of the ${APP_CONNECTION_NAME_MAP[app]} Connection to rotate credentials for.`
   }),
   CREDENTIALS: {
     AUTH0_CONNECTION: {
@@ -2378,6 +2718,11 @@ export const AppConnections = {
       clientId: "Your Auth0 application's Client ID.",
       clientSecret: "Your Auth0 application's Client Secret.",
       audience: "The unique identifier of the target API you want to access."
+    },
+    SALESFORCE_CONNECTION: {
+      instanceUrl: "The instance URL of the Salesforce org to connect to.",
+      consumerKey: "The Consumer Key of your Salesforce External App.",
+      consumerSecret: "The Consumer Secret of your Salesforce External App."
     },
     SQL_CONNECTION: {
       host: "The hostname of the database server.",
@@ -2394,6 +2739,20 @@ export const AppConnections = {
     },
     VERCEL: {
       apiToken: "The API token used to authenticate with Vercel."
+    },
+    ONA: {
+      personalAccessToken: "The Personal Access Token used to authenticate with Ona."
+    },
+    DIGICERT: {
+      apiKey: "The CertCentral API Key used to authenticate with DigiCert.",
+      region: "The CertCentral region the API key belongs to (us or eu)."
+    },
+    GODADDY: {
+      apiKey: "The GoDaddy API Key used to authenticate with the GoDaddy API.",
+      apiSecret: "The GoDaddy API Secret used to authenticate with the GoDaddy API."
+    },
+    TRAVISCI: {
+      apiToken: "The API token used to authenticate with Travis CI."
     },
     CAMUNDA: {
       clientId: "The client ID used to authenticate with Camunda.",
@@ -2431,7 +2790,9 @@ export const AppConnections = {
       clientSecret: "The Client Secret to use to connect with Azure Client Secrets.",
       certificateBody: "The certificate body in PEM format to use to connect with Azure Client Secrets.",
       privateKey:
-        "The private key to use to connect with Azure Client Secrets. This is never transmitted to Azure and is only used to sign the Azure client assertion with."
+        "The private key to use to connect with Azure Client Secrets. This is never transmitted to Azure and is only used to sign the Azure client assertion with.",
+      clientSecretKeyId:
+        "The Key ID of the client secret in Azure AD. Required when enabling credential rotation so the original secret can be revoked."
     },
     AZURE_DEVOPS: {
       code: "The OAuth code to use to connect with Azure DevOps.",
@@ -2453,6 +2814,13 @@ export const AppConnections = {
     },
     FLYIO: {
       accessToken: "The Access Token used to access fly.io."
+    },
+    TRIGGER_DEV: {
+      apiKey: "The Personal Access Token (tr_pat_...) used to authenticate with Trigger.dev.",
+      instanceUrl: "The URL of the Trigger.dev instance to connect to. Defaults to https://api.trigger.dev."
+    },
+    DEVIN: {
+      apiKey: "The Devin service-user API key used to authenticate against the Devin v3 API."
     },
     GITLAB: {
       instanceUrl: "The GitLab instance URL to connect with.",
@@ -2508,6 +2876,79 @@ export const AppConnections = {
       orgName: "The short name of the Chef organization to connect to.",
       userName: "The username used to access Chef.",
       privateKey: "The private key used to access Chef."
+    },
+    OCTOPUS_DEPLOY: {
+      instanceUrl: "The Octopus Deploy instance URL to connect to.",
+      apiKey: "The API key used to authenticate with Octopus Deploy."
+    },
+    QOVERY: {
+      accessToken: "The project access token used to authenticate with Qovery."
+    },
+    DATADOG: {
+      url: "The Datadog site URL to connect to (e.g., 'https://api.datadoghq.com').",
+      apiKey: "The Datadog API key used to authenticate.",
+      applicationKey: "The Datadog Application key used to authenticate."
+    },
+    SSH: {
+      host: "The hostname or IP address of the SSH server.",
+      port: "The port number of the SSH server (default: 22).",
+      username: "The username for SSH authentication.",
+      authMethod: "The authentication method to use (password or ssh-key).",
+      password: "The password for SSH authentication (required when authMethod is 'password').",
+      privateKey: "The private key in PEM format for SSH authentication (required when authMethod is 'ssh-key').",
+      passphrase: "The passphrase for the private key, if encrypted (optional, only for 'ssh-key' authMethod).",
+      blockedUsers:
+        "A comma-separated list of usernames that are blocked from being used in operations like secret rotation (e.g., 'root,admin,ubuntu')."
+    },
+    DBT: {
+      apiToken: "The API token used to authenticate with DBT.",
+      accountId: "The account ID of your DBT account.",
+      instanceUrl: "The base URL of your DBT instance."
+    },
+    SMB: {
+      host: "The hostname or IP address of the Windows server.",
+      port: "The SMB port (defaults to 445).",
+      domain: "The Windows domain name (optional).",
+      username: "The username for SMB authentication.",
+      password: "The password for SMB authentication."
+    },
+    OPEN_ROUTER: {
+      apiKey: "The OpenRouter Provisioning API key used to manage API keys."
+    },
+    ANTHROPIC: {
+      apiKey: "The Anthropic API key used to authenticate with the Anthropic API."
+    },
+    CLOUD66: {
+      accessToken: "The Personal Access Token used to authenticate with the Cloud 66 API."
+    },
+    CONVEX: {
+      accessToken: "The Convex deploy key or access token used to authenticate with the Convex API.",
+      instanceUrl: "The Convex API instance URL. Defaults to 'https://api.convex.dev' if not provided."
+    },
+    OVH: {
+      privateKey:
+        "The PEM-encoded private key issued by OVH OKMS for client certificate authentication (including the -----BEGIN/END PRIVATE KEY----- markers).",
+      certificate:
+        "The PEM-encoded public certificate issued by OVH OKMS for client certificate authentication (including the -----BEGIN/END CERTIFICATE----- markers).",
+      okmsDomain: "The OKMS base URL (e.g., 'https://ca-east-bhs.okms.ovh.net').",
+      okmsId: "The OKMS instance identifier from the OVH Control Panel, used as a path segment in all API calls."
+    },
+    SNOWFLAKE: {
+      account: "The Snowflake account identifier (e.g., xy12345.us-east-1).",
+      username: "The username (login name) used to authenticate with Snowflake.",
+      password: "The Programmatic Access Token used to authenticate with Snowflake."
+    },
+    VENAFI: {
+      apiKey: "The API key used to authenticate with Venafi TLS Protect Cloud.",
+      region: "The region of your Venafi TLS Protect Cloud instance (e.g., 'us', 'eu')."
+    },
+    VENAFI_TPP: {
+      tppUrl: "The HTTPS URL of the Venafi TPP instance (e.g., 'https://tpp.example.com'). Must use HTTPS.",
+      clientId:
+        "The OAuth client ID registered in the Venafi TPP API Integration. Used for token-based authentication.",
+      username:
+        "The username used to authenticate with Venafi TPP. Supports formats: 'DOMAIN\\\\username', 'username@domain.com', or local usernames.",
+      password: "The password used to authenticate with Venafi TPP."
     }
   }
 };
@@ -2589,6 +3030,17 @@ export const SecretSyncs = {
     RENDER: {
       autoRedeployServices:
         "Whether Infisical should automatically redeploy the configured Render service upon secret changes."
+    },
+    FLYIO: {
+      autoRedeploy: "Whether Infisical should automatically redeploy the configured Fly.io app upon secret changes."
+    },
+    TRIGGER_DEV: {
+      markAsSecret:
+        "Whether synced variables should be marked as secret (redacted) environment variables in Trigger.dev."
+    },
+    AZURE_KEY_VAULT: {
+      disableCertificateImport:
+        "Whether Infisical should skip importing certificate objects from Azure Key Vault when syncing secrets."
     }
   },
   DESTINATION_CONFIG: {
@@ -2607,6 +3059,11 @@ export const SecretSyncs = {
       owner: "The name of the GitHub account owner of the repository.",
       repo: "The name of the GitHub repository.",
       env: "The name of the GitHub environment."
+    },
+    AZURE_ENTRA_ID_SCIM: {
+      servicePrincipalId:
+        "The Object ID of the Azure Entra ID Enterprise Application service principal to sync the SCIM token to.",
+      servicePrincipalDisplayName: "The display name of the Azure Entra ID Enterprise Application service principal."
     },
     AZURE_KEY_VAULT: {
       vaultBaseUrl: "The base URL of the Azure Key Vault to sync secrets to. Example: https://example.vault.azure.net/",
@@ -2653,12 +3110,36 @@ export const SecretSyncs = {
       scope: "The Terraform Cloud scope that secrets should be synced to.",
       category: "The Terraform Cloud category that secrets should be synced to."
     },
+    ONA: {
+      projectId: "The Ona project ID to sync secrets to.",
+      projectName: "An optional display name for the Ona project."
+    },
     VERCEL: {
       app: "The ID of the Vercel app to sync secrets to.",
       appName: "The name of the Vercel app to sync secrets to.",
       env: "The ID of the Vercel environment to sync secrets to.",
       branch: "The branch to sync preview secrets to.",
-      teamId: "The ID of the Vercel team to sync secrets to."
+      teamId: "The ID of the Vercel team to sync secrets to.",
+      teamName:
+        "The name of the team to sync the secrets to. This is an optional field only intended for display purposes.",
+      targetEnvironments:
+        "An optional array of Vercel default environments (development, preview, production) to add shared environment variables to.",
+      applyToAllCustomEnvironments:
+        "Whether to apply shared environment variables to all custom environments in the team.",
+      targetProjects: "An optional array of Vercel projects to add shared environment variables to.",
+      sensitive:
+        "Whether to create Vercel environment variables as Sensitive (cannot be read back). Not allowed when targeting the Development environment."
+    },
+    QOVERY: {
+      organizationId: "The ID of the Qovery organization to sync secrets to.",
+      organizationName: "The name of the Qovery organization to sync secrets to.",
+      projectId: "The ID of the Qovery project to sync secrets to.",
+      projectName: "The name of the Qovery project to sync secrets to.",
+      environmentId:
+        "The ID of the Qovery environment to sync secrets to. When omitted, secrets are synced at the project level.",
+      environmentName: "The name of the Qovery environment to sync secrets to.",
+      variableType:
+        "Whether to sync values as Qovery environment secrets or environment variables. Environment variables expose their value; secrets do not."
     },
     LARAVEL_FORGE: {
       orgSlug: "The slug of the Laravel Forge org to sync secrets to.",
@@ -2668,6 +3149,14 @@ export const SecretSyncs = {
       siteId: "The ID of the Laravel Forge site to sync secrets to.",
       siteName: "The name of the Laravel Forge site to sync secrets to."
     },
+    OCTOPUS_DEPLOY: {
+      spaceId: "The ID of the Octopus Deploy space to sync secrets to.",
+      spaceName: "The name of the Octopus Deploy space to sync secrets to.",
+      projectId: "The ID of the Octopus Deploy project to sync secrets to.",
+      projectName: "The name of the Octopus Deploy project to sync secrets to.",
+      scope: "The Octopus Deploy scope that secrets should be synced to.",
+      scopeValues: "The Octopus Deploy scope values that secrets should be synced to."
+    },
     WINDMILL: {
       workspace: "The Windmill workspace to sync secrets to.",
       path: "The Windmill workspace path to sync secrets to."
@@ -2675,6 +3164,9 @@ export const SecretSyncs = {
     HC_VAULT: {
       mount: "The Hashicorp Vault Secrets Engine Mount to sync secrets to.",
       path: "The Hashicorp Vault path to sync secrets to."
+    },
+    OVH: {
+      path: "The path in OVH OKMS where secrets will be stored as key/value pairs."
     },
     TEAMCITY: {
       project: "The TeamCity project to sync secrets to.",
@@ -2701,6 +3193,13 @@ export const SecretSyncs = {
     },
     FLYIO: {
       appId: "The ID of the Fly.io app to sync secrets to."
+    },
+    TRIGGER_DEV: {
+      projectRef: "The reference of the Trigger.dev project to sync secrets to.",
+      environment: "The Trigger.dev environment to sync secrets to."
+    },
+    DEVIN: {
+      orgId: "The Devin organization ID to sync secrets to."
     },
     GITLAB: {
       projectId: "The GitLab Project ID to sync secrets to.",
@@ -2757,11 +3256,35 @@ export const SecretSyncs = {
       dataBagName: "The name of the Chef data bag to sync secrets to.",
       dataBagItemName: "The name of the Chef data bag item to sync secrets to."
     },
+    CLOUD66: {
+      stackId: "The unique identifier (uid) of the Cloud 66 stack to sync secrets to.",
+      stackName: "The name of the Cloud 66 stack to sync secrets to."
+    },
     NORTHFLANK: {
       projectId: "The ID of the Northflank project to sync secrets to.",
       projectName: "The name of the Northflank project to sync secrets to.",
       secretGroupId: "The ID of the Northflank secret group to sync secrets to.",
       secretGroupName: "The name of the Northflank secret group to sync secrets to."
+    },
+    CIRCLECI: {
+      orgName: "The CircleCI organization name to sync secrets to.",
+      projectId: "The CircleCI project ID to sync secrets to.",
+      projectName: "The CircleCI project name to sync secrets to."
+    },
+    EXTERNAL_INFISICAL: {
+      projectId: "The ID of the project on the external Infisical instance to sync secrets to.",
+      environment: "The environment slug on the external Infisical instance to sync secrets to.",
+      secretPath: "The secret path on the external Infisical instance to sync secrets to."
+    },
+    TRAVIS_CI: {
+      repositoryId: "The ID of the Travis CI repository to sync secrets to.",
+      repositorySlug: "The slug (owner/repo) of the Travis CI repository to sync secrets to.",
+      branch:
+        "The branch of the Travis CI repository to sync secrets to. If omitted, secrets sync to the repository-level scope."
+    },
+    SNOWFLAKE: {
+      database: "The name of the Snowflake database to sync secrets to.",
+      schema: "The name of the Snowflake schema (within the database) to sync secrets to."
     }
   }
 };
@@ -2817,12 +3340,19 @@ export const SecretRotations = {
   ROTATE: (type: SecretRotation) => ({
     rotationId: `The ID of the ${SECRET_ROTATION_NAME_MAP[type]} Rotation to rotate generated credentials for.`
   }),
+  RECONCILE: {
+    rotationId: "The ID of the SSH Password Rotation to reconcile credentials for."
+  },
+  CHECK_CREDENTIALS: (type: SecretRotation) => ({
+    rotationId: `The ID of the ${SECRET_ROTATION_NAME_MAP[type]} Rotation to check active credentials for.`
+  }),
   PARAMETERS: {
     SQL_CREDENTIALS: {
       username1:
         "The username of the first login to rotate passwords for. This user must already exists in your database.",
       username2:
-        "The username of the second login to rotate passwords for. This user must already exists in your database."
+        "The username of the second login to rotate passwords for. This user must already exists in your database.",
+      rotationStatement: "The SQL template query used for rotation."
     },
     AUTH0_CLIENT_SECRET: {
       clientId: "The client ID of the Auth0 Application to rotate the client secret for."
@@ -2837,6 +3367,28 @@ export const SecretRotations = {
       rotationMethod:
         'Whether the rotation should be performed by the LDAP "connection-principal" or the "target-principal" (defaults to \'connection-principal\').',
       password: 'The password of the provided principal if "parameters.rotationMethod" is set to "target-principal".'
+    },
+    UNIX_LINUX_LOCAL_ACCOUNT: {
+      username: "The username of the Unix/Linux user account to rotate the password for.",
+      rotationMethod:
+        'Whether the rotation should be performed using "login-as-target" (the target user\'s own credentials) or "login-as-root" (the SSH connection\'s admin credentials). Defaults to "login-as-target".',
+      password:
+        'The current password of the target user. Required if "parameters.rotationMethod" is set to "login-as-target".',
+      useSudo: "If true, uses sudo when executing the password rotation command. Defaults to false."
+    },
+    WINDOWS_LOCAL_ACCOUNT: {
+      username: "The username of the Windows user account to rotate the password for.",
+      rotationMethod:
+        'Whether the rotation should be performed using "login-as-target" (the target user\'s own credentials) or "login-as-root" (the SSH connection\'s admin credentials). Defaults to "login-as-target".',
+      password:
+        'The current password of the target user. Required if "parameters.rotationMethod" is set to "login-as-target".'
+    },
+    HP_ILO: {
+      username: "The username of the HP iLO account to rotate the password for.",
+      rotationMethod:
+        'Whether the rotation should be performed using "login-as-target" (the target user\'s own credentials) or "login-as-root" (the SSH connection\'s admin credentials). Defaults to "login-as-root".',
+      password:
+        'The current password of the target user. Required if "parameters.rotationMethod" is set to "login-as-target".'
     },
     GENERAL: {
       PASSWORD_REQUIREMENTS: {
@@ -2860,6 +3412,47 @@ export const SecretRotations = {
     },
     REDIS_CREDENTIALS: {
       permissionScope: "The ACL permission scope to assign to the issued Redis users."
+    },
+    MONGODB_CREDENTIALS: {
+      username1:
+        "The username of the first MongoDB user to rotate passwords for. This user must already exist in your database.",
+      username2:
+        "The username of the second MongoDB user to rotate passwords for. This user must already exist in your database."
+    },
+    DATABRICKS_SERVICE_PRINCIPAL_SECRET: {
+      servicePrincipalId: "The ID of the Databricks Service Principal to rotate the OAuth secret for.",
+      servicePrincipalName: "The name of the Databricks Service Principal to rotate the OAuth secret for.",
+      clientId: "The client ID of the Databricks Service Principal to rotate the OAuth secret for."
+    },
+    DATABRICKS_SERVICE_ACCOUNT_SECRET: {
+      servicePrincipalId: "The ID of the Databricks Service Principal to rotate the OAuth secret for.",
+      servicePrincipalName: "The name of the Databricks Service Principal to rotate the OAuth secret for.",
+      clientId: "The client ID of the Databricks Service Principal to rotate the OAuth secret for."
+    },
+    DBT_SERVICE_TOKEN: {
+      permissionGrants: "The permission grants to apply to the service token.",
+      tokenName: "The name of the service token to create."
+    },
+    OPEN_ROUTER_API_KEY: {
+      name: "The name for the generated OpenRouter API key.",
+      limit: "The optional spending limit in USD for the generated API key.",
+      limitReset: "The type of limit reset for the API key (daily, weekly, monthly, or null for no reset).",
+      includeByokInLimit:
+        "Whether to include BYOK (Bring Your Own Key) usage in the spending limit. When enabled, usage from your own provider keys counts toward this key's limit. See OpenRouter BYOK docs for details."
+    },
+    SUPABASE_API_KEY: {
+      projectRef: "The reference ID of the Supabase project to rotate the API key for.",
+      keyType: "The type of the API key to rotate (e.g. publishable, secret)."
+    },
+    SALESFORCE_OAUTH_CREDENTIALS: {
+      appId: "The identifier of the Salesforce External Client App to rotate the consumer secret for.",
+      appName: "The developer name of the Salesforce External Client App to rotate the consumer secret for."
+    },
+    DATADOG_APPLICATION_KEY_SECRET: {
+      serviceAccountId: "The ID of the Datadog service account to rotate the application key for."
+    },
+    CONVEX_ACCESS_KEY: {
+      namePrefix: "A prefix to use when naming the generated Convex access key."
     }
   },
   SECRETS_MAPPING: {
@@ -2883,6 +3476,18 @@ export const SecretRotations = {
       dn: "The name of the secret that the Distinguished Name (DN) or User Principal Name (UPN) of the principal will be mapped to.",
       password: "The name of the secret that the rotated password will be mapped to."
     },
+    UNIX_LINUX_LOCAL_ACCOUNT: {
+      username: "The name of the secret that the username will be mapped to.",
+      password: "The name of the secret that the rotated password will be mapped to."
+    },
+    WINDOWS_LOCAL_ACCOUNT: {
+      username: "The name of the secret that the username will be mapped to.",
+      password: "The name of the secret that the rotated password will be mapped to."
+    },
+    HP_ILO: {
+      username: "The name of the secret that the username will be mapped to.",
+      password: "The name of the secret that the rotated password will be mapped to."
+    },
     AWS_IAM_USER_SECRET: {
       accessKeyId: "The name of the secret that the access key ID will be mapped to.",
       secretAccessKey: "The name of the secret that the rotated secret access key will be mapped to."
@@ -2890,6 +3495,38 @@ export const SecretRotations = {
     OKTA_CLIENT_SECRET: {
       clientId: "The name of the secret that the client ID will be mapped to.",
       clientSecret: "The name of the secret that the rotated client secret will be mapped to."
+    },
+    MONGODB_CREDENTIALS: {
+      username: "The name of the secret that the active username will be mapped to.",
+      password: "The name of the secret that the generated password will be mapped to."
+    },
+    DATABRICKS_SERVICE_PRINCIPAL_SECRET: {
+      clientId: "The name of the secret that the client ID will be mapped to.",
+      clientSecret: "The name of the secret that the rotated OAuth client secret will be mapped to."
+    },
+    DATABRICKS_SERVICE_ACCOUNT_SECRET: {
+      clientId: "The name of the secret that the client ID will be mapped to.",
+      clientSecret: "The name of the secret that the rotated OAuth client secret will be mapped to."
+    },
+    DBT_SERVICE_TOKEN: {
+      serviceToken: "The name of the secret that the service token will be mapped to."
+    },
+    OPEN_ROUTER_API_KEY: {
+      apiKey: "The name of the secret that the rotated OpenRouter API key will be mapped to."
+    },
+    SUPABASE_API_KEY: {
+      apiKey: "The name of the secret that the rotated Supabase API key will be mapped to."
+    },
+    SALESFORCE_OAUTH_CREDENTIALS: {
+      consumerKey: "The name of the secret that the rotated Salesforce consumer key will be mapped to.",
+      consumerSecret: "The name of the secret that the rotated Salesforce consumer secret will be mapped to."
+    },
+    DATADOG_APPLICATION_KEY_SECRET: {
+      applicationKeyId: "The name of the secret that the rotated Datadog application key ID will be mapped to.",
+      applicationKey: "The name of the secret that the rotated Datadog application key value will be mapped to."
+    },
+    CONVEX_ACCESS_KEY: {
+      accessKey: "The name of the secret that the rotated Convex access key will be mapped to."
     }
   }
 };
@@ -2993,7 +3630,7 @@ export const OidcSSo = {
   UPDATE_CONFIG: {
     organizationId: "The ID of the organization to update the OIDC config for.",
     allowedEmailDomains:
-      "A list of allowed email domains that users can use to authenticate with. This field is comma separated. Example: 'example.com,acme.com'",
+      "A list of allowed email domains that users can use to authenticate with. This field is comma separated. Supports wildcards (e.g. *.example.com). Example: 'example.com, *.acme.com'",
     discoveryURL: "The URL of the OIDC discovery endpoint.",
     configurationType: "The configuration type to use for the OIDC configuration.",
     issuer:
@@ -3013,7 +3650,7 @@ export const OidcSSo = {
   CREATE_CONFIG: {
     organizationId: "The ID of the organization to create the OIDC config for.",
     allowedEmailDomains:
-      "A list of allowed email domains that users can use to authenticate with. This field is comma separated.",
+      "A list of allowed email domains that users can use to authenticate with. This field is comma separated. Supports wildcards (e.g. *.example.com).",
     discoveryURL: "The URL of the OIDC discovery endpoint.",
     configurationType: "The configuration type to use for the OIDC configuration.",
     issuer:
@@ -3079,7 +3716,11 @@ export const LdapSso = {
     groupSearchBase: "LDAP search base to use for group membership search such as `ou=Groups,dc=acme,dc=com`",
     groupSearchFilter:
       "The template used when constructing the group membership query such as `(&(objectClass=posixGroup)(memberUid={{.Username}}))`. The template can access the following context variables: `[UserDN, UserName]`. The default is `(|(memberUid={{.Username}})(member={{.UserDN}})(uniqueMember={{.UserDN}}))` which is compatible with several common directory schemas.",
-    caCert: "The CA certificate to use when verifying the LDAP server certificate."
+    caCert: "The CA certificate to use when verifying the LDAP server certificate.",
+    clientCertificate:
+      "PEM-encoded client certificate presented during the TLS handshake for mutual TLS (mTLS). Must be provided together with clientKeyCertificate.",
+    clientKeyCertificate:
+      "PEM-encoded private key matching the client certificate, used during the TLS handshake for mutual TLS (mTLS). Must be provided together with clientCertificate."
   },
   UPDATE_CONFIG: {
     organizationId: "The ID of the organization to update the LDAP config for.",
@@ -3096,7 +3737,18 @@ export const LdapSso = {
     groupSearchBase: "LDAP search base to use for group membership search such as `ou=Groups,dc=acme,dc=com`",
     groupSearchFilter:
       "The template used when constructing the group membership query such as `(&(objectClass=posixGroup)(memberUid={{.Username}}))`. The template can access the following context variables: `[UserDN, UserName]`. The default is `(|(memberUid={{.Username}})(member={{.UserDN}})(uniqueMember={{.UserDN}}))` which is compatible with several common directory schemas.",
-    caCert: "The CA certificate to use when verifying the LDAP server certificate."
+    caCert: "The CA certificate to use when verifying the LDAP server certificate.",
+    clientCertificate:
+      "PEM-encoded client certificate presented during the TLS handshake for mutual TLS (mTLS). Must be provided together with clientKeyCertificate.",
+    clientKeyCertificate:
+      "PEM-encoded private key matching the client certificate, used during the TLS handshake for mutual TLS (mTLS). Must be provided together with clientCertificate."
+  }
+};
+
+export const Scim = {
+  UPDATE_GROUP_ORG_ROLE_MAPPINGS: {
+    groupName: "The name of the group in the SCIM provider.",
+    roleSlug: "The slug of the role that group members should be assigned when provisioned."
   }
 };
 
@@ -3106,3 +3758,83 @@ export const EventSubscriptions = {
     register: "List of events you want to subscribe to"
   }
 };
+
+export const SECRET_SHARING = {
+  LIST: {
+    offset: "The offset to start listing shared secrets from. Used for pagination.",
+    limit: "The maximum number of shared secrets to return. Max is 100."
+  },
+  GET_BY_ID: {
+    id: "The ID of the shared secret to retrieve."
+  },
+  ACCESS: {
+    id: "The ID of the shared secret to access.",
+    password:
+      "The password for accessing a password-protected shared secret. Only required if the secret is password protected."
+  },
+  CREATE: {
+    name: "An optional name for the shared secret for easier identification.",
+    secretValue: "The secret value to share.",
+    expiresIn:
+      "The duration after which the shared secret will expire. Accepts formats like '30d', '24h', '1w'. Maximum is 30 days, minimum is 5 minutes.",
+    password:
+      "An optional password to protect the shared secret. Recipients will need to provide this password to access the secret.",
+    maxViews:
+      "The maximum number of times the shared secret can be viewed before it expires. If not provided, unlimited views are allowed.",
+    accessType:
+      "Determines who can access the shared secret. 'organization' restricts access to users within your organization. 'anyone' allows access to anyone with the link. Defaults to 'organization'.",
+    authorizedEmails:
+      "An optional array of email addresses to share the secret with. Maximum 100 emails. Organization members in the list get direct access. When allowExternalEmails is enabled, non-member emails are also accepted and recipients will receive the secret link via email, but must use the password to access it.",
+    allowExternalEmails:
+      "When true, allows sharing with email addresses that do not belong to Infisical. A password is required when this option is enabled. External recipients will receive the secret link via email and must enter the password to access it."
+  },
+  DELETE: {
+    id: "The ID of the shared secret to delete."
+  }
+} as const;
+
+export const GATEWAYS = {
+  CREATE: {
+    name: "Name of the gateway.",
+    authMethod:
+      "Auth method to configure on the gateway. `aws` carries the AWS allowlists; `token` is configurationless and requires a separate POST /v3/gateways/:id/token call to mint the bootstrap token."
+  },
+  UPDATE: {
+    authMethod:
+      "Replacement auth method. Same shape as in create — `aws` with allowlists or `token` with no config. Existing gateways keep working until they restart and re-authenticate via the new method."
+  },
+  AUTH_METHOD: {
+    stsEndpoint: "The endpoint URL for the AWS STS API.",
+    allowedPrincipalArns:
+      "The comma-separated list of trusted IAM principal ARNs that are allowed to authenticate with Infisical.",
+    allowedAccountIds:
+      "The comma-separated list of trusted AWS account IDs that are allowed to authenticate with Infisical."
+  },
+  LOGIN: {
+    gatewayId: "The ID of the gateway logging in (AWS method only).",
+    iamHttpRequestMethod: "The HTTP request method used in the signed STS request.",
+    iamRequestBody: "The base64-encoded body of the signed STS request.",
+    iamRequestHeaders: "The base64-encoded headers of the sts:GetCallerIdentity signed request.",
+    token: "The one-time enrollment token previously issued for this gateway (token method only)."
+  }
+} as const;
+
+export const RELAYS = {
+  CREATE: {
+    name: "Name of the relay.",
+    host: "Host address where the relay is reachable.",
+    authMethod:
+      "Auth method to configure on the relay. `aws` carries the AWS allowlists; `token` is configurationless and requires a separate POST /v2/relays/:id/token-auth/generate-enrollment-token call to mint the bootstrap token."
+  },
+  UPDATE: {
+    authMethod:
+      "Replacement auth method. Same shape as in create — `aws` with allowlists or `token` with no config. Existing relays keep working until they restart and re-authenticate via the new method."
+  },
+  LOGIN: {
+    relayId: "The ID of the relay logging in (AWS method only).",
+    iamHttpRequestMethod: "The HTTP request method used in the signed STS request.",
+    iamRequestBody: "The base64-encoded body of the signed STS request.",
+    iamRequestHeaders: "The base64-encoded headers of the sts:GetCallerIdentity signed request.",
+    token: "The one-time enrollment token previously issued for this relay (token method only)."
+  }
+} as const;

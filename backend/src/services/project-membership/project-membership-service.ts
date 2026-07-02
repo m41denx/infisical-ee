@@ -1,5 +1,6 @@
 /* eslint-disable no-await-in-loop */
 import { ForbiddenError } from "@casl/ability";
+import { Knex } from "knex";
 
 import { AccessScope, ActionProjectType, ProjectMembershipRole, ProjectVersion, TableName } from "@app/db/schemas";
 import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
@@ -8,15 +9,23 @@ import { ProjectPermissionMemberActions, ProjectPermissionSub } from "@app/ee/se
 import { getConfig } from "@app/lib/config/env";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { groupBy } from "@app/lib/fn";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 
+import { TAccessApprovalPolicyApproverDALFactory } from "../../ee/services/access-approval-policy/access-approval-policy-approver-dal";
+import { TAccessApprovalPolicyDALFactory } from "../../ee/services/access-approval-policy/access-approval-policy-dal";
 import { TUserGroupMembershipDALFactory } from "../../ee/services/group/user-group-membership-dal";
+import { TSecretApprovalPolicyApproverDALFactory } from "../../ee/services/secret-approval-policy/secret-approval-policy-approver-dal";
+import { TSecretApprovalPolicyDALFactory } from "../../ee/services/secret-approval-policy/secret-approval-policy-dal";
 import { TAdditionalPrivilegeDALFactory } from "../additional-privilege/additional-privilege-dal";
 import { ActorType } from "../auth/auth-type";
 import { TGroupProjectDALFactory } from "../group-project/group-project-dal";
+import { TApplicationMembershipCleanupServiceFactory } from "../membership/application-membership-cleanup-service";
 import { TMembershipRoleDALFactory } from "../membership/membership-role-dal";
 import { TMembershipUserDALFactory } from "../membership-user/membership-user-dal";
 import { TNotificationServiceFactory } from "../notification/notification-service";
 import { NotificationType } from "../notification/notification-types";
+import { ApplicationMemberKind } from "../pki-application/pki-application-types";
 import { TProjectDALFactory } from "../project/project-dal";
 import { TProjectKeyDALFactory } from "../project-key/project-key-dal";
 import { TSecretReminderRecipientsDALFactory } from "../secret-reminder-recipients/secret-reminder-recipients-dal";
@@ -32,10 +41,7 @@ import {
 } from "./project-membership-types";
 
 type TProjectMembershipServiceFactoryDep = {
-  permissionService: Pick<
-    TPermissionServiceFactory,
-    "getProjectPermission" | "getProjectPermissionByRoles" | "invalidateProjectPermissionCache"
-  >;
+  permissionService: Pick<TPermissionServiceFactory, "getProjectPermission" | "getProjectPermissionByRoles">;
   smtpService: TSmtpService;
   projectMembershipDAL: TProjectMembershipDALFactory;
   membershipUserDAL: TMembershipUserDALFactory;
@@ -46,9 +52,17 @@ type TProjectMembershipServiceFactoryDep = {
   projectKeyDAL: Pick<TProjectKeyDALFactory, "findLatestProjectKey" | "delete" | "insertMany">;
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
   additionalPrivilegeDAL: Pick<TAdditionalPrivilegeDALFactory, "delete">;
+  accessApprovalPolicyApproverDAL: Pick<TAccessApprovalPolicyApproverDALFactory, "find">;
+  accessApprovalPolicyDAL: Pick<TAccessApprovalPolicyDALFactory, "find">;
+  secretApprovalPolicyApproverDAL: Pick<TSecretApprovalPolicyApproverDALFactory, "find">;
+  secretApprovalPolicyDAL: Pick<TSecretApprovalPolicyDALFactory, "find">;
   secretReminderRecipientsDAL: Pick<TSecretReminderRecipientsDALFactory, "delete">;
   groupProjectDAL: TGroupProjectDALFactory;
   notificationService: Pick<TNotificationServiceFactory, "createUserNotifications">;
+  applicationMembershipCleanupService: Pick<
+    TApplicationMembershipCleanupServiceFactory,
+    "cleanupActorApplicationMemberships" | "cleanupUsersApplicationMemberships"
+  >;
 };
 
 export type TProjectMembershipServiceFactory = ReturnType<typeof projectMembershipServiceFactory>;
@@ -64,10 +78,57 @@ export const projectMembershipServiceFactory = ({
   secretReminderRecipientsDAL,
   notificationService,
   additionalPrivilegeDAL,
+  accessApprovalPolicyApproverDAL,
+  accessApprovalPolicyDAL,
+  secretApprovalPolicyApproverDAL,
+  secretApprovalPolicyDAL,
   membershipUserDAL,
   userDAL,
-  membershipRoleDAL
+  membershipRoleDAL,
+  applicationMembershipCleanupService
 }: TProjectMembershipServiceFactoryDep) => {
+  const checkUserApproverPolicies = async (
+    userIds: string[],
+    projectId: string,
+    actionLabel = "Cannot remove user from project"
+  ) => {
+    const accessApprovers = await accessApprovalPolicyApproverDAL.find({
+      $in: { approverUserId: userIds }
+    });
+    if (accessApprovers.length > 0) {
+      const policyIds = [...new Set(accessApprovers.map((a) => a.policyId))];
+      const policies = await accessApprovalPolicyDAL.find({
+        $in: { [`${TableName.AccessApprovalPolicy}.id` as "id"]: policyIds },
+        projectId,
+        deletedAt: null
+      });
+      if (policies.length > 0) {
+        const policyNames = policies.map((p) => p.name).join(", ");
+        throw new BadRequestError({
+          message: `${actionLabel}: user is an approver in access approval ${policies.length > 1 ? "policies" : "policy"}: ${policyNames}`
+        });
+      }
+    }
+
+    const secretApprovers = await secretApprovalPolicyApproverDAL.find({
+      $in: { approverUserId: userIds }
+    });
+    if (secretApprovers.length > 0) {
+      const policyIds = [...new Set(secretApprovers.map((a) => a.policyId))];
+      const policies = await secretApprovalPolicyDAL.find({
+        $in: { [`${TableName.SecretApprovalPolicy}.id` as "id"]: policyIds },
+        projectId,
+        deletedAt: null
+      });
+      if (policies.length > 0) {
+        const policyNames = policies.map((p) => p.name).join(", ");
+        throw new BadRequestError({
+          message: `${actionLabel}: user is an approver in secret approval ${policies.length > 1 ? "policies" : "policy"}: ${policyNames}`
+        });
+      }
+    }
+  };
+
   const getProjectMemberships = async ({
     actorId,
     actor,
@@ -144,9 +205,6 @@ export const projectMembershipServiceFactory = ({
     members,
     sendEmails = true
   }: TAddUsersToWorkspaceDTO) => {
-    const project = await projectDAL.findById(projectId);
-    if (!project) throw new NotFoundError({ message: `Project with ID '${projectId}' not found` });
-
     const { permission } = await permissionService.getProjectPermission({
       actor,
       actorId,
@@ -156,8 +214,11 @@ export const projectMembershipServiceFactory = ({
       actionProjectType: ActionProjectType.Any
     });
     ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionMemberActions.Create, ProjectPermissionSub.Member);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(projectId), () =>
+      projectDAL.findById(projectId)
+    );
     const orgMembers = await membershipUserDAL.find({
-      [`${TableName.Membership}.scopeOrgId` as "scopeOrgId"]: project.orgId,
+      [`${TableName.Membership}.scopeOrgId` as "scopeOrgId"]: actorOrgId,
       scope: AccessScope.Organization,
       $in: {
         [`${TableName.Membership}.id` as "id"]: members.map(({ orgMembershipId }) => orgMembershipId)
@@ -191,7 +252,7 @@ export const projectMembershipServiceFactory = ({
           scopeProjectId: projectId,
           actorUserId,
           scope: AccessScope.Project,
-          scopeOrgId: project.orgId
+          scopeOrgId: actorOrgId
         })),
         tx
       );
@@ -214,13 +275,11 @@ export const projectMembershipServiceFactory = ({
       );
     });
 
-    await permissionService.invalidateProjectPermissionCache(projectId);
-
     if (sendEmails) {
       await notificationService.createUserNotifications(
         orgMembershipUsernames.map((member) => ({
           userId: member.id,
-          orgId: project.orgId,
+          orgId: actorOrgId,
           type: NotificationType.PROJECT_INVITATION,
           title: "Project Invitation",
           body: `You've been invited to join the project **${project.name}**.`
@@ -241,15 +300,10 @@ export const projectMembershipServiceFactory = ({
     return orgMembers;
   };
 
-  const deleteProjectMemberships = async ({
-    actorId,
-    actor,
-    actorOrgId,
-    actorAuthMethod,
-    projectId,
-    emails,
-    usernames
-  }: TDeleteProjectMembershipsDTO) => {
+  const deleteProjectMemberships = async (
+    { actorId, actor, actorOrgId, actorAuthMethod, projectId, emails, usernames }: TDeleteProjectMembershipsDTO,
+    externalTx?: Knex
+  ) => {
     const { permission } = await permissionService.getProjectPermission({
       actor,
       actorId,
@@ -259,14 +313,6 @@ export const projectMembershipServiceFactory = ({
       actionProjectType: ActionProjectType.Any
     });
     ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionMemberActions.Delete, ProjectPermissionSub.Member);
-
-    const project = await projectDAL.findById(projectId);
-
-    if (!project) {
-      throw new NotFoundError({
-        message: `Project with ID '${projectId}' not found`
-      });
-    }
 
     const usernamesAndEmails = [...emails, ...usernames];
 
@@ -288,11 +334,16 @@ export const projectMembershipServiceFactory = ({
       });
     }
 
+    await checkUserApproverPolicies(
+      projectMembers.map((m) => m.user.id),
+      projectId
+    );
+
     const userIdsToExcludeFromProjectKeyRemoval = new Set(
       await userGroupMembershipDAL.findUserGroupMembershipsInProject(usernamesAndEmails, projectId)
     );
 
-    const memberships = await membershipUserDAL.transaction(async (tx) => {
+    const performDelete = async (tx: Knex) => {
       await additionalPrivilegeDAL.delete(
         {
           projectId,
@@ -310,6 +361,14 @@ export const projectMembershipServiceFactory = ({
           $in: {
             id: projectMembers.map(({ id }) => id)
           }
+        },
+        tx
+      );
+
+      await applicationMembershipCleanupService.cleanupUsersApplicationMemberships(
+        {
+          projectId,
+          userIds: projectMembers.map(({ user }) => user.id)
         },
         tx
       );
@@ -339,9 +398,11 @@ export const projectMembershipServiceFactory = ({
       );
 
       return deletedMemberships;
-    });
+    };
 
-    await permissionService.invalidateProjectPermissionCache(projectId);
+    const memberships = externalTx
+      ? await performDelete(externalTx)
+      : await membershipUserDAL.transaction(performDelete);
 
     return memberships;
   };
@@ -351,7 +412,9 @@ export const projectMembershipServiceFactory = ({
       throw new BadRequestError({ message: "Only users can leave projects" });
     }
 
-    const project = await projectDAL.findById(projectId);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(projectId), () =>
+      projectDAL.findById(projectId)
+    );
     if (!project) throw new NotFoundError({ message: `Project with ID '${projectId}' not found` });
 
     if (project.version === ProjectVersion.V1) {
@@ -366,18 +429,16 @@ export const projectMembershipServiceFactory = ({
       throw new NotFoundError({ message: `Project members not found for project with ID '${projectId}'` });
     }
 
-    if (projectMembers.length < 2) {
-      throw new BadRequestError({ message: "You cannot leave the project as you are the only member" });
+    const actorMembership = projectMembers.find((member) => member.userId === actorId);
+    if (!actorMembership) {
+      throw new BadRequestError({ message: "You are not a member of this project" });
     }
 
-    const adminMembers = projectMembers.filter(
-      (member) => member.roles.map((r) => r.role).includes("admin") && member.userId !== actorId
+    await checkUserApproverPolicies(
+      [actorId],
+      project.id,
+      "Cannot leave project. Please ask a project admin to remove you from the following policies first"
     );
-    if (!adminMembers.length) {
-      throw new BadRequestError({
-        message: "You cannot leave the project as you are the only admin. Promote another user to admin before leaving."
-      });
-    }
 
     const deletedMembership = await membershipUserDAL.transaction(async (tx) => {
       await additionalPrivilegeDAL.delete(
@@ -406,6 +467,16 @@ export const projectMembershipServiceFactory = ({
           tx
         )
       )?.[0];
+
+      await applicationMembershipCleanupService.cleanupActorApplicationMemberships(
+        {
+          projectId: project.id,
+          actorKind: ApplicationMemberKind.User,
+          actorId
+        },
+        tx
+      );
+
       return membership;
     });
 

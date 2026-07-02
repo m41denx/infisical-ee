@@ -1,13 +1,31 @@
-import { faKey } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { TriangleAlertIcon } from "lucide-react";
 
-export const SecretRequestErrorContainer = () => {
+import { Alert, AlertTitle } from "@app/components/v3";
+
+import { BrandingTheme } from "../../ViewSharedSecretByIDPage/ViewSharedSecretByIDPage";
+
+type Props = {
+  brandingTheme?: BrandingTheme;
+  error?: string;
+};
+
+export const SecretRequestErrorContainer = ({ error, brandingTheme }: Props) => {
+  const panelStyle = brandingTheme
+    ? {
+        backgroundColor: brandingTheme.panelBg,
+        borderColor: brandingTheme.panelBorder,
+        color: brandingTheme.textColor
+      }
+    : undefined;
+
   return (
-    <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-800 p-8">
-      <div className="text-center">
-        <FontAwesomeIcon icon={faKey} size="2x" />
-        <p className="mt-4">The secret request you are looking for is missing or has expired.</p>
-      </div>
-    </div>
+    <Alert variant={brandingTheme ? "default" : "danger"} style={panelStyle}>
+      <TriangleAlertIcon
+        style={brandingTheme ? { color: brandingTheme.textMutedColor } : undefined}
+      />
+      <AlertTitle style={brandingTheme ? { color: brandingTheme.textColor } : undefined}>
+        {error || "The secret request you are looking for is missing or has expired."}
+      </AlertTitle>
+    </Alert>
   );
 };

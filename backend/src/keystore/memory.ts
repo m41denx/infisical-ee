@@ -8,6 +8,8 @@ import { TKeyStoreFactory } from "./keystore";
 
 export const inMemoryKeyStore = (): TKeyStoreFactory => {
   const store: Record<string, string | number | Buffer> = {};
+  const listStore: Record<string, string[]> = {};
+  const hashStore: Record<string, Record<string, string>> = {};
   const getRegex = (pattern: string) =>
     new RE2(`^${pattern.replace(/[-[\]/{}()+?.\\^$|]/g, "\\$&").replace(/\*/g, ".*")}$`);
 
@@ -17,12 +19,19 @@ export const inMemoryKeyStore = (): TKeyStoreFactory => {
       return "OK";
     },
     setExpiry: async () => 0,
+    ttl: async () => -1,
     setItemWithExpiry: async (key, value) => {
+      store[key] = value;
+      return "OK";
+    },
+    setItemWithExpiryNX: async (key, _expiryInSeconds, value) => {
+      if (store[key] !== undefined) return null;
       store[key] = value;
       return "OK";
     },
     deleteItem: async (key) => {
       delete store[key];
+      delete hashStore[key];
       return 1;
     },
     deleteItems: async ({ pattern, batchSize = 500, delay = 1500, jitter = 200 }) => {
@@ -59,11 +68,34 @@ export const inMemoryKeyStore = (): TKeyStoreFactory => {
         return Number(value);
       }
     },
+    hashSet: async (key, field, value) => {
+      if (!hashStore[key]) hashStore[key] = {};
+      hashStore[key][field] = value;
+      return 1;
+    },
+    hashGet: async (key, field) => {
+      return hashStore[key]?.[field] ?? null;
+    },
     pgIncrementBy: async () => {
       return 1;
     },
-    incrementBy: async () => {
+    incrementBy: async (key, value) => {
+      const current = typeof store[key] === "string" ? parseInt(store[key] as string, 10) : 0;
+      const next = current + value;
+      store[key] = String(next);
+      return next;
+    },
+    incrementByAndRefreshExpiryIfUnderLimit: async () => {
       return 1;
+    },
+    decrementByOrDelete: async () => {
+      return 0;
+    },
+    incrementByWithExpiry: async (key, value) => {
+      const current = typeof store[key] === "string" ? parseInt(store[key] as string, 10) : 0;
+      const next = current + value;
+      store[key] = String(next);
+      return next;
     },
     acquireLock: () => {
       return Promise.resolve({
@@ -91,6 +123,30 @@ export const inMemoryKeyStore = (): TKeyStoreFactory => {
         return null;
       });
       return values;
-    }
+    },
+    listPush: async (key, value) => {
+      if (!listStore[key]) listStore[key] = [];
+      listStore[key].push(value);
+      return listStore[key].length;
+    },
+    listRange: async (key, start, stop) => {
+      if (!listStore[key]) return [];
+      const list = listStore[key];
+      const end = stop === -1 ? list.length : stop + 1;
+      return list.slice(start, end);
+    },
+    listRemove: async (key, _count, value) => {
+      if (!listStore[key]) return 0;
+      const originalLength = listStore[key].length;
+      listStore[key] = listStore[key].filter((v) => v !== value);
+      return originalLength - listStore[key].length;
+    },
+    listLength: async (key) => {
+      return listStore[key]?.length ?? 0;
+    },
+    streamAdd: async () => null,
+    streamRange: async () => [],
+    streamTrim: async () => 0,
+    streamCollect: async () => ({ entries: [], lastId: null })
   };
 };

@@ -1,16 +1,19 @@
+import ldapjs from "@infisical/ldapjs";
 import handlebars from "handlebars";
-import ldapjs from "ldapjs";
 import ldif from "ldif";
 import { customAlphabet } from "nanoid";
 import RE2 from "re2";
 import { z } from "zod";
 
+import { TDynamicSecrets } from "@app/db/schemas";
 import { BadRequestError } from "@app/lib/errors";
 import { sanitizeString } from "@app/lib/fn";
-import { alphaNumericNanoId } from "@app/lib/nanoid";
+import { validateHandlebarTemplate } from "@app/lib/template/validate-handlebars";
 
+import { ActorIdentityAttributes } from "../../dynamic-secret-lease/dynamic-secret-lease-types";
+import { verifyHostInputValidity } from "../dynamic-secret-fns";
 import { LdapCredentialType, LdapSchema, TDynamicProviderFns } from "./models";
-import { compileUsernameTemplate } from "./templateUtils";
+import { generateUsername } from "./templateUtils";
 
 const generatePassword = () => {
   const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~!*$#";
@@ -22,16 +25,6 @@ const encodePassword = (password?: string) => {
   const utf16lePassword = Buffer.from(quotedPassword, "utf16le");
   const base64Password = utf16lePassword.toString("base64");
   return base64Password;
-};
-
-const generateUsername = (usernameTemplate?: string | null, identity?: { name: string }) => {
-  const randomUsername = alphaNumericNanoId(32); // Username must start with an ascii letter, so we prepend the username with "inf-"
-  if (!usernameTemplate) return randomUsername;
-  return compileUsernameTemplate({
-    usernameTemplate,
-    randomUsername,
-    identity
-  });
 };
 
 const generateLDIF = ({
@@ -58,17 +51,51 @@ const generateLDIF = ({
 export const LdapProvider = (): TDynamicProviderFns => {
   const validateProviderInputs = async (inputs: unknown) => {
     const providerInputs = await LdapSchema.parseAsync(inputs);
+
+    if (providerInputs.credentialType === LdapCredentialType.Static) {
+      validateHandlebarTemplate("LDAP rotation", providerInputs.rotationLdif, {
+        allowedExpressions: (val) => ["Username", "Password", "EncodedPassword"].includes(val)
+      });
+    } else {
+      validateHandlebarTemplate("LDAP creation", providerInputs.creationLdif, {
+        allowedExpressions: (val) => ["Username", "Password", "EncodedPassword"].includes(val)
+      });
+      validateHandlebarTemplate("LDAP revocation", providerInputs.revocationLdif, {
+        allowedExpressions: (val) => ["Username"].includes(val)
+      });
+      if (providerInputs.rollbackLdif) {
+        validateHandlebarTemplate("LDAP rollback", providerInputs.rollbackLdif, {
+          allowedExpressions: (val) => ["Username", "Password", "EncodedPassword"].includes(val)
+        });
+      }
+    }
+
     return providerInputs;
   };
 
   const $getClient = async (providerInputs: z.infer<typeof LdapSchema>): Promise<ldapjs.Client> => {
+    let ldapHost: string;
+    try {
+      ldapHost = new URL(providerInputs.url).hostname;
+    } catch {
+      throw new BadRequestError({
+        message: "Invalid LDAP URL. Expected ldap:// or ldaps:// with a parseable host."
+      });
+    }
+    if (!ldapHost) {
+      throw new BadRequestError({ message: "Invalid LDAP URL. Missing host." });
+    }
+    await verifyHostInputValidity({ host: ldapHost, isDynamicSecret: true });
+
     return new Promise((resolve, reject) => {
       const client = ldapjs.createClient({
         url: providerInputs.url,
-        tlsOptions: {
-          ca: providerInputs.ca ? providerInputs.ca : null,
-          rejectUnauthorized: !!providerInputs.ca
-        },
+        tlsOptions: providerInputs.ca
+          ? {
+              ca: providerInputs.ca ? providerInputs.ca : null,
+              rejectUnauthorized: providerInputs.sslRejectUnauthorized
+            }
+          : undefined,
         reconnect: true,
         bindDN: providerInputs.binddn,
         bindCredentials: providerInputs.bindpass
@@ -112,7 +139,7 @@ export const LdapProvider = (): TDynamicProviderFns => {
       type: string;
 
       changes: {
-        operation?: string;
+        type?: string;
         attribute: {
           attribute: string;
         };
@@ -168,7 +195,7 @@ export const LdapProvider = (): TDynamicProviderFns => {
         entry.changes.forEach((change) => {
           changes.push(
             new ldapjs.Change({
-              operation: change.operation || "replace",
+              operation: change.type || "replace",
               modification: {
                 type: change.attribute.attribute,
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-return
@@ -208,8 +235,13 @@ export const LdapProvider = (): TDynamicProviderFns => {
     return dnArray;
   };
 
-  const create = async (data: { inputs: unknown; usernameTemplate?: string | null; identity?: { name: string } }) => {
-    const { inputs, usernameTemplate, identity } = data;
+  const create = async (data: {
+    inputs: unknown;
+    usernameTemplate?: string | null;
+    identity: ActorIdentityAttributes;
+    dynamicSecret: TDynamicSecrets;
+  }) => {
+    const { inputs, usernameTemplate, identity, dynamicSecret } = data;
     const providerInputs = await validateProviderInputs(inputs);
     const client = await $getClient(providerInputs);
 
@@ -240,7 +272,11 @@ export const LdapProvider = (): TDynamicProviderFns => {
         });
       }
     } else {
-      const username = generateUsername(usernameTemplate, identity);
+      const username = await generateUsername(usernameTemplate, {
+        decryptedDynamicSecretInputs: inputs,
+        identity,
+        dynamicSecret
+      });
       const password = generatePassword();
       const generatedLdif = generateLDIF({ username, password, ldifTemplate: providerInputs.creationLdif });
 

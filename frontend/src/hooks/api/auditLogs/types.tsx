@@ -4,6 +4,13 @@ import { PkiItemType } from "../pkiCollections/constants";
 import { WorkflowIntegration } from "../workflowIntegrations/types";
 import { ActorType, EventType, UserAgentType } from "./enums";
 
+export type AuditLogPostgresStorageStatus = {
+  clickHouseConfigured: boolean;
+  auditLogGenerationDisabled: boolean;
+  auditLogStorageDisabled: boolean;
+  auditLogRowCount: number;
+};
+
 export type TGetAuditLogsFilter = {
   eventType?: EventType[];
   userAgentType?: UserAgentType;
@@ -38,6 +45,16 @@ interface KmipClientActorMetadata {
   name: string;
 }
 
+interface AcmeAccountActorMetadata {
+  profileId: string;
+  accountId: string;
+}
+interface AcmeProfileActorMetadata {
+  profileId: string;
+}
+interface EstAccountActorMetadata {
+  profileId: string;
+}
 interface UserActor {
   type: ActorType.USER;
   metadata: UserActorMetadata;
@@ -67,13 +84,31 @@ export interface UnknownUserActor {
   type: ActorType.UNKNOWN_USER;
 }
 
+export interface AcmeProfileActor {
+  type: ActorType.ACME_PROFILE;
+  metadata: AcmeProfileActorMetadata;
+}
+
+export interface AcmeAccountActor {
+  type: ActorType.ACME_ACCOUNT;
+  metadata: AcmeAccountActorMetadata;
+}
+
+export interface EstAccountActor {
+  type: ActorType.EST_ACCOUNT;
+  metadata: EstAccountActorMetadata;
+}
+
 export type Actor =
   | UserActor
   | ServiceActor
   | IdentityActor
   | PlatformActor
   | UnknownUserActor
-  | KmipClientActor;
+  | KmipClientActor
+  | AcmeProfileActor
+  | AcmeAccountActor
+  | EstAccountActor;
 
 interface GetSecretsEvent {
   type: EventType.GET_SECRETS;
@@ -381,6 +416,21 @@ interface RemoveWorkspaceMemberEvent {
   metadata: {
     userId: string;
     email: string;
+  };
+}
+
+interface GetProjectMemberPermissionAuditEvent {
+  type: EventType.GET_PROJECT_MEMBER_PERMISSION_AUDIT;
+  metadata: {
+    targetUserId: string;
+    membershipId: string;
+  };
+}
+
+interface GetProjectIdentityPermissionAuditEvent {
+  type: EventType.GET_PROJECT_IDENTITY_PERMISSION_AUDIT;
+  metadata: {
+    targetIdentityId: string;
   };
 }
 
@@ -889,6 +939,22 @@ interface ClearIdentityLdapAuthLockoutsEvent {
   };
 }
 
+interface PamAccessPolicyBypassedEvent {
+  type: EventType.PAM_ACCESS_POLICY_BYPASSED;
+  metadata: {
+    policyType: string;
+    policyId: string | null;
+    requestId: string;
+    grantId: string;
+    granteeUserId: string;
+    resourceName?: string;
+    accountName?: string;
+    accessDuration: string;
+    bypassReason: string;
+    approverCount: number;
+  };
+}
+
 export type Event =
   | GetSecretsEvent
   | GetSecretEvent
@@ -922,6 +988,8 @@ export type Event =
   | DeleteEnvironmentEvent
   | AddWorkspaceMemberEvent
   | RemoveWorkspaceMemberEvent
+  | GetProjectMemberPermissionAuditEvent
+  | GetProjectIdentityPermissionAuditEvent
   | CreateFolderEvent
   | UpdateFolderEvent
   | DeleteFolderEvent
@@ -975,7 +1043,8 @@ export type Event =
   | UpdateProjectWorkflowIntegrationConfig
   | GetProjectWorkflowIntegrationConfig
   | IntegrationSyncedEvent
-  | ClearIdentityLdapAuthLockoutsEvent;
+  | ClearIdentityLdapAuthLockoutsEvent
+  | PamAccessPolicyBypassedEvent;
 
 export type AuditLog = {
   id: string;

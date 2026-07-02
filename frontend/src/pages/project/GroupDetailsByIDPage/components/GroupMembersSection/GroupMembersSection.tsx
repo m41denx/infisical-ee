@@ -1,3 +1,4 @@
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@app/components/v3";
 import { TGroupMembership } from "@app/hooks/api/groups/types";
 
 import { GroupMembersTable } from "./GroupMembersTable";
@@ -8,13 +9,14 @@ type Props = {
 
 export const GroupMembersSection = ({ groupMembership }: Props) => {
   return (
-    <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-      <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-medium text-mineshaft-100">Group Members</h3>
-      </div>
-      <div className="py-4">
+    <Card className="flex-1">
+      <CardHeader>
+        <CardTitle>Group Members</CardTitle>
+        <CardDescription>View members of this group</CardDescription>
+      </CardHeader>
+      <CardContent>
         <GroupMembersTable groupMembership={groupMembership} />
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 };

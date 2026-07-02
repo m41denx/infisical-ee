@@ -13,14 +13,18 @@ import {
 } from "@app/ee/services/external-kms/providers/model";
 import { THsmServiceFactory } from "@app/ee/services/hsm/hsm-service";
 import { THsmStatus } from "@app/ee/services/hsm/hsm-types";
-import { KeyStorePrefixes, PgSqlLock, TKeyStoreFactory } from "@app/keystore/keystore";
+import { PgSqlLock } from "@app/keystore/keystore";
 import { TEnvConfig } from "@app/lib/config/env";
+import { generateSecretValueBlindIndexFromKmsKey } from "@app/lib/crypto/blind-index";
 import { symmetricCipherService, SymmetricKeyAlgorithm } from "@app/lib/crypto/cipher";
 import { crypto } from "@app/lib/crypto/cryptography";
-import { AsymmetricKeyAlgorithm, signingService } from "@app/lib/crypto/sign";
+import { detectPqcVariantFromDer } from "@app/lib/crypto/pqc/pqc-crypto";
+import { AsymmetricKeyAlgorithm, isPqcKeyAlgorithm, KMS_TO_OPENSSL_NAME, signingService } from "@app/lib/crypto/sign";
 import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 import { alphaNumericNanoId } from "@app/lib/nanoid";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import {
   getByteLengthForSymmetricEncryptionAlgorithm,
   KMS_ROOT_CONFIG_UUID,
@@ -30,6 +34,7 @@ import {
 import { TOrgDALFactory } from "../org/org-dal";
 import { TProjectDALFactory } from "../project/project-dal";
 import { TInternalKmsDALFactory } from "./internal-kms-dal";
+import { TInternalKmsKeyVersionDALFactory } from "./internal-kms-key-version-dal";
 import { TKmsKeyDALFactory } from "./kms-key-dal";
 import { TKmsRootConfigDALFactory } from "./kms-root-config-dal";
 import {
@@ -43,6 +48,7 @@ import {
   TEncryptWithKmsDataKeyDTO,
   TEncryptWithKmsDTO,
   TGenerateKMSDTO,
+  TGetBulkKeyMaterialDTO,
   TGetKeyMaterialDTO,
   TGetPublicKeyDTO,
   TImportKeyMaterialDTO,
@@ -56,8 +62,8 @@ type TKmsServiceFactoryDep = {
   projectDAL: Pick<TProjectDALFactory, "findById" | "updateById" | "transaction">;
   orgDAL: Pick<TOrgDALFactory, "findById" | "updateById" | "transaction">;
   kmsRootConfigDAL: Pick<TKmsRootConfigDALFactory, "findById" | "create" | "updateById" | "transaction">;
-  keyStore: Pick<TKeyStoreFactory, "acquireLock" | "waitTillReady" | "setItemWithExpiry">;
-  internalKmsDAL: Pick<TInternalKmsDALFactory, "create">;
+  internalKmsDAL: Pick<TInternalKmsDALFactory, "create" | "findByKmsKeyIdForUpdate" | "updateById">;
+  internalKmsKeyVersionDAL: Pick<TInternalKmsKeyVersionDALFactory, "create" | "find">;
   hsmService: THsmServiceFactory;
   envConfig: Pick<TEnvConfig, "ENCRYPTION_KEY" | "ROOT_ENCRYPTION_KEY">;
 };
@@ -67,19 +73,43 @@ export type TKmsServiceFactory = ReturnType<typeof kmsServiceFactory>;
 // akhilmhdh: Don't edit this value. This is measured for blob concatination in kms
 const KMS_VERSION = "v01";
 const KMS_VERSION_BLOB_LENGTH = 3;
+// v02 blobs additionally embed the key material version that encrypted them: [ciphertext][4-byte BE version]["v02"]
+// Written only for keys with version > 1 so never-rotated keys keep producing byte-identical v01 blobs.
+const KMS_VERSION_V2 = "v02";
+const KMS_KEY_VERSION_BLOB_LENGTH = 4;
+// AES-GCM output is at minimum a 12-byte IV + 16-byte auth tag (empty plaintext). A real v02 blob therefore
+// cannot be shorter than this plus its 4-byte version + 3-byte suffix; anything shorter ending in "v02" is
+// malformed/attacker input and must fall through to the legacy path rather than reading out of bounds.
+const MIN_AES_GCM_BLOB_LENGTH = 12 + 16;
+const MIN_V02_BLOB_LENGTH = MIN_AES_GCM_BLOB_LENGTH + KMS_KEY_VERSION_BLOB_LENGTH + KMS_VERSION_BLOB_LENGTH;
+
+// Single source of truth for the cipher-blob trailer so the encode side here and the decode side in
+// decryptWithKmsKey can never drift: v1 keys get the legacy 3-byte "v01" suffix (byte-identical to pre-rotation
+// output); rotated keys get [4-byte BE keyVersion]["v02"].
+const buildKmsCipherTextBlob = (encryptedBlob: Buffer, keyVersion: number) => {
+  if (keyVersion > 1) {
+    const keyVersionBlob = Buffer.alloc(KMS_KEY_VERSION_BLOB_LENGTH);
+    keyVersionBlob.writeUInt32BE(keyVersion, 0);
+    return Buffer.concat([encryptedBlob, keyVersionBlob, Buffer.from(KMS_VERSION_V2, "utf8")]);
+  }
+  return Buffer.concat([encryptedBlob, Buffer.from(KMS_VERSION, "utf8")]);
+};
 const KmsSanitizedSchema = KmsKeysSchema.extend({ isExternal: z.boolean() });
+const OPENSSL_TO_KMS: Record<string, string> = Object.fromEntries(
+  Object.entries(KMS_TO_OPENSSL_NAME).map(([k, v]) => [v, k])
+);
 
 export const kmsServiceFactory = ({
   envConfig,
   kmsDAL,
   kmsRootConfigDAL,
-  keyStore,
   internalKmsDAL,
+  internalKmsKeyVersionDAL,
   orgDAL,
   projectDAL,
   hsmService
 }: TKmsServiceFactoryDep) => {
-  let ROOT_ENCRYPTION_KEY = Buffer.alloc(0);
+  let ROOT_ENCRYPTION_KEY: Buffer = Buffer.alloc(0);
 
   /*
    * Generate KMS Key
@@ -89,6 +119,7 @@ export const kmsServiceFactory = ({
   const generateKmsKey = async ({
     orgId,
     isReserved = true,
+    isExportable = true,
     tx,
     name,
     projectId,
@@ -111,7 +142,7 @@ export const kmsServiceFactory = ({
       kmsKeyMaterial = await generateAsymmetricPrivateKey();
 
       // daniel: safety check to ensure we're able to extract the public key from the private key before we proceed to key creation
-      getPublicKeyFromPrivateKey(kmsKeyMaterial);
+      await getPublicKeyFromPrivateKey(kmsKeyMaterial);
     }
 
     if (!kmsKeyMaterial) {
@@ -130,6 +161,7 @@ export const kmsServiceFactory = ({
           keyUsage,
           orgId,
           isReserved,
+          isExportable,
           projectId,
           description
         },
@@ -151,6 +183,75 @@ export const kmsServiceFactory = ({
     if (tx) return dbQuery(tx);
     const doc = await kmsDAL.transaction(async (tx2) => dbQuery(tx2));
     return doc;
+  };
+
+  /*
+   * Rotate KMS Key
+   * Archives the current key material in the key version table and generates fresh material.
+   * Old material is never deleted so existing ciphertexts stay decryptable.
+   */
+  const rotateKmsKey = async (kmsKeyId: string, tx?: Knex) => {
+    const keyCipher = symmetricCipherService(SymmetricKeyAlgorithm.AES_GCM_256);
+
+    const dbQuery = async (db: Knex) => {
+      const kmsDoc = await kmsDAL.findByIdWithAssociatedKms(kmsKeyId, db);
+      if (!kmsDoc) {
+        throw new NotFoundError({ message: `KMS with ID '${kmsKeyId}' not found` });
+      }
+
+      if (kmsDoc.externalKms) {
+        throw new BadRequestError({
+          message: "Cannot rotate external KMS keys from Infisical. Rotate the key in your external provider instead."
+        });
+      }
+
+      if (kmsDoc.isReserved) {
+        throw new BadRequestError({ message: "Reserved Infisical-managed KMS keys cannot be rotated." });
+      }
+
+      if (kmsDoc.isDisabled) {
+        throw new BadRequestError({ message: "Key is disabled" });
+      }
+
+      if ((kmsDoc.keyUsage as KmsKeyUsage) !== KmsKeyUsage.ENCRYPT_DECRYPT) {
+        throw new BadRequestError({
+          message:
+            "Only encrypt-decrypt keys support rotation. Rotate sign-verify keys manually by creating a new key and updating your applications to use it."
+        });
+      }
+
+      const internalKms = await internalKmsDAL.findByKmsKeyIdForUpdate(kmsKeyId, db);
+      if (!internalKms) {
+        throw new NotFoundError({ message: `Internal KMS not found for KMS with ID '${kmsKeyId}'` });
+      }
+
+      const encryptionAlgorithm = internalKms.encryptionAlgorithm as SymmetricKeyAlgorithm;
+      const newKeyMaterial = crypto.randomBytes(getByteLengthForSymmetricEncryptionAlgorithm(encryptionAlgorithm));
+      const encryptedNewKeyMaterial = keyCipher.encrypt(newKeyMaterial, ROOT_ENCRYPTION_KEY);
+
+      // archive the current material BEFORE overwriting it
+      await internalKmsKeyVersionDAL.create(
+        {
+          internalKmsId: internalKms.id,
+          encryptedKey: internalKms.encryptedKey,
+          version: internalKms.version
+        },
+        db
+      );
+
+      const updatedInternalKms = await internalKmsDAL.updateById(
+        internalKms.id,
+        {
+          encryptedKey: encryptedNewKeyMaterial,
+          version: internalKms.version + 1
+        },
+        db
+      );
+
+      return { id: kmsDoc.id, version: updatedInternalKms.version };
+    };
+
+    return tx ? dbQuery(tx) : kmsDAL.transaction(dbQuery);
   };
 
   const deleteInternalKms = async (kmsId: string, orgId: string, tx?: Knex) => {
@@ -198,62 +299,51 @@ export const kmsServiceFactory = ({
    * In mean time the rest of the request will wait until creation is finished followed by getting the created on
    * In real time this would be milliseconds
    */
+  // Helper function to create org KMS key within a transaction
+  const $createOrgKmsKey = async (orgId: string, tx: Knex) => {
+    const org = await orgDAL.findById(orgId, tx);
+    if (org.kmsDefaultKeyId) {
+      return org.kmsDefaultKeyId;
+    }
+
+    const key = await generateKmsKey({
+      isReserved: true,
+      orgId: org.id,
+      tx
+    });
+
+    await orgDAL.updateById(
+      org.id,
+      {
+        kmsDefaultKeyId: key.id
+      },
+      tx
+    );
+
+    return key.id;
+  };
+
   const getOrgKmsKeyId = async (orgId: string, trx?: Knex) => {
-    let org = await orgDAL.findById(orgId, trx);
+    const org = await orgDAL.findById(orgId, trx);
 
     if (!org) {
       throw new NotFoundError({ message: `Organization with ID '${orgId}' not found` });
     }
 
     if (!org.kmsDefaultKeyId) {
-      const lock = await keyStore
-        .acquireLock([KeyStorePrefixes.KmsOrgKeyCreation, orgId], 3000, { retryCount: 3 })
-        .catch(() => null);
-
-      try {
-        if (!lock) {
-          await keyStore.waitTillReady({
-            key: `${KeyStorePrefixes.WaitUntilReadyKmsOrgKeyCreation}${orgId}`,
-            keyCheckCb: (val) => val === "true",
-            waitingCb: () => logger.info("KMS. Waiting for org key to be created")
-          });
-
-          org = await orgDAL.findById(orgId, trx);
-        } else {
-          const keyId = await (trx || orgDAL).transaction(async (tx) => {
-            org = await orgDAL.findById(orgId, tx);
-            if (org.kmsDefaultKeyId) {
-              return org.kmsDefaultKeyId;
-            }
-
-            const key = await generateKmsKey({
-              isReserved: true,
-              orgId: org.id,
-              tx
-            });
-
-            await orgDAL.updateById(
-              org.id,
-              {
-                kmsDefaultKeyId: key.id
-              },
-              tx
-            );
-
-            await keyStore.setItemWithExpiry(`${KeyStorePrefixes.WaitUntilReadyKmsOrgKeyCreation}${orgId}`, 10, "true");
-
-            return key.id;
-          });
-
-          return keyId;
-        }
-      } finally {
-        await lock?.release();
+      if (trx) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        await trx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.KmsOrgKeyCreation(orgId)]);
+        return $createOrgKmsKey(orgId, trx);
       }
-    }
 
-    if (!org.kmsDefaultKeyId) {
-      throw new Error("Invalid organization KMS");
+      const keyId = await orgDAL.transaction(async (tx) => {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        await tx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.KmsOrgKeyCreation(orgId)]);
+        return $createOrgKmsKey(orgId, tx);
+      });
+
+      return keyId;
     }
 
     return org.kmsDefaultKeyId;
@@ -292,7 +382,7 @@ export const kmsServiceFactory = ({
       let externalKms: TExternalKmsProviderFns;
 
       if (!kmsDoc.orgKms.id || !kmsDoc.orgKms.encryptedDataKey) {
-        throw new Error("Invalid organization KMS");
+        throw new BadRequestError({ message: "Invalid organization KMS" });
       }
 
       // The idea is external kms connection info is encrypted by an org default KMS
@@ -338,7 +428,7 @@ export const kmsServiceFactory = ({
           break;
         }
         default:
-          throw new Error("Invalid KMS provider.");
+          throw new BadRequestError({ message: "Invalid KMS provider." });
       }
 
       return async ({ cipherTextBlob }: Pick<TDecryptWithKmsDTO, "cipherTextBlob">) => {
@@ -359,12 +449,80 @@ export const kmsServiceFactory = ({
     // internal KMS
     const keyCipher = symmetricCipherService(SymmetricKeyAlgorithm.AES_GCM_256);
     const dataCipher = symmetricCipherService(encryptionAlgorithm);
+    const internalKmsId = kmsDoc.internalKms?.id as string;
+    const currentKeyVersion = kmsDoc.internalKms?.version as number; // NOT NULL, defaults to 1
     const kmsKey = keyCipher.decrypt(kmsDoc.internalKms?.encryptedKey as Buffer, ROOT_ENCRYPTION_KEY);
 
-    return ({ cipherTextBlob: versionedCipherTextBlob }: Pick<TDecryptWithKmsDTO, "cipherTextBlob">) => {
+    const keyMaterialByVersion = new Map<number, Buffer>([[currentKeyVersion, kmsKey]]);
+    let archivedVersionsLoaded = false;
+    const $loadArchivedVersions = async () => {
+      if (archivedVersionsLoaded) return;
+      // one query for all archived versions; DB errors propagate (never silently treated as a decrypt failure)
+      const archivedVersions = await internalKmsKeyVersionDAL.find({ internalKmsId }, { tx });
+      for (const archived of archivedVersions) {
+        if (!keyMaterialByVersion.has(archived.version)) {
+          keyMaterialByVersion.set(archived.version, keyCipher.decrypt(archived.encryptedKey, ROOT_ENCRYPTION_KEY));
+        }
+      }
+      archivedVersionsLoaded = true;
+    };
+
+    // Try the preferred version first (cheap, no DB), then the current material, then every archived version
+    // newest-first. Returns the plaintext, or null if no available material authenticates the blob. Trying the
+    // current material covers the export/import case where rotated material was re-imported as version 1, and
+    // trying older material covers stale-replica writers that used pre-rotation material.
+    const $tryDecryptWithAnyMaterial = async (cipherTextBlob: Buffer, preferredVersion: number) => {
+      const attempt = (material?: Buffer) => {
+        if (!material) return null;
+        try {
+          return dataCipher.decrypt(cipherTextBlob, material);
+        } catch {
+          return null; // GCM auth failure for this material; try the next candidate
+        }
+      };
+
+      const preferred = attempt(keyMaterialByVersion.get(preferredVersion));
+      if (preferred) return preferred;
+
+      // skip when preferred already was the current material (seeded under currentKeyVersion)
+      if (preferredVersion !== currentKeyVersion) {
+        const current = attempt(kmsKey);
+        if (current) return current;
+      }
+
+      await $loadArchivedVersions();
+      for (let version = currentKeyVersion - 1; version >= 1; version -= 1) {
+        const decrypted = attempt(keyMaterialByVersion.get(version));
+        if (decrypted) return decrypted;
+      }
+      return null;
+    };
+
+    return async ({ cipherTextBlob: versionedCipherTextBlob }: Pick<TDecryptWithKmsDTO, "cipherTextBlob">) => {
+      const suffix =
+        versionedCipherTextBlob.length >= KMS_VERSION_BLOB_LENGTH
+          ? versionedCipherTextBlob.subarray(-KMS_VERSION_BLOB_LENGTH).toString("utf8")
+          : "";
+
+      // v02 is recognized structurally (suffix + minimum length), never by trusting the embedded version: a blob
+      // too short to be real AES-GCM output that happens to end in "v02" is treated as legacy/garbage and falls
+      // through, so readUInt32BE can never run on a negative offset.
+      if (suffix === KMS_VERSION_V2 && versionedCipherTextBlob.length >= MIN_V02_BLOB_LENGTH) {
+        const keyVersionOffset = versionedCipherTextBlob.length - KMS_VERSION_BLOB_LENGTH - KMS_KEY_VERSION_BLOB_LENGTH;
+        const embeddedVersion = versionedCipherTextBlob.readUInt32BE(keyVersionOffset);
+        const cipherTextBlob = versionedCipherTextBlob.subarray(0, keyVersionOffset);
+
+        const decrypted = await $tryDecryptWithAnyMaterial(cipherTextBlob, embeddedVersion);
+        if (decrypted) return decrypted;
+
+        return dataCipher.decrypt(cipherTextBlob, kmsKey);
+      }
+
+      // legacy v01 (or anything not validated as v02): strip the 3-byte suffix and try all available material
       const cipherTextBlob = versionedCipherTextBlob.subarray(0, -KMS_VERSION_BLOB_LENGTH);
-      const decryptedBlob = dataCipher.decrypt(cipherTextBlob, kmsKey);
-      return Promise.resolve(decryptedBlob);
+      const decrypted = await $tryDecryptWithAnyMaterial(cipherTextBlob, currentKeyVersion);
+      if (decrypted) return decrypted;
+      return dataCipher.decrypt(cipherTextBlob, kmsKey);
     };
   };
 
@@ -386,18 +544,107 @@ export const kmsServiceFactory = ({
       });
     }
 
+    if (!kmsDoc.isExportable) {
+      throw new BadRequestError({
+        message: "You are not allowed to export this key"
+      });
+    }
+
     const keyCipher = symmetricCipherService(SymmetricKeyAlgorithm.AES_GCM_256);
     const kmsKey = keyCipher.decrypt(kmsDoc.internalKms?.encryptedKey as Buffer, ROOT_ENCRYPTION_KEY);
 
     return kmsKey;
   };
 
+  const getBulkKeyMaterial = async ({ kmsIds }: TGetBulkKeyMaterialDTO) => {
+    const kmsDocs = await kmsDAL.findByIdsWithAssociatedKms(kmsIds);
+
+    return kmsDocs.map((kmsDoc) => {
+      if (kmsDoc.isReserved) {
+        throw new BadRequestError({ message: `Cannot get key material for reserved key [kmsId=${kmsDoc.id}]` });
+      }
+      if (kmsDoc.externalKms) {
+        throw new BadRequestError({ message: `Cannot get key material for external key [kmsId=${kmsDoc.id}]` });
+      }
+      if (!kmsDoc.isExportable) {
+        throw new BadRequestError({ message: `You are not allowed to export this key [kmsId=${kmsDoc.id}]` });
+      }
+
+      const keyCipher = symmetricCipherService(SymmetricKeyAlgorithm.AES_GCM_256);
+      const keyMaterial = keyCipher.decrypt(kmsDoc.internalKms?.encryptedKey as Buffer, ROOT_ENCRYPTION_KEY);
+
+      return { kmsId: kmsDoc.id, name: kmsDoc.name, keyMaterial };
+    });
+  };
+
   const importKeyMaterial = async (
-    { key, algorithm, name, isReserved, projectId, orgId, keyUsage, kmipMetadata }: TImportKeyMaterialDTO,
+    {
+      key,
+      algorithm,
+      name,
+      isReserved,
+      isExportable = true,
+      projectId,
+      orgId,
+      keyUsage,
+      kmipMetadata
+    }: TImportKeyMaterialDTO,
     tx?: Knex
   ) => {
-    // daniel: currently we only support imports for encrypt/decrypt keys
-    verifyKeyTypeAndAlgorithm(keyUsage, algorithm, { forceType: KmsKeyUsage.ENCRYPT_DECRYPT });
+    verifyKeyTypeAndAlgorithm(keyUsage, algorithm);
+
+    if (keyUsage === KmsKeyUsage.ENCRYPT_DECRYPT) {
+      const expectedLength = getByteLengthForSymmetricEncryptionAlgorithm(algorithm as SymmetricKeyAlgorithm);
+      if (key.length !== expectedLength) {
+        throw new BadRequestError({
+          message: `Invalid key material length for ${algorithm}. Expected ${expectedLength} bytes, got ${key.length}.`
+        });
+      }
+    }
+
+    if (keyUsage === KmsKeyUsage.SIGN_VERIFY) {
+      const { getPublicKeyFromPrivateKey } = signingService(algorithm as AsymmetricKeyAlgorithm);
+      try {
+        await getPublicKeyFromPrivateKey(key);
+      } catch {
+        const expectedFormat = isPqcKeyAlgorithm(algorithm as string) ? "PKCS8 DER-encoded" : "PKCS8 PEM-encoded";
+        throw new BadRequestError({
+          message: `Invalid private key material. Expected a ${expectedFormat} private key.`
+        });
+      }
+
+      if (isPqcKeyAlgorithm(algorithm as string)) {
+        const detectedVariant = detectPqcVariantFromDer(key);
+        const expectedVariant = KMS_TO_OPENSSL_NAME[algorithm as AsymmetricKeyAlgorithm];
+        if (detectedVariant && expectedVariant && detectedVariant !== expectedVariant) {
+          throw new BadRequestError({
+            message: `Key material does not match the declared algorithm. Expected ${algorithm as string} but the key is ${OPENSSL_TO_KMS[detectedVariant] || detectedVariant}.`
+          });
+        }
+      } else {
+        const keyObj = crypto.nativeCrypto.createPrivateKey({
+          key,
+          format: "pem",
+          type: "pkcs8"
+        });
+        const keyType = keyObj.asymmetricKeyType;
+        const keyDetails = keyObj.asymmetricKeyDetails;
+
+        if (algorithm === AsymmetricKeyAlgorithm.RSA_4096) {
+          if (keyType !== "rsa" || keyDetails?.modulusLength !== 4096) {
+            throw new BadRequestError({
+              message: `Key material does not match the declared algorithm. Expected an RSA 4096-bit key.`
+            });
+          }
+        } else if (algorithm === AsymmetricKeyAlgorithm.ECC_NIST_P256) {
+          if (keyType !== "ec" || keyDetails?.namedCurve !== "prime256v1") {
+            throw new BadRequestError({
+              message: `Key material does not match the declared algorithm. Expected an EC P-256 key.`
+            });
+          }
+        }
+      }
+    }
 
     const cipher = symmetricCipherService(SymmetricKeyAlgorithm.AES_GCM_256);
 
@@ -407,9 +654,10 @@ export const kmsServiceFactory = ({
       const kmsDoc = await kmsDAL.create(
         {
           name: sanitizedName,
-          keyUsage: KmsKeyUsage.ENCRYPT_DECRYPT,
+          keyUsage,
           orgId,
           isReserved,
+          isExportable,
           projectId,
           kmipMetadata
         },
@@ -494,7 +742,7 @@ export const kmsServiceFactory = ({
     return async ({ data, signature, isDigest }: Pick<TVerifyWithKmsDTO, "data" | "signature" | "isDigest">) => {
       const kmsKey = keyCipher.decrypt(kmsDoc.internalKms?.encryptedKey as Buffer, ROOT_ENCRYPTION_KEY);
 
-      const publicKey = getPublicKeyFromPrivateKey(kmsKey);
+      const publicKey = await getPublicKeyFromPrivateKey(kmsKey);
       const signatureValid = await verify(data, signature, publicKey, signingAlgorithm, isDigest);
       return Promise.resolve({ signatureValid, algorithm: signingAlgorithm });
     };
@@ -509,7 +757,7 @@ export const kmsServiceFactory = ({
     if (kmsDoc.externalKms) {
       let externalKms: TExternalKmsProviderFns;
       if (!kmsDoc.orgKms.id || !kmsDoc.orgKms.encryptedDataKey) {
-        throw new Error("Invalid organization KMS");
+        throw new BadRequestError({ message: "Invalid organization KMS" });
       }
 
       const orgKmsDecryptor = await decryptWithKmsKey({
@@ -550,7 +798,7 @@ export const kmsServiceFactory = ({
           break;
         }
         default:
-          throw new Error("Invalid KMS provider.");
+          throw new BadRequestError({ message: "Invalid KMS provider." });
       }
 
       return async ({ plainText }: Pick<TEncryptWithKmsDTO, "plainText">) => {
@@ -571,16 +819,30 @@ export const kmsServiceFactory = ({
     // internal KMS
     const keyCipher = symmetricCipherService(SymmetricKeyAlgorithm.AES_GCM_256);
     const dataCipher = symmetricCipherService(encryptionAlgorithm);
+    const currentKeyVersion = kmsDoc.internalKms?.version as number; // NOT NULL, defaults to 1
+    const kmsKey = keyCipher.decrypt(kmsDoc.internalKms?.encryptedKey as Buffer, ROOT_ENCRYPTION_KEY);
+
     return ({ plainText }: Pick<TEncryptWithKmsDTO, "plainText">) => {
-      const kmsKey = keyCipher.decrypt(kmsDoc.internalKms?.encryptedKey as Buffer, ROOT_ENCRYPTION_KEY);
       const encryptedPlainTextBlob = dataCipher.encrypt(plainText, kmsKey);
-
-      // Buffer#1 encrypted text + Buffer#2 version number
-      const versionBlob = Buffer.from(KMS_VERSION, "utf8"); // length is 3
-      const cipherTextBlob = Buffer.concat([encryptedPlainTextBlob, versionBlob]);
-
+      const cipherTextBlob = buildKmsCipherTextBlob(encryptedPlainTextBlob, currentKeyVersion);
       return Promise.resolve({ cipherTextBlob });
     };
+  };
+
+  // Helper function to create org data key within a transaction
+  const $createOrgKmsDataKey = async (orgId: string, kmsKeyId: string, tx: Knex) => {
+    const org = await orgDAL.findById(orgId, tx);
+    if (org.kmsEncryptedDataKey) {
+      return;
+    }
+
+    const dataKey = crypto.randomBytes(32);
+    const kmsEncryptor = await encryptWithKmsKey({ kmsId: kmsKeyId }, tx);
+    const { cipherTextBlob } = await kmsEncryptor({ plainText: dataKey });
+
+    await orgDAL.updateById(org.id, { kmsEncryptedDataKey: cipherTextBlob }, tx);
+
+    return dataKey;
   };
 
   const $getOrgKmsDataKey = async (orgId: string, trx?: Knex) => {
@@ -592,66 +854,29 @@ export const kmsServiceFactory = ({
     }
 
     if (!org.kmsEncryptedDataKey) {
-      const lock = await keyStore
-        .acquireLock([KeyStorePrefixes.KmsOrgDataKeyCreation, orgId], 500, { retryCount: 0 })
-        .catch(() => null);
+      let orgDataKey: Buffer | undefined;
 
-      try {
-        if (!lock) {
-          await keyStore.waitTillReady({
-            key: `${KeyStorePrefixes.WaitUntilReadyKmsOrgDataKeyCreation}${orgId}`,
-            keyCheckCb: (val) => val === "true",
-            waitingCb: () => logger.info("KMS. Waiting for org data key to be created")
-          });
-
-          org = await orgDAL.findById(orgId, trx);
-        } else {
-          const orgDataKey = await (trx || orgDAL).transaction(async (tx) => {
-            org = await orgDAL.findById(orgId, tx);
-            if (org.kmsEncryptedDataKey) {
-              return;
-            }
-
-            const dataKey = crypto.randomBytes(32);
-            const kmsEncryptor = await encryptWithKmsKey(
-              {
-                kmsId: kmsKeyId
-              },
-              tx
-            );
-
-            const { cipherTextBlob } = await kmsEncryptor({
-              plainText: dataKey
-            });
-
-            await orgDAL.updateById(
-              org.id,
-              {
-                kmsEncryptedDataKey: cipherTextBlob
-              },
-              tx
-            );
-
-            await keyStore.setItemWithExpiry(
-              `${KeyStorePrefixes.WaitUntilReadyKmsOrgDataKeyCreation}${orgId}`,
-              10,
-              "true"
-            );
-
-            return dataKey;
-          });
-
-          if (orgDataKey) {
-            return orgDataKey;
-          }
-        }
-      } finally {
-        await lock?.release();
+      if (trx) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        await trx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.KmsOrgDataKeyCreation(orgId)]);
+        orgDataKey = await $createOrgKmsDataKey(orgId, kmsKeyId, trx);
+      } else {
+        orgDataKey = await orgDAL.transaction(async (tx) => {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+          await tx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.KmsOrgDataKeyCreation(orgId)]);
+          return $createOrgKmsDataKey(orgId, kmsKeyId, tx);
+        });
       }
+
+      if (orgDataKey) {
+        return orgDataKey;
+      }
+
+      org = await orgDAL.findById(orgId, trx);
     }
 
     if (!org.kmsEncryptedDataKey) {
-      throw new Error("Invalid organization KMS");
+      throw new BadRequestError({ message: "Invalid organization KMS" });
     }
 
     const kmsDecryptor = await decryptWithKmsKey({
@@ -664,142 +889,96 @@ export const kmsServiceFactory = ({
     });
   };
 
-  const getProjectSecretManagerKmsKeyId = async (projectId: string, trx?: Knex) => {
-    let project = await projectDAL.findById(projectId, trx);
+  // Helper function to create project KMS key within a transaction
+  const $createProjectKmsKey = async (projectId: string, tx: Knex) => {
+    const project = await projectDAL.findById(projectId, tx);
+    if (project.kmsSecretManagerKeyId) {
+      return project.kmsSecretManagerKeyId;
+    }
+
+    const key = await generateKmsKey({
+      isReserved: true,
+      orgId: project.orgId,
+      tx
+    });
+
+    await projectDAL.updateById(projectId, { kmsSecretManagerKeyId: key.id }, tx);
+
+    return key.id;
+  };
+
+  /** Single project row read; reuses snapshot for data-key path to avoid duplicate findById. */
+  const $getProjectSecretManagerKmsKeyIdAndProject = async (projectId: string, trx?: Knex) => {
+    const project = await projectDAL.findById(projectId, trx);
     if (!project) {
       throw new NotFoundError({ message: `Project with ID '${projectId}' not found` });
     }
 
     if (!project.kmsSecretManagerKeyId) {
-      const lock = await keyStore
-        .acquireLock([KeyStorePrefixes.KmsProjectKeyCreation, projectId], 3000, { retryCount: 0 })
-        .catch(() => null);
-
-      try {
-        if (!lock) {
-          await keyStore.waitTillReady({
-            key: `${KeyStorePrefixes.WaitUntilReadyKmsProjectKeyCreation}${projectId}`,
-            keyCheckCb: (val) => val === "true",
-            waitingCb: () => logger.debug("KMS. Waiting for project key to be created"),
-            delay: 500
-          });
-
-          project = await projectDAL.findById(projectId);
-        } else {
-          const kmsKeyId = await (trx || projectDAL).transaction(async (tx) => {
-            project = await projectDAL.findById(projectId, tx);
-            if (project.kmsSecretManagerKeyId) {
-              return project.kmsSecretManagerKeyId;
-            }
-
-            const key = await generateKmsKey({
-              isReserved: true,
-              orgId: project.orgId,
-              tx
-            });
-
-            await projectDAL.updateById(
-              projectId,
-              {
-                kmsSecretManagerKeyId: key.id
-              },
-              tx
-            );
-
-            return key.id;
-          });
-
-          await keyStore.setItemWithExpiry(
-            `${KeyStorePrefixes.WaitUntilReadyKmsProjectKeyCreation}${projectId}`,
-            10,
-            "true"
-          );
-
-          return kmsKeyId;
-        }
-      } finally {
-        await lock?.release();
+      if (trx) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        await trx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.KmsProjectKeyCreation(projectId)]);
+        const kmsKeyId = await $createProjectKmsKey(projectId, trx);
+        return { kmsKeyId, project };
       }
+
+      const kmsKeyId = await projectDAL.transaction(async (tx) => {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        await tx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.KmsProjectKeyCreation(projectId)]);
+        return $createProjectKmsKey(projectId, tx);
+      });
+
+      return { kmsKeyId, project };
     }
 
-    if (!project.kmsSecretManagerKeyId) {
-      throw new Error("Missing project KMS key ID");
+    return { kmsKeyId: project.kmsSecretManagerKeyId, project };
+  };
+
+  const getProjectSecretManagerKmsKeyId = async (projectId: string, trx?: Knex) => {
+    const { kmsKeyId } = await $getProjectSecretManagerKmsKeyIdAndProject(projectId, trx);
+    return kmsKeyId;
+  };
+
+  // Helper function to create project data key within a transaction
+  const $createProjectKmsDataKey = async (projectId: string, kmsKeyId: string, tx: Knex) => {
+    const project = await projectDAL.findById(projectId, tx);
+    if (project.kmsSecretManagerEncryptedDataKey) {
+      return;
     }
 
-    return project.kmsSecretManagerKeyId;
+    const dataKey = crypto.randomBytes(32);
+    const kmsEncryptor = await encryptWithKmsKey({ kmsId: kmsKeyId }, tx);
+    const { cipherTextBlob } = await kmsEncryptor({ plainText: dataKey });
+
+    await projectDAL.updateById(projectId, { kmsSecretManagerEncryptedDataKey: cipherTextBlob }, tx);
+
+    return dataKey;
   };
 
   const $getProjectSecretManagerKmsDataKey = async (projectId: string, trx?: Knex) => {
-    const kmsKeyId = await getProjectSecretManagerKmsKeyId(projectId, trx);
-    let project = await projectDAL.findById(projectId, trx);
+    const { kmsKeyId, project: projectSnapshot } = await $getProjectSecretManagerKmsKeyIdAndProject(projectId, trx);
+    let project = projectSnapshot;
 
     if (!project.kmsSecretManagerEncryptedDataKey) {
-      const lock = await keyStore
-        .acquireLock([KeyStorePrefixes.KmsProjectDataKeyCreation, projectId], 3000, { retryCount: 0 })
-        .catch((err) => {
-          logger.error(err, "KMS. Failed to acquire lock.");
-          return null;
+      let projectDataKey: Buffer | undefined;
+
+      if (trx) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        await trx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.KmsProjectDataKeyCreation(projectId)]);
+        projectDataKey = await $createProjectKmsDataKey(projectId, kmsKeyId, trx);
+      } else {
+        projectDataKey = await projectDAL.transaction(async (tx) => {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+          await tx.raw("SELECT pg_advisory_xact_lock(?)", [PgSqlLock.KmsProjectDataKeyCreation(projectId)]);
+          return $createProjectKmsDataKey(projectId, kmsKeyId, tx);
         });
-
-      try {
-        if (!lock) {
-          await keyStore.waitTillReady({
-            key: `${KeyStorePrefixes.WaitUntilReadyKmsProjectDataKeyCreation}${projectId}`,
-            keyCheckCb: (val) => val === "true",
-            waitingCb: () => logger.info("KMS. Waiting for secret manager data key to be created"),
-            delay: 500
-          });
-
-          project = await projectDAL.findById(projectId, trx);
-        } else {
-          logger.info(`KMS. Generating KMS key for project ${projectId}`);
-          const projectDataKey = await (trx || projectDAL).transaction(async (tx) => {
-            project = await projectDAL.findById(projectId, tx);
-            if (project.kmsSecretManagerEncryptedDataKey) {
-              return project.kmsSecretManagerEncryptedDataKey;
-            }
-
-            const dataKey = crypto.randomBytes(32);
-            const kmsEncryptor = await encryptWithKmsKey(
-              {
-                kmsId: kmsKeyId
-              },
-              tx
-            );
-
-            const { cipherTextBlob } = await kmsEncryptor({
-              plainText: dataKey
-            });
-
-            await projectDAL.updateById(
-              projectId,
-              {
-                kmsSecretManagerEncryptedDataKey: cipherTextBlob
-              },
-              tx
-            );
-
-            await keyStore.setItemWithExpiry(
-              `${KeyStorePrefixes.WaitUntilReadyKmsProjectDataKeyCreation}${projectId}`,
-              10,
-              "true"
-            );
-            return dataKey;
-          });
-
-          if (projectDataKey) {
-            return projectDataKey;
-          }
-        }
-      } catch (error) {
-        logger.error(
-          error,
-          `getProjectSecretManagerKmsDataKey: Failed to get project data key for [projectId=${projectId}]`
-        );
-        throw error;
-      } finally {
-        await lock?.release();
       }
+
+      if (projectDataKey) {
+        return projectDataKey;
+      }
+
+      project = await projectDAL.findById(projectId, trx);
     }
 
     if (!project.kmsSecretManagerEncryptedDataKey) {
@@ -832,9 +1011,10 @@ export const kmsServiceFactory = ({
 
     const isBase64 = !envConfig.ENCRYPTION_KEY;
     if (!encryptionKey)
-      throw new Error(
-        "Root encryption key not found for KMS service. Did you set the ENCRYPTION_KEY or ROOT_ENCRYPTION_KEY environment variables?"
-      );
+      throw new BadRequestError({
+        message:
+          "Root encryption key not found for KMS service. Did you set the ENCRYPTION_KEY or ROOT_ENCRYPTION_KEY environment variables?"
+      });
 
     const encryptionKeyBuffer = Buffer.from(encryptionKey, isBase64 ? "base64" : "utf8");
 
@@ -846,7 +1026,9 @@ export const kmsServiceFactory = ({
     if (kmsRootConfig.encryptionStrategy === RootKeyEncryptionStrategy.HSM) {
       const hsmIsActive = await hsmService.isActive();
       if (!hsmIsActive) {
-        throw new Error("Unable to decrypt root KMS key. HSM service is inactive. Did you configure the HSM?");
+        throw new BadRequestError({
+          message: "Unable to decrypt root KMS key. HSM service is inactive. Did you configure the HSM?"
+        });
       }
 
       const decryptedKey = await hsmService.decrypt(kmsRootConfig.encryptedRootKey);
@@ -861,14 +1043,16 @@ export const kmsServiceFactory = ({
       return cipher.decrypt(kmsRootConfig.encryptedRootKey, encryptionKeyBuffer);
     }
 
-    throw new Error(`Invalid root key encryption strategy: ${kmsRootConfig.encryptionStrategy}`);
+    throw new BadRequestError({ message: `Invalid root key encryption strategy: ${kmsRootConfig.encryptionStrategy}` });
   };
 
   const $encryptRootKey = async (plainKeyBuffer: Buffer, strategy: RootKeyEncryptionStrategy) => {
     if (strategy === RootKeyEncryptionStrategy.HSM) {
       const hsmIsActive = await hsmService.isActive();
       if (!hsmIsActive) {
-        throw new Error("Unable to encrypt root KMS key. HSM service is inactive. Did you configure the HSM?");
+        throw new BadRequestError({
+          message: "Unable to encrypt root KMS key. HSM service is inactive. Did you configure the HSM?"
+        });
       }
       const encrypted = await hsmService.encrypt(plainKeyBuffer);
       return encrypted;
@@ -882,7 +1066,7 @@ export const kmsServiceFactory = ({
     }
 
     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-    throw new Error(`Invalid root key encryption strategy: ${strategy}`);
+    throw new BadRequestError({ message: `Invalid root key encryption strategy: ${strategy}` });
   };
 
   // by keeping the decrypted data key in inner scope
@@ -906,7 +1090,8 @@ export const kmsServiceFactory = ({
         const cipherTextBlob = versionedCipherTextBlob.subarray(0, -KMS_VERSION_BLOB_LENGTH);
         const decryptedBlob = cipher.decrypt(cipherTextBlob, dataKey);
         return decryptedBlob;
-      }
+      },
+      generateSecretBlindIndex: (secretValue: Buffer) => generateSecretValueBlindIndexFromKmsKey(secretValue, dataKey)
     };
   };
 
@@ -974,7 +1159,9 @@ export const kmsServiceFactory = ({
   };
 
   const getProjectKeyBackup = async (projectId: string) => {
-    const project = await projectDAL.findById(projectId);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(projectId), () =>
+      projectDAL.findById(projectId)
+    );
     if (!project) {
       throw new NotFoundError({
         message: `Project with ID '${projectId}' not found`
@@ -1027,6 +1214,12 @@ export const kmsServiceFactory = ({
         message: "Backup does not belong to project"
       });
     }
+
+    const kmsDoc = await kmsDAL.findByIdWithAssociatedKms(backupKmsKeyId);
+    if (kmsDoc.orgId !== project.orgId)
+      throw new ForbiddenRequestError({
+        message: "Backup does not belong to project"
+      });
 
     const kmsDecryptor = await decryptWithKmsKey({ kmsId: backupKmsKeyId });
     const dataKey = await kmsDecryptor({
@@ -1130,7 +1323,7 @@ export const kmsServiceFactory = ({
 
     if (!encryptedRootKey) {
       logger.error("KMS: Failed to re-encrypt ROOT Key with selected strategy");
-      throw new Error("Failed to re-encrypt ROOT Key with selected strategy");
+      throw new BadRequestError({ message: "Failed to re-encrypt ROOT Key with selected strategy" });
     }
 
     await kmsRootConfigDAL.updateById(KMS_ROOT_CONFIG_UUID, {
@@ -1144,6 +1337,7 @@ export const kmsServiceFactory = ({
   return {
     startService,
     generateKmsKey,
+    rotateKmsKey,
     deleteInternalKms,
     encryptWithKmsKey,
     decryptWithKmsKey,
@@ -1160,6 +1354,7 @@ export const kmsServiceFactory = ({
     getKmsById,
     createCipherPairWithDataKey,
     getKeyMaterial,
+    getBulkKeyMaterial,
     importKeyMaterial,
     signWithKmsKey,
     verifyWithKmsKey,

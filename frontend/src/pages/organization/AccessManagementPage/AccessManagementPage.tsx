@@ -3,7 +3,8 @@ import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
 import { faInfoCircle } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { InfoIcon } from "lucide-react";
 
 import { OrgPermissionGuardBanner } from "@app/components/permissions/OrgPermissionCan";
 import { Button, PageHeader, Tab, TabList, TabPanel, Tabs } from "@app/components/v2";
@@ -51,12 +52,6 @@ export const AccessManagementPage = () => {
       component: OrgMembersTab
     },
     {
-      key: OrgAccessControlTabSections.Groups,
-      label: "Groups",
-      isHidden: permission.cannot(OrgPermissionGroupActions.Read, OrgPermissionSubjects.Groups),
-      component: OrgGroupsTab
-    },
-    {
       key: OrgAccessControlTabSections.Identities,
       label: "Machine Identities",
       isHidden: permission.cannot(
@@ -66,6 +61,12 @@ export const AccessManagementPage = () => {
       component: OrgIdentityTab
     },
     {
+      key: OrgAccessControlTabSections.Groups,
+      label: "Groups",
+      isHidden: permission.cannot(OrgPermissionGroupActions.Read, OrgPermissionSubjects.Groups),
+      component: OrgGroupsTab
+    },
+    {
       key: OrgAccessControlTabSections.Roles,
       label: "Roles",
       isHidden: permission.cannot(OrgPermissionActions.Read, OrgPermissionSubjects.Role),
@@ -73,7 +74,12 @@ export const AccessManagementPage = () => {
     }
   ];
 
-  const hasNoAccess = tabSections.every((tab) => tab.isHidden);
+  const visibleTabSections = tabSections.filter((el) => !el.isHidden);
+  const selectedTabSection = tabSections.find((tab) => tab.key === selectedTab);
+  // A tab that exists but is permission-hidden is restricted (show the guard banner); an unknown
+  // tab falls back to the first visible tab instead of showing the banner.
+  const isSelectedTabRestricted = Boolean(selectedTabSection?.isHidden);
+  const activeTab = selectedTabSection ? selectedTab : (visibleTabSections[0]?.key ?? selectedTab);
 
   return (
     <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
@@ -84,8 +90,20 @@ export const AccessManagementPage = () => {
         <PageHeader
           scope={isSubOrganization ? "namespace" : "org"}
           title={`${isSubOrganization ? "Sub-Organization" : "Organization"} Access Control`}
-          description="Manage fine-grained access for users, groups, roles, and machine identities within your organization resources."
-        />
+          description={`Manage fine-grained access for users, groups, roles, and machine identities within your ${isSubOrganization ? "sub-" : ""}organization resources.`}
+        >
+          {isSubOrganization && (
+            <Link
+              to="/organizations/$orgId/access-management"
+              params={{
+                orgId: currentOrg.rootOrgId ?? ""
+              }}
+              className="flex items-center gap-x-1.5 text-xs whitespace-nowrap text-neutral hover:underline"
+            >
+              <InfoIcon size={12} /> Looking for root organization access control?
+            </Link>
+          )}
+        </PageHeader>
         {!currentOrg.shouldUseNewPrivilegeSystem && (
           <div className="mt-4 mb-4 flex flex-col rounded-r border-l-2 border-l-primary bg-mineshaft-300/5 px-4 py-2.5">
             <div className="mb-1 flex items-center text-sm">
@@ -111,30 +129,33 @@ export const AccessManagementPage = () => {
           isOpen={isUpgradePrivilegeSystemModalOpen}
           onOpenChange={setIsUpgradePrivilegeSystemModalOpen}
         />
-        <Tabs orientation="vertical" value={selectedTab} onValueChange={updateSelectedTab}>
-          <TabList>
-            {tabSections
-              .filter((el) => !el.isHidden)
-              .map((el) => (
+        {visibleTabSections.length === 0 ? (
+          <OrgPermissionGuardBanner />
+        ) : (
+          <Tabs value={activeTab} onValueChange={updateSelectedTab}>
+            <TabList>
+              {visibleTabSections.map(({ key, label }) => (
                 <Tab
                   variant={isSubOrganization ? "namespace" : "org"}
-                  value={el.key}
-                  key={`org-access-tab-${el.key}`}
+                  value={key}
+                  key={`org-access-tab-${key}`}
                 >
-                  {el.label}
+                  {label}
                 </Tab>
               ))}
-          </TabList>
-          {tabSections
-            .filter((el) => !el.isHidden)
-            .map(({ key, component: Component }) => (
-              <TabPanel value={key} key={`org-access-tab-panel-${key}`}>
-                <Component />
-              </TabPanel>
-            ))}
-        </Tabs>
+            </TabList>
+            {isSelectedTabRestricted ? (
+              <OrgPermissionGuardBanner />
+            ) : (
+              visibleTabSections.map(({ key, component: Component }) => (
+                <TabPanel value={key} key={`org-access-tab-panel-${key}`}>
+                  <Component />
+                </TabPanel>
+              ))
+            )}
+          </Tabs>
+        )}
       </div>
-      {hasNoAccess && <OrgPermissionGuardBanner />}
     </div>
   );
 };

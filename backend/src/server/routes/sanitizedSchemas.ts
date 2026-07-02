@@ -3,17 +3,20 @@ import { z } from "zod";
 import {
   CertificateAuthoritiesSchema,
   DynamicSecretsSchema,
+  HoneyTokensSchema,
   IdentityProjectAdditionalPrivilegeSchema,
   IntegrationAuthsSchema,
   InternalCertificateAuthoritiesSchema,
+  OrgRolesSchema,
   ProjectRolesSchema,
   ProjectsSchema,
   SecretApprovalPoliciesSchema,
+  SecretSharingSchema,
   SecretTagsSchema,
   UsersSchema
 } from "@app/db/schemas";
 import { ProjectPermissionActions, ProjectPermissionSub } from "@app/ee/services/permission/project-permission";
-import { ResourceMetadataSchema } from "@app/services/resource-metadata/resource-metadata-schema";
+import { ResourceMetadataNonEncryptionSchema } from "@app/services/resource-metadata/resource-metadata-schema";
 
 import { UnpackedPermissionSchema } from "./sanitizedSchema/permission";
 
@@ -37,7 +40,8 @@ export const DefaultResponseErrorsSchema = {
     reqId: z.string(),
     statusCode: z.literal(400),
     message: z.string(),
-    error: z.string()
+    error: z.string(),
+    details: z.any().optional()
   }),
   404: z.object({
     reqId: z.string(),
@@ -103,6 +107,18 @@ export const sapPubSchema = SecretApprovalPoliciesSchema.merge(
     projectId: z.string()
   })
 );
+
+export const SanitizedUserSchema = UsersSchema.pick({
+  username: true,
+  email: true,
+  isEmailVerified: true,
+  firstName: true,
+  lastName: true,
+  authMethods: true,
+  id: true
+}).extend({
+  publicKey: z.string().nullable().optional()
+});
 
 export const sanitizedServiceTokenUserSchema = UsersSchema.pick({
   authMethods: true,
@@ -210,6 +226,10 @@ export const SanitizedIdentityPrivilegeSchema = IdentityProjectAdditionalPrivile
   )
 });
 
+export const SanitizedOrgRoleSchema = OrgRolesSchema.extend({
+  permissions: UnpackedPermissionSchema.array()
+});
+
 export const SanitizedRoleSchema = ProjectRolesSchema.omit({ version: true }).extend({
   permissions: UnpackedPermissionSchema.array()
 });
@@ -244,7 +264,29 @@ export const SanitizedDynamicSecretSchema = DynamicSecretsSchema.omit({
   inputTag: true,
   algorithm: true
 }).extend({
-  metadata: ResourceMetadataSchema.optional()
+  metadata: ResourceMetadataNonEncryptionSchema.optional()
+});
+
+export const SanitizedHoneyTokenSchema = HoneyTokensSchema.pick({
+  id: true,
+  name: true,
+  description: true,
+  type: true,
+  status: true,
+  projectId: true,
+  folderId: true,
+  secretsMapping: true,
+  createdAt: true,
+  updatedAt: true
+}).extend({
+  environment: z.object({
+    id: z.string(),
+    name: z.string(),
+    slug: z.string()
+  }),
+  folder: z.object({
+    path: z.string()
+  })
 });
 
 export const SanitizedProjectSchema = ProjectsSchema.pick({
@@ -266,7 +308,8 @@ export const SanitizedProjectSchema = ProjectsSchema.pick({
   hasDeleteProtection: true,
   secretSharing: true,
   showSnapshotsLegacy: true,
-  secretDetectionIgnoreValues: true
+  secretDetectionIgnoreValues: true,
+  enforceEncryptedSecretManagerSecretMetadata: true
 });
 
 export const SanitizedTagSchema = SecretTagsSchema.pick({
@@ -281,10 +324,27 @@ export const InternalCertificateAuthorityResponseSchema = CertificateAuthorities
   InternalCertificateAuthoritiesSchema.omit({
     caId: true,
     notAfter: true,
-    notBefore: true
+    notBefore: true,
+    autoRenewalEnabled: true,
+    autoRenewalDaysBeforeExpiry: true,
+    lastRenewalStatus: true,
+    lastRenewalMessage: true,
+    lastRenewalAt: true
   })
 ).extend({
   requireTemplateForIssuance: z.boolean().optional(),
   notAfter: z.string().optional(),
   notBefore: z.string().optional()
+});
+
+export const SanitizedSecretSharingSchema = SecretSharingSchema.omit({
+  encryptedSecret: true,
+  hashedHex: true,
+  iv: true,
+  tag: true,
+  encryptedValue: true,
+  password: true,
+  identifier: true // we map identifier -> id
+}).extend({
+  id: z.string() // override from uuid -> string
 });

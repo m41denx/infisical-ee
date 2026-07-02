@@ -3,19 +3,28 @@ import knex from "knex";
 import RE2 from "re2";
 import { z } from "zod";
 
+import { TDynamicSecrets } from "@app/db/schemas";
 import { crypto } from "@app/lib/crypto/cryptography";
 import { BadRequestError } from "@app/lib/errors";
 import { sanitizeString } from "@app/lib/fn";
 import { GatewayProxyProtocol, withGatewayProxy } from "@app/lib/gateway";
 import { withGatewayV2Proxy } from "@app/lib/gateway-v2/gateway-v2";
-import { alphaNumericNanoId } from "@app/lib/nanoid";
 import { validateHandlebarTemplate } from "@app/lib/template/validate-handlebars";
+import { generatePasswordWithConstraints } from "@app/services/secret-validation-rule/secret-validation-rule-password-generator";
 
+import { ActorIdentityAttributes } from "../../dynamic-secret-lease/dynamic-secret-lease-types";
 import { TGatewayServiceFactory } from "../../gateway/gateway-service";
+import { TGatewayPoolServiceFactory } from "../../gateway-pool/gateway-pool-service";
 import { TGatewayV2ServiceFactory } from "../../gateway-v2/gateway-v2-service";
 import { verifyHostInputValidity } from "../dynamic-secret-fns";
-import { DynamicSecretSqlDBSchema, PasswordRequirements, SqlProviders, TDynamicProviderFns } from "./models";
-import { compileUsernameTemplate } from "./templateUtils";
+import {
+  DynamicSecretSqlDBSchema,
+  PasswordRequirements,
+  SqlProviders,
+  TDynamicProviderCreateMetadata,
+  TDynamicProviderFns
+} from "./models";
+import { generateUsername } from "./templateUtils";
 
 const EXTERNAL_REQUEST_TIMEOUT = 10 * 1000;
 
@@ -110,38 +119,25 @@ const generatePassword = (provider: SqlProviders, requirements?: PasswordRequire
   }
 };
 
-const generateUsername = (provider: SqlProviders, usernameTemplate?: string | null, identity?: { name: string }) => {
-  let randomUsername = "";
-  // For oracle, the client assumes everything is upper case when not using quotes around the password
-  if (provider === SqlProviders.Oracle) {
-    randomUsername = alphaNumericNanoId(32).toUpperCase();
-  } else {
-    randomUsername = alphaNumericNanoId(32);
-  }
-  if (!usernameTemplate) return randomUsername;
-  return compileUsernameTemplate({
-    usernameTemplate,
-    randomUsername,
-    identity,
-    options: {
-      toUpperCase: provider === SqlProviders.Oracle
-    }
-  });
-};
-
 type TSqlDatabaseProviderDTO = {
   gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">;
   gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
+  gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
 };
 
 export const SqlDatabaseProvider = ({
   gatewayService,
-  gatewayV2Service
+  gatewayV2Service,
+  gatewayPoolService
 }: TSqlDatabaseProviderDTO): TDynamicProviderFns => {
   const validateProviderInputs = async (inputs: unknown) => {
     const providerInputs = await DynamicSecretSqlDBSchema.parseAsync(inputs);
 
-    const [hostIp] = await verifyHostInputValidity(providerInputs.host, Boolean(providerInputs.gatewayId));
+    const [hostIp] = await verifyHostInputValidity({
+      host: providerInputs.host,
+      isGateway: Boolean(providerInputs.gatewayId || providerInputs.gatewayPoolId),
+      isDynamicSecret: true
+    });
     validateHandlebarTemplate("SQL creation", providerInputs.creationStatement, {
       allowedExpressions: (val) => ["username", "password", "expiration", "database"].includes(val)
     });
@@ -161,7 +157,11 @@ export const SqlDatabaseProvider = ({
     providerInputs: z.infer<typeof DynamicSecretSqlDBSchema> & { hostIp: string; originalHost: string }
   ) => {
     const ssl = providerInputs.ca
-      ? { rejectUnauthorized: false, ca: providerInputs.ca, servername: providerInputs.host }
+      ? {
+          rejectUnauthorized: providerInputs.sslRejectUnauthorized,
+          ca: providerInputs.ca,
+          servername: providerInputs.originalHost
+        }
       : undefined;
 
     const isMsSQLClient = providerInputs.client === SqlProviders.MsSQL;
@@ -175,7 +175,9 @@ export const SqlDatabaseProvider = ({
     */
     const isAzureSql = isMsSQLClient && new RE2(/\.database\.windows\.net$/i).test(providerInputs.originalHost);
     const azureServerLabel =
-      isAzureSql && providerInputs.gatewayId ? providerInputs.originalHost?.split(".")[0] : undefined;
+      isAzureSql && (providerInputs.gatewayId || providerInputs.gatewayPoolId)
+        ? providerInputs.originalHost?.split(".")[0]
+        : undefined;
     const effectiveUser =
       isAzureSql && !providerInputs.username.includes("@") && azureServerLabel
         ? `${providerInputs.username}@${azureServerLabel}`
@@ -187,7 +189,7 @@ export const SqlDatabaseProvider = ({
         database: providerInputs.database,
         port: providerInputs.port,
         host:
-          providerInputs.client === SqlProviders.Postgres && !providerInputs.gatewayId
+          providerInputs.client === SqlProviders.Postgres && !providerInputs.gatewayId && !providerInputs.gatewayPoolId
             ? providerInputs.hostIp
             : providerInputs.host,
         user: effectiveUser,
@@ -199,7 +201,7 @@ export const SqlDatabaseProvider = ({
         options: isMsSQLClient
           ? {
               ...(providerInputs.sslEnabled !== undefined ? { encrypt: providerInputs.sslEnabled } : {}),
-              trustServerCertificate: !providerInputs.ca,
+              trustServerCertificate: !providerInputs.sslRejectUnauthorized,
               cryptoCredentialsDetails: providerInputs.ca ? { ca: providerInputs.ca } : {}
             }
           : undefined
@@ -214,8 +216,9 @@ export const SqlDatabaseProvider = ({
     providerInputs: z.infer<typeof DynamicSecretSqlDBSchema>,
     gatewayCallback: (host: string, port: number) => Promise<void>
   ) => {
+    const effectiveGatewayId = await gatewayPoolService.resolveEffectiveGatewayId(providerInputs);
     const gatewayV2ConnectionDetails = await gatewayV2Service.getPlatformConnectionDetailsByGatewayId({
-      gatewayId: providerInputs.gatewayId as string,
+      gatewayId: effectiveGatewayId as string,
       targetHost: providerInputs.host,
       targetPort: providerInputs.port
     });
@@ -234,25 +237,16 @@ export const SqlDatabaseProvider = ({
       );
     }
 
-    const relayDetails = await gatewayService.fnGetGatewayClientTlsByGatewayId(providerInputs.gatewayId as string);
-    const [relayHost, relayPort] = relayDetails.relayAddress.split(":");
+    const relayDetails = await gatewayService.fnGetGatewayClientTlsByGatewayId(effectiveGatewayId as string);
     await withGatewayProxy(
       async (port) => {
         await gatewayCallback("localhost", port);
       },
       {
+        relayDetails,
         protocol: GatewayProxyProtocol.Tcp,
         targetHost: providerInputs.host,
-        targetPort: providerInputs.port,
-        relayHost,
-        relayPort: Number(relayPort),
-        identityId: relayDetails.identityId,
-        orgId: relayDetails.orgId,
-        tlsOptions: {
-          ca: relayDetails.certChain,
-          cert: relayDetails.certificate,
-          key: relayDetails.privateKey.toString()
-        }
+        targetPort: providerInputs.port
       }
     );
   };
@@ -286,7 +280,7 @@ export const SqlDatabaseProvider = ({
       }
     };
 
-    if (providerInputs.gatewayId) {
+    if (providerInputs.gatewayId || providerInputs.gatewayPoolId) {
       await gatewayProxyWrapper(providerInputs, gatewayCallback);
     } else {
       await gatewayCallback();
@@ -298,15 +292,25 @@ export const SqlDatabaseProvider = ({
     inputs: unknown;
     expireAt: number;
     usernameTemplate?: string | null;
-    identity?: { name: string };
+    identity: ActorIdentityAttributes;
+    dynamicSecret: TDynamicSecrets;
+    metadata?: TDynamicProviderCreateMetadata;
   }) => {
-    const { inputs, expireAt, usernameTemplate, identity } = data;
+    const { inputs, expireAt, usernameTemplate, identity, dynamicSecret, metadata } = data;
 
     const providerInputs = await validateProviderInputs(inputs);
     const { database } = providerInputs;
-    const username = generateUsername(providerInputs.client, usernameTemplate, identity);
+    const username = await generateUsername(usernameTemplate, {
+      decryptedDynamicSecretInputs: inputs,
+      dynamicSecret,
+      identity
+    });
 
-    const password = generatePassword(providerInputs.client, providerInputs.passwordRequirements);
+    // When a secret validation rule covers this provider/scope, it fully
+    // replaces the user-configured password requirements.
+    const password = metadata?.passwordValidation?.constraints?.length
+      ? generatePasswordWithConstraints(metadata.passwordValidation.constraints)
+      : generatePassword(providerInputs.client, providerInputs.passwordRequirements);
     const gatewayCallback = async (host = providerInputs.host, port = providerInputs.port) => {
       const db = await $getClient({
         ...providerInputs,
@@ -343,7 +347,7 @@ export const SqlDatabaseProvider = ({
         await db.destroy();
       }
     };
-    if (providerInputs.gatewayId) {
+    if (providerInputs.gatewayId || providerInputs.gatewayPoolId) {
       await gatewayProxyWrapper(providerInputs, gatewayCallback);
     } else {
       await gatewayCallback();
@@ -363,7 +367,10 @@ export const SqlDatabaseProvider = ({
         originalHost: providerInputs.host
       });
       try {
-        const revokeStatement = handlebars.compile(providerInputs.revocationStatement)({ username, database });
+        const revokeStatement = handlebars.compile(providerInputs.revocationStatement, { noEscape: true })({
+          username,
+          database
+        });
         const queries = revokeStatement.toString().split(";").filter(Boolean);
         await db.transaction(async (tx) => {
           for (const query of queries) {
@@ -383,7 +390,7 @@ export const SqlDatabaseProvider = ({
         await db.destroy();
       }
     };
-    if (providerInputs.gatewayId) {
+    if (providerInputs.gatewayId || providerInputs.gatewayPoolId) {
       await gatewayProxyWrapper(providerInputs, gatewayCallback);
     } else {
       await gatewayCallback();
@@ -405,7 +412,7 @@ export const SqlDatabaseProvider = ({
       const expiration = new Date(expireAt).toISOString();
       const { database } = providerInputs;
 
-      const renewStatement = handlebars.compile(providerInputs.renewStatement)({
+      const renewStatement = handlebars.compile(providerInputs.renewStatement, { noEscape: true })({
         username: entityId,
         expiration,
         database
@@ -432,7 +439,7 @@ export const SqlDatabaseProvider = ({
         await db.destroy();
       }
     };
-    if (providerInputs.gatewayId) {
+    if (providerInputs.gatewayId || providerInputs.gatewayPoolId) {
       await gatewayProxyWrapper(providerInputs, gatewayCallback);
     } else {
       await gatewayCallback();

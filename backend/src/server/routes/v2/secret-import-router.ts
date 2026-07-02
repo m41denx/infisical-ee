@@ -5,8 +5,10 @@ import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags, SECRET_IMPORTS } from "@app/lib/api-docs";
 import { removeTrailingSlash } from "@app/lib/fn";
 import { readLimit, secretsLimit } from "@app/server/config/rateLimiter";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 import { secretRawSchema } from "../sanitizedSchemas";
 
@@ -19,6 +21,7 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "createSecretImport",
       tags: [ApiDocsTags.SecretImports],
       description: "Create secret imports",
       security: [
@@ -74,6 +77,20 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
           }
         }
       });
+
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.SecretImportCreated,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          projectId: req.body.projectId,
+          importFromEnvironment: secretImport.importEnv.slug,
+          importFromSecretPath: secretImport.importPath,
+          importToEnvironment: req.body.environment,
+          importToSecretPath: req.body.path
+        }
+      });
+
       return { message: "Successfully created secret import", secretImport };
     }
   });
@@ -86,6 +103,7 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "updateSecretImport",
       tags: [ApiDocsTags.SecretImports],
       description: "Update secret imports",
       security: [
@@ -150,6 +168,15 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretImportUpdated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: { importId: secretImport.id, projectId: req.body.projectId }
+        })
+        .catch(() => {});
+
       return { message: "Successfully updated secret import", secretImport };
     }
   });
@@ -162,6 +189,7 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "deleteSecretImport",
       tags: [ApiDocsTags.SecretImports],
       description: "Delete secret imports",
       security: [
@@ -215,6 +243,16 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretImportDeleted,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: { importId: secretImport.id, projectId: req.body.projectId }
+        })
+        .catch(() => {});
+
       return { message: "Successfully deleted secret import", secretImport };
     }
   });
@@ -226,6 +264,7 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
       rateLimit: secretsLimit
     },
     schema: {
+      operationId: "resyncSecretImportReplication",
       description: "Resync secret replication of secret imports",
       security: [
         {
@@ -270,6 +309,7 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "listSecretImports",
       tags: [ApiDocsTags.SecretImports],
       description: "Get secret imports",
       security: [
@@ -328,6 +368,7 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "getSecretImport",
       tags: [ApiDocsTags.SecretImports],
       description: "Get single secret import",
       security: [
@@ -388,6 +429,7 @@ export const registerSecretImportRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "getRawSecretsFromImports",
       tags: [ApiDocsTags.SecretImports],
       querystring: z.object({
         projectId: z.string().trim(),

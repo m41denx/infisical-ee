@@ -11,28 +11,33 @@ import {
   TAltNameMapping,
   TAltNameType
 } from "../certificate/certificate-types";
-import { parseDistinguishedName } from "../certificate-authority/certificate-authority-fns";
+import { extractDnParts } from "../certificate-authority/certificate-authority-fns";
 import { validateAndMapAltNameType } from "../certificate-authority/certificate-authority-validators";
-import { TCertificateRequest } from "../certificate-template-v2/certificate-template-v2-types";
+import { TCertificateRequest } from "../certificate-policy/certificate-policy-types";
 import { mapLegacyExtendedKeyUsageToStandard, mapLegacyKeyUsageToStandard } from "./certificate-constants";
 
 /**
  * Extracts certificate request data from a CSR string
  * @param csr - The CSR in PEM format
  * @returns TCertificateRequest object with parsed CSR data
+ *
+ * Note: Only includes keys for fields that are actually present in the CSR.
+ * This allows applyProfileDefaults to correctly apply defaults for missing fields
+ * (e.g., ACME clients like CertBot often omit CN, putting domain only in SAN).
  */
 export const extractCertificateRequestFromCSR = (csr: string): TCertificateRequest => {
   const csrObj = new x509.Pkcs10CertificateRequest(csr);
-  const subject = parseDistinguishedName(csrObj.subject);
+  const subject = extractDnParts(csrObj.subjectName);
 
-  const certificateRequest: TCertificateRequest = {
-    commonName: subject.commonName,
-    organization: subject.organization,
-    organizationUnit: subject.ou,
-    locality: subject.locality,
-    state: subject.province,
-    country: subject.country
-  };
+  // Only include keys for fields that have values, so applyProfileDefaults
+  // can distinguish "absent" (use default) from "explicitly set".
+  const certificateRequest: TCertificateRequest = {};
+  if (subject.commonName) certificateRequest.commonName = subject.commonName;
+  if (subject.organization) certificateRequest.organization = subject.organization;
+  if (subject.ou) certificateRequest.organizationalUnit = subject.ou;
+  if (subject.locality) certificateRequest.locality = subject.locality;
+  if (subject.province) certificateRequest.state = subject.province;
+  if (subject.country) certificateRequest.country = subject.country;
 
   const csrKeyUsageExtension = csrObj.getExtension("2.5.29.15") as x509.KeyUsagesExtension;
   if (csrKeyUsageExtension) {
@@ -40,7 +45,10 @@ export const extractCertificateRequestFromCSR = (csr: string): TCertificateReque
       // eslint-disable-next-line no-bitwise
       (keyUsage) => (x509.KeyUsageFlags[keyUsage] & csrKeyUsageExtension.usages) !== 0
     );
-    certificateRequest.keyUsages = csrKeyUsages.map(mapLegacyKeyUsageToStandard);
+    const mapped = csrKeyUsages.map(mapLegacyKeyUsageToStandard);
+    if (mapped.length > 0) {
+      certificateRequest.keyUsages = mapped;
+    }
   }
 
   const csrExtendedKeyUsageExtension = csrObj.getExtension("2.5.29.37") as x509.ExtendedKeyUsageExtension;
@@ -48,7 +56,10 @@ export const extractCertificateRequestFromCSR = (csr: string): TCertificateReque
     const csrExtendedKeyUsages = csrExtendedKeyUsageExtension.usages.map(
       (ekuOid) => CertExtendedKeyUsageOIDToName[ekuOid as string]
     );
-    certificateRequest.extendedKeyUsages = csrExtendedKeyUsages.map(mapLegacyExtendedKeyUsageToStandard);
+    const mapped = csrExtendedKeyUsages.map(mapLegacyExtendedKeyUsageToStandard);
+    if (mapped.length > 0) {
+      certificateRequest.extendedKeyUsages = mapped;
+    }
   }
 
   const sanExtension = csrObj.extensions.find((ext) => ext.type === "2.5.29.17");
@@ -74,6 +85,15 @@ export const extractCertificateRequestFromCSR = (csr: string): TCertificateReque
       type: mapLegacyAltNameType(altName.type),
       value: altName.value
     }));
+  }
+
+  const basicConstraintsExtension = csrObj.getExtension("2.5.29.19") as x509.BasicConstraintsExtension;
+  if (basicConstraintsExtension) {
+    const parsedPathLength = basicConstraintsExtension.pathLength;
+    certificateRequest.basicConstraints = {
+      isCA: basicConstraintsExtension.ca,
+      pathLength: parsedPathLength !== undefined && parsedPathLength >= 0 ? parsedPathLength : undefined
+    };
   }
 
   return certificateRequest;
@@ -127,9 +147,68 @@ export const extractAlgorithmsFromCSR = (csr: string) => {
           message: `Unsupported ECDSA curve in CSR: ${namedCurve}. Supported: P-256, P-384, P-521`
         });
     }
+  } else if (publicKey.algorithm.name.startsWith("ML-DSA")) {
+    switch (publicKey.algorithm.name) {
+      case "ML-DSA-44":
+        keyAlgorithm = CertKeyAlgorithm.ML_DSA_44;
+        break;
+      case "ML-DSA-65":
+        keyAlgorithm = CertKeyAlgorithm.ML_DSA_65;
+        break;
+      case "ML-DSA-87":
+        keyAlgorithm = CertKeyAlgorithm.ML_DSA_87;
+        break;
+      default:
+        throw new BadRequestError({
+          message: `Unsupported ML-DSA variant in CSR: ${publicKey.algorithm.name}. Supported: ML-DSA-44, ML-DSA-65, ML-DSA-87`
+        });
+    }
+  } else if (publicKey.algorithm.name.startsWith("SLH-DSA")) {
+    switch (publicKey.algorithm.name) {
+      case "SLH-DSA-SHA2-128f":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHA2_128F;
+        break;
+      case "SLH-DSA-SHA2-128s":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHA2_128S;
+        break;
+      case "SLH-DSA-SHA2-192f":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHA2_192F;
+        break;
+      case "SLH-DSA-SHA2-192s":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHA2_192S;
+        break;
+      case "SLH-DSA-SHA2-256f":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHA2_256F;
+        break;
+      case "SLH-DSA-SHA2-256s":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHA2_256S;
+        break;
+      case "SLH-DSA-SHAKE-128f":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHAKE_128F;
+        break;
+      case "SLH-DSA-SHAKE-128s":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHAKE_128S;
+        break;
+      case "SLH-DSA-SHAKE-192f":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHAKE_192F;
+        break;
+      case "SLH-DSA-SHAKE-192s":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHAKE_192S;
+        break;
+      case "SLH-DSA-SHAKE-256f":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHAKE_256F;
+        break;
+      case "SLH-DSA-SHAKE-256s":
+        keyAlgorithm = CertKeyAlgorithm.SLH_DSA_SHAKE_256S;
+        break;
+      default:
+        throw new BadRequestError({
+          message: `Unsupported SLH-DSA variant in CSR: ${publicKey.algorithm.name}. Supported: SLH-DSA-SHA2-128f/s, SLH-DSA-SHA2-192f/s, SLH-DSA-SHA2-256f/s, SLH-DSA-SHAKE-128f/s, SLH-DSA-SHAKE-192f/s, SLH-DSA-SHAKE-256f/s`
+        });
+    }
   } else {
     throw new BadRequestError({
-      message: `Unsupported key algorithm in CSR: ${publicKey.algorithm.name}. Supported: RSASSA-PKCS1-v1_5, ECDSA`
+      message: `Unsupported key algorithm in CSR: ${publicKey.algorithm.name}. Supported: RSASSA-PKCS1-v1_5, ECDSA, ML-DSA, SLH-DSA`
     });
   }
 
@@ -170,9 +249,68 @@ export const extractAlgorithmsFromCSR = (csr: string) => {
           message: `Unsupported ECDSA hash algorithm in CSR: ${hashName}. Supported: SHA-256, SHA-384, SHA-512`
         });
     }
+  } else if (signatureAlgorithm.startsWith("ML-DSA")) {
+    switch (signatureAlgorithm) {
+      case "ML-DSA-44":
+        normalizedSignatureAlg = CertSignatureAlgorithm.ML_DSA_44;
+        break;
+      case "ML-DSA-65":
+        normalizedSignatureAlg = CertSignatureAlgorithm.ML_DSA_65;
+        break;
+      case "ML-DSA-87":
+        normalizedSignatureAlg = CertSignatureAlgorithm.ML_DSA_87;
+        break;
+      default:
+        throw new BadRequestError({
+          message: `Unsupported ML-DSA variant in CSR: ${signatureAlgorithm}. Supported: ML-DSA-44, ML-DSA-65, ML-DSA-87`
+        });
+    }
+  } else if (signatureAlgorithm.startsWith("SLH-DSA")) {
+    switch (signatureAlgorithm) {
+      case "SLH-DSA-SHA2-128f":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHA2_128F;
+        break;
+      case "SLH-DSA-SHA2-128s":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHA2_128S;
+        break;
+      case "SLH-DSA-SHA2-192f":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHA2_192F;
+        break;
+      case "SLH-DSA-SHA2-192s":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHA2_192S;
+        break;
+      case "SLH-DSA-SHA2-256f":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHA2_256F;
+        break;
+      case "SLH-DSA-SHA2-256s":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHA2_256S;
+        break;
+      case "SLH-DSA-SHAKE-128f":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHAKE_128F;
+        break;
+      case "SLH-DSA-SHAKE-128s":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHAKE_128S;
+        break;
+      case "SLH-DSA-SHAKE-192f":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHAKE_192F;
+        break;
+      case "SLH-DSA-SHAKE-192s":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHAKE_192S;
+        break;
+      case "SLH-DSA-SHAKE-256f":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHAKE_256F;
+        break;
+      case "SLH-DSA-SHAKE-256s":
+        normalizedSignatureAlg = CertSignatureAlgorithm.SLH_DSA_SHAKE_256S;
+        break;
+      default:
+        throw new BadRequestError({
+          message: `Unsupported SLH-DSA variant in CSR: ${signatureAlgorithm}. Supported: SLH-DSA-SHA2-128f/s, SLH-DSA-SHA2-192f/s, SLH-DSA-SHA2-256f/s, SLH-DSA-SHAKE-128f/s, SLH-DSA-SHAKE-192f/s, SLH-DSA-SHAKE-256f/s`
+        });
+    }
   } else {
     throw new BadRequestError({
-      message: `Unsupported signature algorithm in CSR: ${signatureAlgorithm}. Supported: RSASSA-PKCS1-v1_5, ECDSA`
+      message: `Unsupported signature algorithm in CSR: ${signatureAlgorithm}. Supported: RSASSA-PKCS1-v1_5, ECDSA, ML-DSA, SLH-DSA`
     });
   }
 

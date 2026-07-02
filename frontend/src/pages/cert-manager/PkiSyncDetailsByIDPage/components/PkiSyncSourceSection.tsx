@@ -1,15 +1,11 @@
 /* eslint-disable jsx-a11y/label-has-associated-control */
-import { subject } from "@casl/ability";
 import { faEdit } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AlertTriangleIcon } from "lucide-react";
 
-import { ProjectPermissionCan } from "@app/components/permissions";
 import { IconButton, Tooltip } from "@app/components/v2";
 import { Badge } from "@app/components/v3";
-import { ProjectPermissionSub } from "@app/context";
-import { ProjectPermissionPkiSyncActions } from "@app/context/ProjectPermissionContext/types";
-import { TPkiSync } from "@app/hooks/api/pkiSyncs";
+import { TPkiSync, usePkiSyncPermissions } from "@app/hooks/api/pkiSyncs";
 
 const GenericFieldLabel = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div>
@@ -25,10 +21,7 @@ type Props = {
 
 export const PkiSyncSourceSection = ({ pkiSync, onEditSource }: Props) => {
   const { subscriberId, subscriber } = pkiSync;
-
-  const permissionSubject = subject(ProjectPermissionSub.PkiSyncs, {
-    subscriberId: subscriberId || ""
-  });
+  const { canEdit } = usePkiSyncPermissions(pkiSync);
 
   return (
     <div>
@@ -44,19 +37,15 @@ export const PkiSyncSourceSection = ({ pkiSync, onEditSource }: Props) => {
                 </Badge>
               </Tooltip>
             )}
-            <ProjectPermissionCan I={ProjectPermissionPkiSyncActions.Edit} a={permissionSubject}>
-              {(isAllowed) => (
-                <IconButton
-                  variant="plain"
-                  colorSchema="secondary"
-                  isDisabled={!isAllowed}
-                  ariaLabel="Edit sync source"
-                  onClick={onEditSource}
-                >
-                  <FontAwesomeIcon icon={faEdit} />
-                </IconButton>
-              )}
-            </ProjectPermissionCan>
+            <IconButton
+              variant="plain"
+              colorSchema="secondary"
+              isDisabled={!canEdit}
+              ariaLabel="Edit sync source"
+              onClick={onEditSource}
+            >
+              <FontAwesomeIcon icon={faEdit} />
+            </IconButton>
           </div>
         </div>
         <div>

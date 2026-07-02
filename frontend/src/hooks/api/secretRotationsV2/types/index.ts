@@ -15,6 +15,11 @@ import {
   TAzureClientSecretRotationOption
 } from "@app/hooks/api/secretRotationsV2/types/azure-client-secret-rotation";
 import {
+  TDatabricksServicePrincipalSecretRotation,
+  TDatabricksServicePrincipalSecretRotationGeneratedCredentialsResponse,
+  TDatabricksServicePrincipalSecretRotationOption
+} from "@app/hooks/api/secretRotationsV2/types/databricks-service-principal-secret-rotation";
+import {
   TLdapPasswordRotation,
   TLdapPasswordRotationGeneratedCredentialsResponse,
   TLdapPasswordRotationOption
@@ -32,6 +37,31 @@ import { SecretV3RawSanitized } from "@app/hooks/api/secrets/types";
 import { DiscriminativePick } from "@app/types";
 
 import {
+  TConvexAccessKeyRotation,
+  TConvexAccessKeyRotationGeneratedCredentialsResponse,
+  TConvexAccessKeyRotationOption
+} from "./convex-access-key-rotation";
+import {
+  TDatadogApplicationKeySecretRotation,
+  TDatadogApplicationKeySecretRotationGeneratedCredentialsResponse,
+  TDatadogApplicationKeySecretRotationOption
+} from "./datadog-application-key-secret-rotation";
+import {
+  TDbtServiceTokenRotation,
+  TDbtServiceTokenRotationGeneratedCredentialsResponse,
+  TDbtServiceTokenRotationOption
+} from "./dbt-service-token-rotation";
+import {
+  THpIloRotation,
+  THpIloRotationGeneratedCredentialsResponse,
+  THpIloRotationOption
+} from "./hp-ilo-rotation";
+import {
+  TMongoDBCredentialsRotation,
+  TMongoDBCredentialsRotationGeneratedCredentialsResponse,
+  TMongoDBCredentialsRotationOption
+} from "./mongodb-credentials-rotation";
+import {
   TMySqlCredentialsRotation,
   TMySqlCredentialsRotationGeneratedCredentialsResponse
 } from "./mysql-credentials-rotation";
@@ -41,6 +71,11 @@ import {
   TOktaClientSecretRotationOption
 } from "./okta-client-secret-rotation";
 import {
+  TOpenRouterApiKeyRotation,
+  TOpenRouterApiKeyRotationGeneratedCredentialsResponse,
+  TOpenRouterApiKeyRotationOption
+} from "./open-router-api-key-rotation";
+import {
   TOracleDBCredentialsRotation,
   TOracleDBCredentialsRotationGeneratedCredentialsResponse
 } from "./oracledb-credentials-rotation";
@@ -49,6 +84,26 @@ import {
   TRedisCredentialsRotationGeneratedCredentialsResponse,
   TRedisCredentialsRotationOption
 } from "./redis-credentials-rotation";
+import {
+  TSalesforceOauthCredentialsRotation,
+  TSalesforceOauthCredentialsRotationGeneratedCredentialsResponse,
+  TSalesforceOauthCredentialsRotationOption
+} from "./salesforce-oauth-credentials-rotation";
+import {
+  TSupabaseApiKeyRotation,
+  TSupabaseApiKeyRotationGeneratedCredentialsResponse,
+  TSupabaseApiKeyRotationOption
+} from "./supabase-api-key-rotation";
+import {
+  TUnixLinuxLocalAccountRotation,
+  TUnixLinuxLocalAccountRotationGeneratedCredentialsResponse,
+  TUnixLinuxLocalAccountRotationOption
+} from "./unix-linux-local-account-rotation";
+import {
+  TWindowsLocalAccountRotation,
+  TWindowsLocalAccountRotationGeneratedCredentialsResponse,
+  TWindowsLocalAccountRotationOption
+} from "./windows-local-account-rotation";
 
 export type TSecretRotationV2 = (
   | TPostgresCredentialsRotation
@@ -61,6 +116,17 @@ export type TSecretRotationV2 = (
   | TAwsIamUserSecretRotation
   | TOktaClientSecretRotation
   | TRedisCredentialsRotation
+  | TMongoDBCredentialsRotation
+  | TDatabricksServicePrincipalSecretRotation
+  | TUnixLinuxLocalAccountRotation
+  | TDbtServiceTokenRotation
+  | TWindowsLocalAccountRotation
+  | TOpenRouterApiKeyRotation
+  | THpIloRotation
+  | TSupabaseApiKeyRotation
+  | TSalesforceOauthCredentialsRotation
+  | TDatadogApplicationKeySecretRotation
+  | TConvexAccessKeyRotation
 ) & {
   secrets: (SecretV3RawSanitized | null)[];
 };
@@ -72,7 +138,18 @@ export type TSecretRotationV2Option =
   | TLdapPasswordRotationOption
   | TAwsIamUserSecretRotationOption
   | TOktaClientSecretRotationOption
-  | TRedisCredentialsRotationOption;
+  | TRedisCredentialsRotationOption
+  | TMongoDBCredentialsRotationOption
+  | TDatabricksServicePrincipalSecretRotationOption
+  | TUnixLinuxLocalAccountRotationOption
+  | TDbtServiceTokenRotationOption
+  | TWindowsLocalAccountRotationOption
+  | TOpenRouterApiKeyRotationOption
+  | THpIloRotationOption
+  | TSupabaseApiKeyRotationOption
+  | TSalesforceOauthCredentialsRotationOption
+  | TDatadogApplicationKeySecretRotationOption
+  | TConvexAccessKeyRotationOption;
 
 export type TListSecretRotationV2Options = { secretRotationOptions: TSecretRotationV2Option[] };
 
@@ -88,7 +165,18 @@ export type TViewSecretRotationGeneratedCredentialsResponse =
   | TLdapPasswordRotationGeneratedCredentialsResponse
   | TAwsIamUserSecretRotationGeneratedCredentialsResponse
   | TOktaClientSecretRotationGeneratedCredentialsResponse
-  | TRedisCredentialsRotationGeneratedCredentialsResponse;
+  | TRedisCredentialsRotationGeneratedCredentialsResponse
+  | TMongoDBCredentialsRotationGeneratedCredentialsResponse
+  | TDatabricksServicePrincipalSecretRotationGeneratedCredentialsResponse
+  | TUnixLinuxLocalAccountRotationGeneratedCredentialsResponse
+  | TDbtServiceTokenRotationGeneratedCredentialsResponse
+  | TWindowsLocalAccountRotationGeneratedCredentialsResponse
+  | TOpenRouterApiKeyRotationGeneratedCredentialsResponse
+  | THpIloRotationGeneratedCredentialsResponse
+  | TSupabaseApiKeyRotationGeneratedCredentialsResponse
+  | TSalesforceOauthCredentialsRotationGeneratedCredentialsResponse
+  | TDatadogApplicationKeySecretRotationGeneratedCredentialsResponse
+  | TConvexAccessKeyRotationGeneratedCredentialsResponse;
 
 export type TCreateSecretRotationV2DTO = DiscriminativePick<
   TSecretRotationV2,
@@ -126,6 +214,17 @@ export type TDeleteSecretRotationV2DTO = TRotateSecretRotationV2DTO & {
   deleteSecrets: boolean;
 };
 
+export type TMoveSecretRotationV2DTO = {
+  type: SecretRotation;
+  rotationId: string;
+  destinationEnvironment: string;
+  destinationSecretPath: string;
+  overwriteDestination: boolean;
+  // required for query invalidation
+  projectId: string;
+  secretPath: string;
+};
+
 export type TViewSecretRotationV2GeneratedCredentialsDTO = {
   rotationId: string;
   type: SecretRotation;
@@ -142,6 +241,17 @@ export type TSecretRotationOptionMap = {
   [SecretRotation.AwsIamUserSecret]: TAwsIamUserSecretRotationOption;
   [SecretRotation.OktaClientSecret]: TOktaClientSecretRotationOption;
   [SecretRotation.RedisCredentials]: TRedisCredentialsRotationOption;
+  [SecretRotation.MongoDBCredentials]: TMongoDBCredentialsRotationOption;
+  [SecretRotation.DatabricksServicePrincipalSecret]: TDatabricksServicePrincipalSecretRotationOption;
+  [SecretRotation.UnixLinuxLocalAccount]: TUnixLinuxLocalAccountRotationOption;
+  [SecretRotation.DbtServiceToken]: TDbtServiceTokenRotationOption;
+  [SecretRotation.WindowsLocalAccount]: TWindowsLocalAccountRotationOption;
+  [SecretRotation.OpenRouterApiKey]: TOpenRouterApiKeyRotationOption;
+  [SecretRotation.HpIloLocalAccount]: THpIloRotationOption;
+  [SecretRotation.SupabaseApiKey]: TSupabaseApiKeyRotationOption;
+  [SecretRotation.SalesforceOauthCredentials]: TSalesforceOauthCredentialsRotationOption;
+  [SecretRotation.DatadogApplicationKeySecret]: TDatadogApplicationKeySecretRotationOption;
+  [SecretRotation.ConvexAccessKey]: TConvexAccessKeyRotationOption;
 };
 
 export type TSecretRotationGeneratedCredentialsResponseMap = {
@@ -155,4 +265,38 @@ export type TSecretRotationGeneratedCredentialsResponseMap = {
   [SecretRotation.AwsIamUserSecret]: TAwsIamUserSecretRotationGeneratedCredentialsResponse;
   [SecretRotation.OktaClientSecret]: TOktaClientSecretRotationGeneratedCredentialsResponse;
   [SecretRotation.RedisCredentials]: TRedisCredentialsRotationGeneratedCredentialsResponse;
+  [SecretRotation.MongoDBCredentials]: TMongoDBCredentialsRotationGeneratedCredentialsResponse;
+  [SecretRotation.DatabricksServicePrincipalSecret]: TDatabricksServicePrincipalSecretRotationGeneratedCredentialsResponse;
+  [SecretRotation.UnixLinuxLocalAccount]: TUnixLinuxLocalAccountRotationGeneratedCredentialsResponse;
+  [SecretRotation.DbtServiceToken]: TDbtServiceTokenRotationGeneratedCredentialsResponse;
+  [SecretRotation.WindowsLocalAccount]: TWindowsLocalAccountRotationGeneratedCredentialsResponse;
+  [SecretRotation.OpenRouterApiKey]: TOpenRouterApiKeyRotationGeneratedCredentialsResponse;
+  [SecretRotation.HpIloLocalAccount]: THpIloRotationGeneratedCredentialsResponse;
+  [SecretRotation.SupabaseApiKey]: TSupabaseApiKeyRotationGeneratedCredentialsResponse;
+  [SecretRotation.SalesforceOauthCredentials]: TSalesforceOauthCredentialsRotationGeneratedCredentialsResponse;
+  [SecretRotation.DatadogApplicationKeySecret]: TDatadogApplicationKeySecretRotationGeneratedCredentialsResponse;
+  [SecretRotation.ConvexAccessKey]: TConvexAccessKeyRotationGeneratedCredentialsResponse;
+};
+
+// Unified type for local account reconciliation (Unix/Linux, Windows, and HP iLO)
+export type TReconcileLocalAccountRotationDTO = {
+  rotationId: string;
+  type:
+    | SecretRotation.UnixLinuxLocalAccount
+    | SecretRotation.WindowsLocalAccount
+    | SecretRotation.HpIloLocalAccount;
+  // required for query invalidation
+  secretPath: string;
+  projectId: string;
+};
+
+export type TReconcileLocalAccountRotationResponse = {
+  message: string;
+  reconciled: boolean;
+  secretRotation: TUnixLinuxLocalAccountRotation | TWindowsLocalAccountRotation | THpIloRotation;
+};
+
+export type TCheckSecretRotationV2CredentialsDTO = {
+  rotationId: string;
+  type: SecretRotation;
 };

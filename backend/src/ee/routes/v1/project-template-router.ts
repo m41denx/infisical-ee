@@ -7,9 +7,11 @@ import { isInfisicalProjectTemplate } from "@app/ee/services/project-template/pr
 import { ApiDocsTags, ProjectTemplates } from "@app/lib/api-docs";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { slugSchema } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { UnpackedPermissionSchema } from "@app/server/routes/sanitizedSchema/permission";
 import { AuthMode } from "@app/services/auth/auth-type";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 const MAX_JSON_SIZE_LIMIT_IN_BYTES = 32_768;
 
@@ -17,7 +19,7 @@ const isReservedRoleSlug = (slug: string) =>
   Object.values(ProjectMembershipRole).includes(slug as ProjectMembershipRole);
 
 const isReservedRoleName = (name: string) =>
-  ["custom", "admin", "viewer", "developer", "no access"].includes(name.toLowerCase());
+  ["custom", "admin", "viewer", "member", "no access"].includes(name.toLowerCase());
 
 const SanitizedProjectTemplateSchema = ProjectTemplatesSchema.extend({
   roles: z
@@ -32,6 +34,35 @@ const SanitizedProjectTemplateSchema = ProjectTemplatesSchema.extend({
       name: z.string().trim().min(1),
       slug: slugSchema(),
       position: z.number().min(1)
+    })
+    .array()
+    .nullable(),
+  users: z
+    .object({
+      username: z.string().trim().min(1),
+      roles: z.string().array()
+    })
+    .array()
+    .nullable(),
+  groups: z
+    .object({
+      groupSlug: z.string(),
+      roles: z.string().array()
+    })
+    .array()
+    .nullable(),
+  identities: z
+    .object({
+      identityId: z.string().uuid(),
+      identityName: z.string(),
+      roles: z.string().array()
+    })
+    .array()
+    .nullable(),
+  projectManagedIdentities: z
+    .object({
+      name: z.string().trim().min(1),
+      roles: z.string().array()
     })
     .array()
     .nullable()
@@ -91,6 +122,88 @@ const ProjectTemplateEnvironmentsSchema = z
         message: "One or more of the positions specified is invalid. Positions must be sequential starting from 1."
       });
   });
+
+const predefinedRoleSlugs = Object.values(ProjectMembershipRole);
+
+const ProjectTemplateUsersSchema = z
+  .object({
+    username: z.string().trim().min(1).toLowerCase(),
+    roles: z.string().trim().min(1).array().min(1)
+  })
+  .array()
+  .superRefine((users, ctx) => {
+    if (!users.length) return;
+
+    if (Buffer.byteLength(JSON.stringify(users)) > MAX_JSON_SIZE_LIMIT_IN_BYTES)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Size limit exceeded" });
+
+    if (new Set(users.map((v) => v.username)).size !== users.length)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Usernames must be unique" });
+  });
+
+const ProjectTemplateGroupsSchema = z
+  .object({
+    groupSlug: z.string().trim().min(1).toLowerCase(),
+    roles: z.string().trim().min(1).array().min(1)
+  })
+  .array()
+  .superRefine((groups, ctx) => {
+    if (Buffer.byteLength(JSON.stringify(groups)) > MAX_JSON_SIZE_LIMIT_IN_BYTES)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Size limit exceeded" });
+
+    if (new Set(groups.map((v) => v.groupSlug.toLowerCase())).size !== groups.length)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Group slugs must be unique" });
+  });
+
+const ProjectTemplateIdentitiesSchema = z
+  .object({
+    identityId: z.string().uuid(),
+    roles: z.string().trim().min(1).array().min(1)
+  })
+  .array()
+  .superRefine((identities, ctx) => {
+    if (Buffer.byteLength(JSON.stringify(identities)) > MAX_JSON_SIZE_LIMIT_IN_BYTES)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Size limit exceeded" });
+
+    if (new Set(identities.map((v) => v.identityId)).size !== identities.length)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Identity IDs must be unique" });
+  });
+
+const ProjectTemplateProjectManagedIdentitiesSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    roles: z.string().trim().min(1).array().min(1)
+  })
+  .array()
+  .superRefine((identities, ctx) => {
+    if (Buffer.byteLength(JSON.stringify(identities)) > MAX_JSON_SIZE_LIMIT_IN_BYTES)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Size limit exceeded" });
+
+    if (new Set(identities.map((v) => v.name)).size !== identities.length)
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Identity names must be unique" });
+  });
+
+// Helper to validate user roles against available template roles
+const validateUserRoles = (
+  users: { username: string; roles: string[] }[] | undefined,
+  templateRoles: { slug: string }[] | undefined,
+  ctx: z.RefinementCtx
+) => {
+  if (!users?.length) return;
+
+  const availableRoleSlugs = new Set([...predefinedRoleSlugs, ...(templateRoles?.map((r) => r.slug) ?? [])]);
+
+  users.forEach((user) => {
+    user.roles.forEach((roleSlug) => {
+      if (!availableRoleSlugs.has(roleSlug)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `User "${user.username}" references invalid role slug "${roleSlug}". Role must be a predefined role or defined in the template roles.`
+        });
+      }
+    });
+  });
+};
 
 export const registerProjectTemplateRouter = async (server: FastifyZodProvider) => {
   server.route({
@@ -188,17 +301,27 @@ export const registerProjectTemplateRouter = async (server: FastifyZodProvider) 
       hide: false,
       tags: [ApiDocsTags.ProjectTemplates],
       description: "Create a project template.",
-      body: z.object({
-        name: slugSchema({ field: "name" })
-          .refine((val) => !isInfisicalProjectTemplate(val), {
-            message: `The requested project template name is reserved.`
-          })
-          .describe(ProjectTemplates.CREATE.name),
-        description: z.string().max(256).trim().optional().describe(ProjectTemplates.CREATE.description),
-        roles: ProjectTemplateRolesSchema.default([]).describe(ProjectTemplates.CREATE.roles),
-        type: z.nativeEnum(ProjectType).describe(ProjectTemplates.CREATE.type),
-        environments: ProjectTemplateEnvironmentsSchema.nullish().describe(ProjectTemplates.CREATE.environments)
-      }),
+      body: z
+        .object({
+          name: slugSchema({ field: "name" })
+            .refine((val) => !isInfisicalProjectTemplate(val), {
+              message: `The requested project template name is reserved.`
+            })
+            .describe(ProjectTemplates.CREATE.name),
+          description: z.string().max(256).trim().optional().describe(ProjectTemplates.CREATE.description),
+          roles: ProjectTemplateRolesSchema.default([]).describe(ProjectTemplates.CREATE.roles),
+          type: z.nativeEnum(ProjectType).describe(ProjectTemplates.CREATE.type),
+          environments: ProjectTemplateEnvironmentsSchema.nullish().describe(ProjectTemplates.CREATE.environments),
+          users: ProjectTemplateUsersSchema.default([]).describe(ProjectTemplates.CREATE.users),
+          groups: ProjectTemplateGroupsSchema.default([]).describe(ProjectTemplates.CREATE.groups),
+          identities: ProjectTemplateIdentitiesSchema.default([]).describe(ProjectTemplates.CREATE.identities),
+          projectManagedIdentities: ProjectTemplateProjectManagedIdentitiesSchema.default([]).describe(
+            ProjectTemplates.CREATE.projectManagedIdentities
+          )
+        })
+        .superRefine((data, ctx) => {
+          validateUserRoles(data.users, data.roles, ctx);
+        }),
       response: {
         200: z.object({
           projectTemplate: SanitizedProjectTemplateSchema
@@ -218,6 +341,15 @@ export const registerProjectTemplateRouter = async (server: FastifyZodProvider) 
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.ProjectTemplateCreated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: { templateId: projectTemplate.id, name: projectTemplate.name }
+        })
+        .catch(() => {});
+
       return { projectTemplate };
     }
   });
@@ -233,17 +365,31 @@ export const registerProjectTemplateRouter = async (server: FastifyZodProvider) 
       tags: [ApiDocsTags.ProjectTemplates],
       description: "Update a project template.",
       params: z.object({ templateId: z.string().uuid().describe(ProjectTemplates.UPDATE.templateId) }),
-      body: z.object({
-        name: slugSchema({ field: "name" })
-          .refine((val) => !isInfisicalProjectTemplate(val), {
-            message: `The requested project template name is reserved.`
-          })
-          .optional()
-          .describe(ProjectTemplates.UPDATE.name),
-        description: z.string().max(256).trim().optional().describe(ProjectTemplates.UPDATE.description),
-        roles: ProjectTemplateRolesSchema.optional().describe(ProjectTemplates.UPDATE.roles),
-        environments: ProjectTemplateEnvironmentsSchema.nullish().describe(ProjectTemplates.UPDATE.environments)
-      }),
+      body: z
+        .object({
+          name: slugSchema({ field: "name" })
+            .refine((val) => !isInfisicalProjectTemplate(val), {
+              message: `The requested project template name is reserved.`
+            })
+            .optional()
+            .describe(ProjectTemplates.UPDATE.name),
+          description: z.string().max(256).trim().optional().describe(ProjectTemplates.UPDATE.description),
+          roles: ProjectTemplateRolesSchema.optional().describe(ProjectTemplates.UPDATE.roles),
+          environments: ProjectTemplateEnvironmentsSchema.nullish().describe(ProjectTemplates.UPDATE.environments),
+          users: ProjectTemplateUsersSchema.nullish().describe(ProjectTemplates.UPDATE.users),
+          groups: ProjectTemplateGroupsSchema.nullish().describe(ProjectTemplates.UPDATE.groups),
+          identities: ProjectTemplateIdentitiesSchema.nullish().describe(ProjectTemplates.UPDATE.identities),
+          projectManagedIdentities: ProjectTemplateProjectManagedIdentitiesSchema.nullish().describe(
+            ProjectTemplates.UPDATE.projectManagedIdentities
+          )
+        })
+        .superRefine((data, ctx) => {
+          // Note: For updates, if users are provided but roles are not, validation against existing template roles
+          // will happen in the service layer after fetching the template
+          if (data.users && data.roles) {
+            validateUserRoles(data.users, data.roles, ctx);
+          }
+        }),
       response: {
         200: z.object({
           projectTemplate: SanitizedProjectTemplateSchema
@@ -269,6 +415,18 @@ export const registerProjectTemplateRouter = async (server: FastifyZodProvider) 
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.ProjectTemplateUpdated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            templateId: projectTemplate.id,
+            name: projectTemplate.name
+          }
+        })
+        .catch(() => {});
 
       return { projectTemplate };
     }
@@ -308,6 +466,18 @@ export const registerProjectTemplateRouter = async (server: FastifyZodProvider) 
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.ProjectTemplateDeleted,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            templateId: projectTemplate.id,
+            name: projectTemplate.name
+          }
+        })
+        .catch(() => {});
 
       return { projectTemplate };
     }

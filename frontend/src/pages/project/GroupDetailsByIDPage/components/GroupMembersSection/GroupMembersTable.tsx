@@ -1,52 +1,51 @@
-import { useEffect, useMemo } from "react";
-import {
-  faArrowDown,
-  faArrowUp,
-  faFolder,
-  faMagnifyingGlass,
-  faSearch
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { ChevronDownIcon, FilterIcon, HardDriveIcon, UserIcon } from "lucide-react";
+import { twMerge } from "tailwind-merge";
 
-import { createNotification } from "@app/components/notifications";
+import { AssumePrivilegesModal } from "@app/components/assume-privileges";
+import { Lottie } from "@app/components/v2";
 import {
-  ConfirmActionModal,
-  EmptyState,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
   IconButton,
   Input,
   Pagination,
   Table,
-  TableContainer,
-  TableSkeleton,
-  TBody,
-  Th,
-  THead,
-  Tr
-} from "@app/components/v2";
-import { useOrganization, useProject } from "@app/context";
-import { getProjectHomePage } from "@app/helpers/project";
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@app/components/v3";
 import {
   getUserTablePreference,
   PreferenceKey,
   setUserTablePreference
 } from "@app/helpers/userTablePreferences";
 import { usePagination, usePopUp, useResetPageHelper } from "@app/hooks";
-import { useAssumeProjectPrivileges } from "@app/hooks/api";
 import { ActorType } from "@app/hooks/api/auditLogs/enums";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
-import { useListProjectGroupUsers } from "@app/hooks/api/groups/queries";
-import { EFilterReturnedUsers, TGroupMembership } from "@app/hooks/api/groups/types";
+import { useListGroupMembers } from "@app/hooks/api/groups/queries";
+import {
+  FilterMemberType,
+  GroupMembersOrderBy,
+  GroupMemberType,
+  TGroupMembership
+} from "@app/hooks/api/groups/types";
 
-import { GroupMembershipRow } from "./GroupMembershipRow";
+import { GroupMembershipIdentityRow } from "./GroupMembershipIdentityRow";
+import { GroupMembershipUserRow } from "./GroupMembershipUserRow";
 
 type Props = {
   groupMembership: TGroupMembership;
 };
-
-enum GroupMembersOrderBy {
-  Name = "name"
-}
 
 export const GroupMembersTable = ({ groupMembership }: Props) => {
   const navigate = useNavigate();
@@ -59,7 +58,8 @@ export const GroupMembersTable = ({ groupMembership }: Props) => {
     setPerPage,
     offset,
     orderDirection,
-    toggleOrderDirection
+    toggleOrderDirection,
+    orderBy
   } = usePagination(GroupMembersOrderBy.Name, {
     initPerPage: getUserTablePreference("projectGroupMembersTable", PreferenceKey.PerPage, 20)
   });
@@ -79,6 +79,8 @@ export const GroupMembersTable = ({ groupMembership }: Props) => {
     }
   }, [username]);
 
+  const [memberTypeFilter, setMemberTypeFilter] = useState<FilterMemberType[]>([]);
+
   const { handlePopUpToggle, popUp, handlePopUpOpen } = usePopUp(["assumePrivileges"] as const);
 
   const handlePerPageChange = (newPerPage: number) => {
@@ -86,158 +88,164 @@ export const GroupMembersTable = ({ groupMembership }: Props) => {
     setUserTablePreference("projectGroupMembersTable", PreferenceKey.PerPage, newPerPage);
   };
 
-  const { isSubOrganization, currentOrg } = useOrganization();
-  const { currentProject } = useProject();
-
-  const { data: groupMemberships, isPending } = useListProjectGroupUsers({
+  const { data: groupMemberships, isPending } = useListGroupMembers({
     id: groupMembership.group.id,
     groupSlug: groupMembership.group.slug,
-    projectId: currentProject.id,
     offset,
     limit: perPage,
     search,
-    filter: EFilterReturnedUsers.EXISTING_MEMBERS
+    orderBy,
+    orderDirection,
+    memberTypeFilter: memberTypeFilter.length > 0 ? memberTypeFilter : undefined
   });
 
-  const filteredGroupMemberships = useMemo(() => {
-    return groupMemberships && groupMemberships?.users
-      ? groupMemberships?.users
-          ?.filter((membership) => {
-            const userSearchString = `${membership.firstName && membership.firstName} ${
-              membership.lastName && membership.lastName
-            } ${membership.email && membership.email} ${
-              membership.username && membership.username
-            }`;
-            return userSearchString.toLowerCase().includes(search.trim().toLowerCase());
-          })
-          .sort((a, b) => {
-            const [membershipOne, membershipTwo] =
-              orderDirection === OrderByDirection.ASC ? [a, b] : [b, a];
+  const isFiltered = Boolean(search) || memberTypeFilter.length > 0;
 
-            const membershipOneComparisonString = membershipOne.firstName
-              ? membershipOne.firstName
-              : membershipOne.email;
-
-            const membershipTwoComparisonString = membershipTwo.firstName
-              ? membershipTwo.firstName
-              : membershipTwo.email;
-
-            const comparison = membershipOneComparisonString
-              .toLowerCase()
-              .localeCompare(membershipTwoComparisonString.toLowerCase());
-
-            return comparison;
-          })
-      : [];
-  }, [groupMemberships, orderDirection, search]);
+  const { members = [], totalCount = 0 } = groupMemberships ?? {};
 
   useResetPageHelper({
-    totalCount: filteredGroupMemberships?.length,
+    totalCount,
     offset,
     setPage
   });
 
-  const assumePrivileges = useAssumeProjectPrivileges();
+  const filterOptions = [
+    {
+      icon: <UserIcon size={16} />,
+      label: "Users",
+      value: FilterMemberType.USERS
+    },
+    {
+      icon: <HardDriveIcon size={16} />,
+      label: "Machine Identities",
+      value: FilterMemberType.MACHINE_IDENTITIES
+    }
+  ];
 
-  const handleAssumePrivileges = async () => {
-    const { userId } = popUp?.assumePrivileges?.data as { userId: string };
-    assumePrivileges.mutate(
-      {
-        actorId: userId,
-        actorType: ActorType.USER,
-        projectId: currentProject.id
-      },
-      {
-        onSuccess: () => {
-          createNotification({
-            type: "success",
-            text: "User privilege assumption has started"
-          });
-
-          const url = `${getProjectHomePage(currentProject.type, currentProject.environments)}${isSubOrganization ? `?subOrganization=${currentOrg.slug}` : ""}`;
-          window.location.assign(
-            url.replace("$orgId", currentOrg.id).replace("$projectId", currentProject.id)
-          );
-        }
-      }
+  if (isPending) {
+    return (
+      // scott: todo proper loader
+      <div className="flex h-40 w-full items-center justify-center">
+        <Lottie icon="infisical_loading_white" isAutoPlay className="w-16" />
+      </div>
     );
-  };
+  }
 
   return (
-    <div>
-      <Input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
-        placeholder="Search users..."
-      />
-      <TableContainer className="mt-4">
+    <>
+      <div className="mb-5 flex gap-2.5">
+        {/* TODO(scott): add input group with icon once component added */}
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search group members..."
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton variant={memberTypeFilter.length ? "project" : "outline"}>
+              <FilterIcon />
+            </IconButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Filter by Member Type</DropdownMenuLabel>
+            {filterOptions.map((option) => (
+              <DropdownMenuCheckboxItem
+                key={option.value}
+                checked={memberTypeFilter.includes(option.value)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  setMemberTypeFilter((prev) => {
+                    if (prev.includes(option.value)) {
+                      return prev.filter((f) => f !== option.value);
+                    }
+                    return [...prev, option.value];
+                  });
+                  setPage(1);
+                }}
+              >
+                {option.label}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {members.length > 0 ? (
         <Table>
-          <THead>
-            <Tr>
-              <Th className="w-1/3">
-                <div className="flex items-center">
-                  Name
-                  <IconButton
-                    variant="plain"
-                    className="ml-2"
-                    ariaLabel="sort"
-                    onClick={toggleOrderDirection}
-                  >
-                    <FontAwesomeIcon
-                      icon={orderDirection === OrderByDirection.DESC ? faArrowUp : faArrowDown}
-                    />
-                  </IconButton>
-                </div>
-              </Th>
-              <Th>Email</Th>
-              <Th>Added On</Th>
-              <Th className="w-5" />
-            </Tr>
-          </THead>
-          <TBody>
-            {isPending && <TableSkeleton columns={4} innerKey="group-user-memberships" />}
-            {!isPending &&
-              filteredGroupMemberships.slice(offset, perPage * page).map((userGroupMembership) => {
-                return (
-                  <GroupMembershipRow
-                    key={`user-group-membership-${userGroupMembership.id}`}
-                    user={userGroupMembership}
-                    onAssumePrivileges={(userId) => handlePopUpOpen("assumePrivileges", { userId })}
-                  />
-                );
-              })}
-          </TBody>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-5" />
+              <TableHead className="w-1/2" onClick={toggleOrderDirection}>
+                Name
+                <ChevronDownIcon
+                  className={twMerge(
+                    orderDirection === OrderByDirection.DESC && "rotate-180",
+                    "transition-transform"
+                  )}
+                />
+              </TableHead>
+              <TableHead>Joined Group</TableHead>
+              <TableHead className="w-5" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {groupMemberships?.members?.map((userGroupMembership) => {
+              return userGroupMembership.type === GroupMemberType.USER ? (
+                <GroupMembershipUserRow
+                  key={`user-group-membership-${userGroupMembership.id}`}
+                  user={userGroupMembership}
+                  onAssumePrivileges={(userId) =>
+                    handlePopUpOpen("assumePrivileges", {
+                      actorId: userId,
+                      actorType: ActorType.USER
+                    })
+                  }
+                />
+              ) : (
+                <GroupMembershipIdentityRow
+                  key={`identity-group-membership-${userGroupMembership.id}`}
+                  identity={userGroupMembership}
+                  onAssumePrivileges={(identityId) =>
+                    handlePopUpOpen("assumePrivileges", {
+                      actorId: identityId,
+                      actorType: ActorType.IDENTITY
+                    })
+                  }
+                />
+              );
+            })}
+          </TableBody>
         </Table>
-        {Boolean(filteredGroupMemberships.length) && (
-          <Pagination
-            count={filteredGroupMemberships.length}
-            page={page}
-            perPage={perPage}
-            onChangePage={setPage}
-            onChangePerPage={handlePerPageChange}
-          />
-        )}
-        {!isPending && !filteredGroupMemberships?.length && (
-          <EmptyState
-            title={
-              groupMemberships?.users.length
-                ? "No users match this search..."
-                : "This group does not have any members yet"
-            }
-            icon={groupMemberships?.users.length ? faSearch : faFolder}
-          />
-        )}
-      </TableContainer>
-      <ConfirmActionModal
+      ) : (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>
+              {isFiltered
+                ? "No group members match this search"
+                : "This group doesn't have any members"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {isFiltered
+                ? "Adjust search filters to view group members."
+                : "Assign members from organization access control or contact an organization admin."}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+      {Boolean(totalCount) && (
+        <Pagination
+          count={totalCount}
+          page={page}
+          perPage={perPage}
+          onChangePage={setPage}
+          onChangePerPage={handlePerPageChange}
+        />
+      )}
+      <AssumePrivilegesModal
         isOpen={popUp.assumePrivileges.isOpen}
-        confirmKey="assume"
-        title="Do you want to assume privileges of this user?"
-        subTitle="This will set your privileges to those of the user for the next hour."
-        onChange={(isOpen) => handlePopUpToggle("assumePrivileges", isOpen)}
-        onConfirmed={handleAssumePrivileges}
-        buttonText="Confirm"
+        onOpenChange={(isOpen) => handlePopUpToggle("assumePrivileges", isOpen)}
+        actorType={(popUp.assumePrivileges.data as { actorType: ActorType })?.actorType}
+        actorId={(popUp.assumePrivileges.data as { actorId: string })?.actorId}
       />
-    </div>
+    </>
   );
 };

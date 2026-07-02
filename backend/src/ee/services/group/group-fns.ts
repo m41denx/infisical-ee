@@ -5,9 +5,11 @@ import { crypto } from "@app/lib/crypto/cryptography";
 import { BadRequestError, ForbiddenRequestError, NotFoundError, ScimRequestError } from "@app/lib/errors";
 
 import {
+  TAddIdentitiesToGroup,
   TAddUsersToGroup,
   TAddUsersToGroupByUserIds,
   TConvertPendingGroupAdditionsToGroupMemberships,
+  TRemoveIdentitiesFromGroup,
   TRemoveUsersFromGroupByUserIds
 } from "./group-types";
 
@@ -28,10 +30,11 @@ const addAcceptedUsersToGroup = async ({
     },
     tx
   );
+  if (!users.length) return;
 
   await userGroupMembershipDAL.insertMany(
     users.map((user) => ({
-      userId: user.userId,
+      userId: user.id,
       groupId: group.id,
       isPending: false
     })),
@@ -79,7 +82,7 @@ const addAcceptedUsersToGroup = async ({
       continue;
     }
 
-    const usersToAddProjectKeyFor = users.filter((u) => !userKeysSet.has(`${projectId}-${u.userId}`));
+    const usersToAddProjectKeyFor = users.filter((u) => !userKeysSet.has(`${projectId}-${u.id}`));
 
     if (usersToAddProjectKeyFor.length) {
       // there are users who need to be shared keys
@@ -146,7 +149,7 @@ const addAcceptedUsersToGroup = async ({
           encryptedKey,
           nonce,
           senderId: ghostUser.id,
-          receiverId: user.userId,
+          receiverId: user.id,
           projectId
         };
       });
@@ -173,9 +176,14 @@ export const addUsersToGroupByUserIds = async ({
   projectDAL,
   projectBotDAL,
   tx: outerTx,
-  membershipGroupDAL
+  membershipGroupDAL,
+  shouldFailOnMissingMembers = true
 }: TAddUsersToGroupByUserIds) => {
   const processAddition = async (tx: Knex) => {
+    if (userIds.length === 0) {
+      return [];
+    }
+
     const foundMembers = await userDAL.find(
       {
         $in: {
@@ -207,10 +215,26 @@ export const addUsersToGroupByUserIds = async ({
       { tx }
     );
 
+    const existingUserGroupMembershipsUserIdsSet = new Set(existingUserGroupMemberships.map((m) => m.userId));
+
+    // Track which userIds we're actually processing (may be filtered for idempotent operations)
+    let userIdsToProcess = userIds;
+
     if (existingUserGroupMemberships.length) {
-      throw new BadRequestError({
-        message: `User(s) are already part of the group ${group.slug}`
-      });
+      if (shouldFailOnMissingMembers) {
+        throw new BadRequestError({
+          message: `User(s) are already part of the group ${group.slug}`
+        });
+      }
+      // filter out users already in group for idempotent operation
+      const filteredFoundMembers = foundMembers.filter((m) => !existingUserGroupMembershipsUserIdsSet.has(m.id));
+      if (filteredFoundMembers.length === 0) {
+        return [];
+      }
+      // continue with filtered list
+      foundMembers.length = 0;
+      foundMembers.push(...filteredFoundMembers);
+      userIdsToProcess = filteredFoundMembers.map((m) => m.id);
     }
 
     // check if all user(s) are part of the organization
@@ -219,7 +243,7 @@ export const addUsersToGroupByUserIds = async ({
         [`${TableName.Membership}.scopeOrgId` as "scopeOrgId"]: group.orgId,
         scope: AccessScope.Organization,
         $in: {
-          [`${TableName.Membership}.actorUserId` as "actorUserId"]: userIds
+          [`${TableName.Membership}.actorUserId` as "actorUserId"]: userIdsToProcess
         }
       },
       { tx }
@@ -229,7 +253,7 @@ export const addUsersToGroupByUserIds = async ({
       existingUserOrgMemberships.map((u) => u.actorUserId as string)
     );
 
-    userIds.forEach((userId) => {
+    userIdsToProcess.forEach((userId) => {
       if (!existingUserOrgMembershipsUserIdsSet.has(userId))
         throw new ForbiddenRequestError({
           message: `User with id ${userId} is not part of the organization`
@@ -286,6 +310,70 @@ export const addUsersToGroupByUserIds = async ({
 };
 
 /**
+ * Add identities with identity ids [identityIds] to group [group].
+ * @param {group} group - group to add identity(s) to
+ * @param {string[]} identityIds - id(s) of organization scoped identity(s) to add to group
+ * @returns {Promise<{ id: string }[]>} - id(s) of added identity(s)
+ */
+export const addIdentitiesToGroup = async ({
+  group,
+  identityIds,
+  identityDAL,
+  identityGroupMembershipDAL,
+  membershipDAL
+}: TAddIdentitiesToGroup) => {
+  const identityIdsSet = new Set(identityIds);
+  const identityIdsArray = Array.from(identityIdsSet);
+
+  // ensure all identities exist and belong to the org via org scoped membership
+  const foundIdentitiesMemberships = await membershipDAL.find({
+    scope: AccessScope.Organization,
+    scopeOrgId: group.orgId,
+    $in: {
+      actorIdentityId: identityIdsArray
+    }
+  });
+
+  const existingIdentityOrgMembershipsIdentityIdsSet = new Set(
+    foundIdentitiesMemberships.map((u) => u.actorIdentityId as string)
+  );
+
+  identityIdsArray.forEach((identityId) => {
+    if (!existingIdentityOrgMembershipsIdentityIdsSet.has(identityId)) {
+      throw new ForbiddenRequestError({
+        message: `Identity with id ${identityId} is not part of the organization`
+      });
+    }
+  });
+
+  // check if identity group membership already exists
+  const existingIdentityGroupMemberships = await identityGroupMembershipDAL.find({
+    groupId: group.id,
+    $in: {
+      identityId: identityIdsArray
+    }
+  });
+
+  if (existingIdentityGroupMemberships.length) {
+    throw new BadRequestError({
+      message: `${identityIdsArray.length > 1 ? `Identities are` : `Identity is`} already part of the group ${group.slug}`
+    });
+  }
+
+  return identityDAL.transaction(async (tx) => {
+    await identityGroupMembershipDAL.insertMany(
+      foundIdentitiesMemberships.map((membership) => ({
+        identityId: membership.actorIdentityId as string,
+        groupId: group.id
+      })),
+      tx
+    );
+
+    return identityIdsArray.map((identityId) => ({ id: identityId }));
+  });
+};
+
+/**
  * Remove users with user ids [userIds] from group [group].
  * - Users may be part of the group (non-pending + pending);
  * this function will handle both cases.
@@ -299,14 +387,22 @@ export const removeUsersFromGroupByUserIds = async ({
   userGroupMembershipDAL,
   projectKeyDAL,
   tx: outerTx,
-  membershipGroupDAL
+  membershipGroupDAL,
+  shouldFailOnMissingMembers = true
 }: TRemoveUsersFromGroupByUserIds) => {
   const processRemoval = async (tx: Knex) => {
-    const foundMembers = await userDAL.find({
-      $in: {
-        id: userIds
-      }
-    });
+    if (userIds.length === 0) {
+      return [];
+    }
+
+    const foundMembers = await userDAL.find(
+      {
+        $in: {
+          id: userIds
+        }
+      },
+      { tx }
+    );
 
     const foundMembersIdsSet = new Set(foundMembers.map((member) => member.id));
 
@@ -332,12 +428,23 @@ export const removeUsersFromGroupByUserIds = async ({
 
     const existingUserGroupMembershipsUserIdsSet = new Set(existingUserGroupMemberships.map((u) => u.userId));
 
-    userIds.forEach((userId) => {
-      if (!existingUserGroupMembershipsUserIdsSet.has(userId))
+    const usersNotInGroup = userIds.filter((userId) => !existingUserGroupMembershipsUserIdsSet.has(userId));
+
+    if (usersNotInGroup.length > 0) {
+      if (shouldFailOnMissingMembers) {
         throw new ForbiddenRequestError({
           message: `User(s) are not part of the group ${group.slug}`
         });
-    });
+      }
+      // filter out users not in group for idempotent operation
+      const filteredFoundMembers = foundMembers.filter((m) => existingUserGroupMembershipsUserIdsSet.has(m.id));
+      if (filteredFoundMembers.length === 0) {
+        return [];
+      }
+      // continue with filtered list
+      foundMembers.length = 0;
+      foundMembers.push(...filteredFoundMembers);
+    }
 
     const membersToRemoveFromGroupNonPending: TUsers[] = [];
     const membersToRemoveFromGroupPending: TUsers[] = [];
@@ -369,45 +476,47 @@ export const removeUsersFromGroupByUserIds = async ({
         )
       );
 
-      const promises: Array<Promise<void>> = [];
-      for (const userId of userIds) {
-        promises.push(
-          (async () => {
-            const t = await userGroupMembershipDAL.filterProjectsByUserMembership(userId, group.id, projectIds, tx);
-            const projectsToDeleteKeyFor = projectIds.filter((p) => !t.has(p));
+      for await (const userId of membersToRemoveFromGroupNonPending.map((member) => member.id)) {
+        const projectsUserStillMemberOf = await userGroupMembershipDAL.filterProjectsByUserMembership(
+          userId,
+          group.id,
+          projectIds,
+          tx
+        );
+        const projectsToDeleteKeyFor = projectIds.filter((projectId) => !projectsUserStillMemberOf.has(projectId));
 
-            if (projectsToDeleteKeyFor.length) {
-              await projectKeyDAL.delete(
-                {
-                  receiverId: userId,
-                  $in: {
-                    projectId: projectsToDeleteKeyFor
-                  }
-                },
-                tx
-              );
-            }
+        if (projectsToDeleteKeyFor.length) {
+          await projectKeyDAL.delete(
+            {
+              receiverId: userId,
+              $in: {
+                projectId: projectsToDeleteKeyFor
+              }
+            },
+            tx
+          );
+        }
 
-            await userGroupMembershipDAL.delete(
-              {
-                groupId: group.id,
-                userId
-              },
-              tx
-            );
-          })()
+        await userGroupMembershipDAL.delete(
+          {
+            groupId: group.id,
+            userId
+          },
+          tx
         );
       }
-      await Promise.all(promises);
     }
 
     if (membersToRemoveFromGroupPending.length) {
-      await userGroupMembershipDAL.delete({
-        groupId: group.id,
-        $in: {
-          userId: membersToRemoveFromGroupPending.map((member) => member.id)
-        }
-      });
+      await userGroupMembershipDAL.delete(
+        {
+          groupId: group.id,
+          $in: {
+            userId: membersToRemoveFromGroupPending.map((member) => member.id)
+          }
+        },
+        tx
+      );
     }
 
     return membersToRemoveFromGroupNonPending.concat(membersToRemoveFromGroupPending);
@@ -418,6 +527,75 @@ export const removeUsersFromGroupByUserIds = async ({
   }
   return userDAL.transaction(async (tx) => {
     return processRemoval(tx);
+  });
+};
+
+/**
+ * Remove identities with identity ids [identityIds] from group [group].
+ * @param {group} group - group to remove identity(s) from
+ * @param {string[]} identityIds - id(s) of identity(s) to remove from group
+ * @returns {Promise<{ id: string }[]>} - id(s) of removed identity(s)
+ */
+export const removeIdentitiesFromGroup = async ({
+  group,
+  identityIds,
+  identityDAL,
+  membershipDAL,
+  identityGroupMembershipDAL
+}: TRemoveIdentitiesFromGroup) => {
+  const identityIdsSet = new Set(identityIds);
+  const identityIdsArray = Array.from(identityIdsSet);
+
+  // ensure all identities exist and belong to the org via org scoped membership
+  const foundIdentitiesMemberships = await membershipDAL.find({
+    scope: AccessScope.Organization,
+    scopeOrgId: group.orgId,
+    $in: {
+      actorIdentityId: identityIdsArray
+    }
+  });
+
+  const foundIdentitiesMembershipsIdentityIdsSet = new Set(
+    foundIdentitiesMemberships.map((u) => u.actorIdentityId as string)
+  );
+
+  if (foundIdentitiesMembershipsIdentityIdsSet.size !== identityIdsArray.length) {
+    throw new NotFoundError({
+      message: `Machine identities not found`
+    });
+  }
+
+  // check if identity group membership already exists
+  const existingIdentityGroupMemberships = await identityGroupMembershipDAL.find({
+    groupId: group.id,
+    $in: {
+      identityId: identityIdsArray
+    }
+  });
+
+  const existingIdentityGroupMembershipsIdentityIdsSet = new Set(
+    existingIdentityGroupMemberships.map((u) => u.identityId)
+  );
+
+  identityIdsArray.forEach((identityId) => {
+    if (!existingIdentityGroupMembershipsIdentityIdsSet.has(identityId)) {
+      throw new ForbiddenRequestError({
+        message: `Machine identities are not part of the group ${group.slug}`
+      });
+    }
+  });
+  return identityDAL.transaction(async (tx) => {
+    await identityGroupMembershipDAL.delete(
+      {
+        groupId: group.id,
+        $in: {
+          identityId: identityIdsArray
+        }
+      },
+      tx
+    );
+
+    return identityIdsArray.map((identityId) => ({ id: identityId }));
   });
 };
 

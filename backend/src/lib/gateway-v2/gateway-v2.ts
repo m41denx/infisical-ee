@@ -1,10 +1,11 @@
 import net from "node:net";
 import tls from "node:tls";
 
-import axios from "axios";
+import { isAxiosError } from "axios";
 import https from "https";
 
 import { verifyHostInputValidity } from "@app/ee/services/dynamic-secret/dynamic-secret-fns";
+import { TGatewayV2ConnectionDetails } from "@app/ee/services/gateway-v2/gateway-v2-types";
 import { splitPemChain } from "@app/services/certificate/certificate-fns";
 
 import { getConfig } from "../config/env";
@@ -19,18 +20,22 @@ interface IGatewayRelayServer {
   getRelayError: () => string;
 }
 
+const DEFAULT_RELAY_CONNECTION_TIMEOUT_MS = 100000;
+
 export const createRelayConnection = async ({
   relayHost,
   clientCertificate,
   clientPrivateKey,
-  serverCertificateChain
+  serverCertificateChain,
+  timeoutMs = DEFAULT_RELAY_CONNECTION_TIMEOUT_MS
 }: {
   relayHost: string;
   clientCertificate: string;
   clientPrivateKey: string;
   serverCertificateChain: string;
+  timeoutMs?: number;
 }): Promise<net.Socket> => {
-  const [targetHost] = await verifyHostInputValidity(relayHost);
+  const [targetHost] = await verifyHostInputValidity({ host: relayHost, isDynamicSecret: false });
   const [, portStr] = relayHost.split(":");
   const port = parseInt(portStr, 10) || 8443;
 
@@ -64,29 +69,34 @@ export const createRelayConnection = async ({
       });
 
       socket.on("timeout", () => {
-        logger.error(`TLS connection timeout after 30 seconds`);
+        logger.error(`TLS connection timeout after ${timeoutMs / 1000}s`);
         socket.destroy();
         reject(new Error("TLS connection timeout"));
       });
 
-      socket.setTimeout(30000);
+      socket.setTimeout(timeoutMs);
     } catch (error: unknown) {
       reject(new Error(`Failed to create TLS connection: ${error instanceof Error ? error.message : String(error)}`));
     }
   });
 };
 
-const createGatewayConnection = async (
+export const createGatewayConnection = async (
   relayConn: net.Socket,
   gateway: { clientCertificate: string; clientPrivateKey: string; serverCertificateChain: string },
   protocol: GatewayProxyProtocol
 ): Promise<net.Socket> => {
   const appCfg = getConfig();
 
-  const protocolToAlpn = {
-    [GatewayProxyProtocol.Http]: "infisical-http-proxy",
-    [GatewayProxyProtocol.Tcp]: "infisical-tcp-proxy",
-    [GatewayProxyProtocol.Ping]: "infisical-ping"
+  const protocolToAlpn: Record<string, string[]> = {
+    [GatewayProxyProtocol.Http]: ["infisical-http-proxy"],
+    [GatewayProxyProtocol.Tcp]: ["infisical-tcp-proxy"],
+    [GatewayProxyProtocol.Ping]: ["infisical-ping"],
+    [GatewayProxyProtocol.Health]: ["infisical-health", "infisical-ping"],
+    [GatewayProxyProtocol.Pam]: ["infisical-pam-proxy"],
+    [GatewayProxyProtocol.PamRdpBrowser]: ["infisical-pam-rdp-browser"],
+    [GatewayProxyProtocol.PamSessionCancellation]: ["infisical-pam-session-cancellation"],
+    [GatewayProxyProtocol.Pkcs11]: ["infisical-pkcs11"]
   };
 
   const tlsOptions: tls.ConnectionOptions = {
@@ -97,7 +107,7 @@ const createGatewayConnection = async (
     minVersion: "TLSv1.2",
     maxVersion: "TLSv1.3",
     rejectUnauthorized: true,
-    ALPNProtocols: [protocolToAlpn[protocol]],
+    ALPNProtocols: protocolToAlpn[protocol],
     checkServerIdentity: appCfg.isDevelopmentMode ? () => undefined : tls.checkServerIdentity
   };
 
@@ -119,7 +129,7 @@ const createGatewayConnection = async (
         reject(new Error(`Failed to establish gateway mTLS: ${err.message}`));
       });
 
-      gatewaySocket.setTimeout(30000);
+      gatewaySocket.setTimeout(120000);
       gatewaySocket.on("timeout", () => {
         gatewaySocket.destroy();
         reject(new Error("Gateway connection timeout"));
@@ -132,18 +142,20 @@ const createGatewayConnection = async (
   });
 };
 
-const setupRelayServer = async ({
+export const setupRelayServer = async ({
   protocol,
   relayHost,
   gateway,
   relay,
-  httpsAgent
+  httpsAgent,
+  longLived
 }: {
   protocol: GatewayProxyProtocol;
   relayHost: string;
   gateway: { clientCertificate: string; clientPrivateKey: string; serverCertificateChain: string };
   relay: { clientCertificate: string; clientPrivateKey: string; serverCertificateChain: string };
   httpsAgent?: https.Agent;
+  longLived?: boolean;
 }): Promise<IGatewayRelayServer> => {
   const relayErrorMsg: string[] = [];
 
@@ -167,6 +179,18 @@ const setupRelayServer = async ({
           // Stage 2: Establish mTLS connection to gateway through the relay
           const gatewayConn = await createGatewayConnection(relayConn, gateway, protocol);
 
+          if (longLived) {
+            // Disable the 30s idle-activity timeout that was set during connection establishment.
+            // Without this, the socket is destroyed after 30s of no data, killing idle sessions.
+            relayConn.setTimeout(0);
+            gatewayConn.setTimeout(0);
+
+            // Enable TCP keep-alive probes every 30s to detect dead connections
+            // without terminating idle-but-alive ones.
+            relayConn.setKeepAlive(true, 30000);
+            gatewayConn.setKeepAlive(true, 30000);
+          }
+
           // Send protocol-specific configuration for HTTP requests
           if (protocol === GatewayProxyProtocol.Http) {
             if (httpsAgent) {
@@ -188,25 +212,23 @@ const setupRelayServer = async ({
             }
           }
 
+          const destroyAll = () => {
+            clientConn.destroy();
+            relayConn.destroy();
+            gatewayConn.destroy();
+          };
+
+          clientConn.on("error", () => destroyAll());
+          relayConn.on("error", () => destroyAll());
+          gatewayConn.on("error", () => destroyAll());
+
           // Bidirectional data forwarding
           clientConn.pipe(gatewayConn);
           gatewayConn.pipe(clientConn);
 
-          // Handle connection closure
-          clientConn.on("close", () => {
-            relayConn.destroy();
-            gatewayConn.destroy();
-          });
-
-          relayConn.on("close", () => {
-            clientConn.destroy();
-            gatewayConn.destroy();
-          });
-
-          gatewayConn.on("close", () => {
-            clientConn.destroy();
-            relayConn.destroy();
-          });
+          clientConn.on("close", destroyAll);
+          relayConn.on("close", destroyAll);
+          gatewayConn.on("close", destroyAll);
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           relayErrorMsg.push(errorMsg);
@@ -247,11 +269,8 @@ export const withGatewayV2Proxy = async <T>(
   callback: (port: number) => Promise<T>,
   options: {
     protocol: GatewayProxyProtocol;
-    relayHost: string;
-    gateway: { clientCertificate: string; clientPrivateKey: string; serverCertificateChain: string };
-    relay: { clientCertificate: string; clientPrivateKey: string; serverCertificateChain: string };
     httpsAgent?: https.Agent;
-  }
+  } & TGatewayV2ConnectionDetails
 ): Promise<T> => {
   const { protocol, relayHost, gateway, relay, httpsAgent } = options;
 
@@ -273,7 +292,7 @@ export const withGatewayV2Proxy = async <T>(
     }
     logger.error("Gateway error:", err instanceof Error ? err.message : String(err));
     let errorMessage = relayErrorMessage || (err instanceof Error ? err.message : String(err));
-    if (axios.isAxiosError(err) && (err.response?.data as { message?: string })?.message) {
+    if (isAxiosError(err) && (err.response?.data as { message?: string })?.message) {
       errorMessage = (err.response?.data as { message: string }).message;
     }
 

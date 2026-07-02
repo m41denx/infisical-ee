@@ -3,14 +3,50 @@ import { z } from "zod";
 
 import { PkiCertificateProfilesSchema } from "@app/db/schemas";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
+import { ScepChallengeType } from "@app/ee/services/pki-scep/challenge";
 import { ApiDocsTags } from "@app/lib/api-docs";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { openApiHidden } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
 import { CertStatus } from "@app/services/certificate/certificate-types";
+import {
+  CertExtendedKeyUsageType,
+  CertKeyAlgorithm,
+  CertKeyUsageType,
+  CertSignatureAlgorithm
+} from "@app/services/certificate-common/certificate-constants";
+import { ExternalConfigUnionSchema } from "@app/services/certificate-profile/certificate-profile-external-config-schemas";
 import { EnrollmentType, IssuerType } from "@app/services/certificate-profile/certificate-profile-types";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
-export const registerCertificateProfilesRouter = async (server: FastifyZodProvider) => {
+const CertificateProfileDefaultsResponseSchema = z
+  .object({
+    ttlDays: z.number().optional(),
+    commonName: z.string().optional(),
+    keyAlgorithm: z.nativeEnum(CertKeyAlgorithm).optional(),
+    signatureAlgorithm: z.nativeEnum(CertSignatureAlgorithm).optional(),
+    keyUsages: z.array(z.nativeEnum(CertKeyUsageType)).optional(),
+    extendedKeyUsages: z.array(z.nativeEnum(CertExtendedKeyUsageType)).optional(),
+    basicConstraints: z
+      .object({
+        isCA: z.boolean(),
+        pathLength: z.number().optional()
+      })
+      .optional(),
+    organization: z.string().optional(),
+    organizationalUnit: z.string().optional(),
+    country: z.string().optional(),
+    state: z.string().optional(),
+    locality: z.string().optional()
+  })
+  .nullish();
+
+export const registerCertificateProfilesRouter = async (
+  server: FastifyZodProvider,
+  enableOperationId: boolean = true
+) => {
   server.route({
     method: "POST",
     url: "/",
@@ -19,19 +55,20 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "createCertificateProfile" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       body: z
         .object({
-          projectId: z.string().min(1),
+          projectId: z.string().min(1).optional().describe(openApiHidden()),
           caId: z.string().uuid().optional(),
-          certificateTemplateId: z.string().uuid(),
+          certificatePolicyId: z.string().uuid(),
           slug: z
             .string()
             .min(1)
             .max(255)
             .regex(new RE2("^[a-z0-9-]+$"), "Slug must contain only lowercase letters, numbers, and hyphens"),
           description: z.string().max(1000).optional(),
-          enrollmentType: z.nativeEnum(EnrollmentType),
+          enrollmentType: z.nativeEnum(EnrollmentType).optional().describe(openApiHidden()),
           issuerType: z.nativeEnum(IssuerType).default(IssuerType.CA),
           estConfig: z
             .object({
@@ -39,79 +76,122 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
               passphrase: z.string().min(1),
               caChain: z.string().optional()
             })
-            .optional(),
+            .optional()
+            .describe(openApiHidden()),
           apiConfig: z
             .object({
               autoRenew: z.boolean().default(false),
               renewBeforeDays: z.number().min(1).max(30).optional()
             })
-            .optional(),
-          acmeConfig: z.object({}).optional()
+            .optional()
+            .describe(openApiHidden()),
+          acmeConfig: z
+            .object({
+              skipDnsOwnershipVerification: z.boolean().optional(),
+              skipEabBinding: z.boolean().optional()
+            })
+            .optional()
+            .describe(openApiHidden()),
+          scepConfig: z
+            .object({
+              challengeType: z.nativeEnum(ScepChallengeType).default(ScepChallengeType.STATIC),
+              challengePassword: z.string().optional(),
+              includeCaCertInResponse: z.boolean().optional(),
+              allowCertBasedRenewal: z.boolean().optional(),
+              dynamicChallengeExpiryMinutes: z.number().int().min(1).max(1440).default(60),
+              dynamicChallengeMaxPending: z.number().int().min(1).max(1000).default(100)
+            })
+            .optional()
+            .describe(openApiHidden()),
+          externalConfigs: ExternalConfigUnionSchema,
+          defaults: z
+            .object({
+              ttlDays: z.number().int().positive().optional(),
+              commonName: z.string().optional(),
+              keyAlgorithm: z.nativeEnum(CertKeyAlgorithm).optional(),
+              signatureAlgorithm: z.nativeEnum(CertSignatureAlgorithm).optional(),
+              keyUsages: z.array(z.nativeEnum(CertKeyUsageType)).optional(),
+              extendedKeyUsages: z.array(z.nativeEnum(CertExtendedKeyUsageType)).optional(),
+              basicConstraints: z
+                .object({
+                  isCA: z.boolean(),
+                  pathLength: z.number().int().min(0).optional()
+                })
+                .optional(),
+              organization: z.string().optional(),
+              organizationalUnit: z.string().optional(),
+              country: z.string().optional(),
+              state: z.string().optional(),
+              locality: z.string().optional()
+            })
+            .nullish()
         })
         .refine(
           (data) => {
-            if (data.enrollmentType === EnrollmentType.EST) {
-              return !!data.estConfig;
+            if (data.enrollmentType === EnrollmentType.ACME && data.acmeConfig) {
+              return !(data.acmeConfig.skipEabBinding && data.acmeConfig.skipDnsOwnershipVerification);
             }
             return true;
           },
           {
-            message: "EST enrollment type requires EST configuration"
-          }
-        )
-        .refine(
-          (data) => {
-            if (data.enrollmentType === EnrollmentType.API) {
-              return !!data.apiConfig;
-            }
-            return true;
-          },
-          {
-            message: "API enrollment type requires API configuration"
-          }
-        )
-        .refine(
-          (data) => {
-            if (data.enrollmentType === EnrollmentType.ACME) {
-              return !!data.acmeConfig;
-            }
-            return true;
-          },
-          {
-            message: "ACME enrollment type requires ACME configuration"
+            message: "Cannot skip both External Account Binding (EAB) and DNS ownership verification at the same time."
           }
         )
         .refine(
           (data) => {
             if (data.enrollmentType === EnrollmentType.EST) {
-              return !data.apiConfig && !data.acmeConfig;
+              return !data.apiConfig && !data.acmeConfig && !data.scepConfig;
             }
             return true;
           },
           {
-            message: "EST enrollment type cannot have API or ACME configuration"
+            message: "EST enrollment type cannot have API, ACME, or SCEP configuration"
           }
         )
         .refine(
           (data) => {
             if (data.enrollmentType === EnrollmentType.API) {
-              return !data.estConfig && !data.acmeConfig;
+              return !data.estConfig && !data.acmeConfig && !data.scepConfig;
             }
             return true;
           },
           {
-            message: "API enrollment type cannot have EST or ACME configuration"
+            message: "API enrollment type cannot have EST, ACME, or SCEP configuration"
           }
         )
         .refine(
           (data) => {
             if (data.enrollmentType === EnrollmentType.ACME) {
-              return !data.estConfig && !data.apiConfig;
+              return !data.estConfig && !data.apiConfig && !data.scepConfig;
             }
             return true;
           },
           {
-            message: "ACME enrollment type cannot have EST or API configuration"
+            message: "ACME enrollment type cannot have EST, API, or SCEP configuration"
+          }
+        )
+        .refine(
+          (data) => {
+            if (data.enrollmentType === EnrollmentType.SCEP && data.scepConfig) {
+              // Static mode requires a challenge password with min 8 chars; dynamic mode does not
+              if (data.scepConfig.challengeType === ScepChallengeType.DYNAMIC) return true;
+              return !!data.scepConfig.challengePassword && data.scepConfig.challengePassword.length >= 8;
+            }
+            return true;
+          },
+          {
+            message: "SCEP static challenge requires a challenge password with at least 8 characters"
+          }
+        )
+        .refine(
+          (data) => {
+            if (data.enrollmentType === EnrollmentType.SCEP) {
+              return !data.estConfig && !data.apiConfig && !data.acmeConfig;
+            }
+            return true;
+          },
+          {
+            message: "SCEP enrollment type cannot have EST, API, or ACME configuration"
           }
         )
         .refine(
@@ -138,7 +218,7 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
         )
         .refine(
           (data) => {
-            if (data.issuerType === IssuerType.SELF_SIGNED) {
+            if (data.issuerType === IssuerType.SELF_SIGNED && data.enrollmentType !== undefined) {
               return data.enrollmentType === EnrollmentType.API;
             }
             return true;
@@ -149,7 +229,10 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
         ),
       response: {
         200: z.object({
-          certificateProfile: PkiCertificateProfilesSchema
+          certificateProfile: PkiCertificateProfilesSchema.extend({
+            externalConfigs: ExternalConfigUnionSchema,
+            defaults: CertificateProfileDefaultsResponseSchema
+          })
         })
       }
     },
@@ -160,13 +243,13 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
         actorOrgId: req.permission.orgId,
-        projectId: req.body.projectId,
+        projectId: req.internalCertManagerProjectId,
         data: req.body
       });
 
       await server.services.auditLog.createAuditLog({
         ...req.auditLogInfo,
-        projectId: req.body.projectId,
+        projectId: req.internalCertManagerProjectId,
         event: {
           type: EventType.CREATE_CERTIFICATE_PROFILE,
           metadata: {
@@ -176,6 +259,16 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
             enrollmentType: certificateProfile.enrollmentType,
             issuerType: certificateProfile.issuerType
           }
+        }
+      });
+
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CertificateProfileCreated,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          orgId: req.permission.orgId,
+          issuerType: certificateProfile.issuerType
         }
       });
 
@@ -191,19 +284,30 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "listCertificateProfiles" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       querystring: z.object({
-        projectId: z.string().min(1),
         offset: z.coerce.number().min(0).default(0),
         limit: z.coerce.number().min(1).max(100).default(20),
         search: z.string().optional(),
         enrollmentType: z.nativeEnum(EnrollmentType).optional(),
         issuerType: z.nativeEnum(IssuerType).optional(),
-        caId: z.string().uuid().optional()
+        caId: z.string().uuid().optional(),
+        applicationId: z.string().uuid().optional(),
+        projectId: z.string().uuid().optional().describe(openApiHidden())
       }),
       response: {
         200: z.object({
           certificateProfiles: PkiCertificateProfilesSchema.extend({
+            certificateAuthority: z
+              .object({
+                id: z.string(),
+                status: z.string(),
+                name: z.string(),
+                isExternal: z.boolean().optional(),
+                externalType: z.string().nullable().optional()
+              })
+              .optional(),
             metrics: z
               .object({
                 profileId: z.string(),
@@ -232,9 +336,27 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
             acmeConfig: z
               .object({
                 id: z.string(),
-                directoryUrl: z.string()
+                directoryUrl: z.string(),
+                skipDnsOwnershipVerification: z.boolean().optional(),
+                skipEabBinding: z.boolean().optional()
               })
-              .optional()
+              .optional(),
+            scepConfig: z
+              .object({
+                id: z.string(),
+                scepEndpointUrl: z.string(),
+                raCertificatePem: z.string(),
+                raCertExpiresAt: z.date(),
+                includeCaCertInResponse: z.boolean(),
+                allowCertBasedRenewal: z.boolean(),
+                challengeType: z.string(),
+                challengeEndpointUrl: z.string().optional(),
+                dynamicChallengeExpiryMinutes: z.number().optional(),
+                dynamicChallengeMaxPending: z.number().optional()
+              })
+              .optional(),
+            externalConfigs: ExternalConfigUnionSchema,
+            defaults: CertificateProfileDefaultsResponseSchema
           }).array(),
           totalCount: z.number()
         })
@@ -247,16 +369,17 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
         actorOrgId: req.permission.orgId,
-        ...req.query
+        ...req.query,
+        projectId: req.internalCertManagerProjectId
       });
 
       await server.services.auditLog.createAuditLog({
         ...req.auditLogInfo,
-        projectId: req.query.projectId,
+        projectId: req.internalCertManagerProjectId,
         event: {
           type: EventType.LIST_CERTIFICATE_PROFILES,
           metadata: {
-            projectId: req.query.projectId
+            projectId: req.internalCertManagerProjectId
           }
         }
       });
@@ -273,6 +396,7 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "getCertificateProfile" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       params: z.object({
         id: z.string().uuid()
@@ -280,15 +404,20 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
       response: {
         200: z.object({
           certificateProfile: PkiCertificateProfilesSchema.extend({
+            externalConfigs: ExternalConfigUnionSchema,
+            defaults: CertificateProfileDefaultsResponseSchema
+          }).extend({
             certificateAuthority: z
               .object({
                 id: z.string(),
                 projectId: z.string(),
                 status: z.string(),
-                name: z.string()
+                name: z.string(),
+                isExternal: z.boolean().optional(),
+                externalType: z.string().nullable().optional()
               })
               .optional(),
-            certificateTemplate: z
+            certificatePolicy: z
               .object({
                 id: z.string(),
                 projectId: z.string(),
@@ -300,7 +429,6 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
               .object({
                 id: z.string(),
                 disableBootstrapCaValidation: z.boolean(),
-                passphrase: z.string(),
                 caChain: z.string().optional()
               })
               .optional(),
@@ -310,7 +438,30 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
                 autoRenew: z.boolean(),
                 renewBeforeDays: z.number().optional()
               })
-              .optional()
+              .optional(),
+            acmeConfig: z
+              .object({
+                id: z.string(),
+                directoryUrl: z.string(),
+                skipDnsOwnershipVerification: z.boolean().optional(),
+                skipEabBinding: z.boolean().optional()
+              })
+              .optional(),
+            scepConfig: z
+              .object({
+                id: z.string(),
+                scepEndpointUrl: z.string(),
+                raCertificatePem: z.string(),
+                raCertExpiresAt: z.date(),
+                includeCaCertInResponse: z.boolean(),
+                allowCertBasedRenewal: z.boolean(),
+                challengeType: z.string(),
+                challengeEndpointUrl: z.string().optional(),
+                dynamicChallengeExpiryMinutes: z.number().optional(),
+                dynamicChallengeMaxPending: z.number().optional()
+              })
+              .optional(),
+            externalConfigs: ExternalConfigUnionSchema
           })
         })
       }
@@ -349,16 +500,17 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "getCertificateProfileBySlug" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       params: z.object({
         slug: z.string().min(1)
       }),
-      querystring: z.object({
-        projectId: z.string().min(1)
-      }),
       response: {
         200: z.object({
-          certificateProfile: PkiCertificateProfilesSchema
+          certificateProfile: PkiCertificateProfilesSchema.extend({
+            externalConfigs: ExternalConfigUnionSchema,
+            defaults: CertificateProfileDefaultsResponseSchema
+          })
         })
       }
     },
@@ -369,7 +521,7 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
         actorOrgId: req.permission.orgId,
-        projectId: req.query.projectId,
+        projectId: req.internalCertManagerProjectId,
         slug: req.params.slug
       });
 
@@ -385,6 +537,7 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "updateCertificateProfile" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       params: z.object({
         id: z.string().uuid()
@@ -397,8 +550,8 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
             .max(255)
             .regex(new RE2("^[a-z0-9-]+$"), "Slug must contain only lowercase letters, numbers, and hyphens")
             .optional(),
-          description: z.string().max(1000).optional(),
-          enrollmentType: z.nativeEnum(EnrollmentType).optional(),
+          description: z.string().max(1000).nullable().optional(),
+          enrollmentType: z.nativeEnum(EnrollmentType).optional().describe(openApiHidden()),
           issuerType: z.nativeEnum(IssuerType).optional(),
           estConfig: z
             .object({
@@ -406,13 +559,55 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
               passphrase: z.string().min(1).optional(),
               caChain: z.string().optional()
             })
-            .optional(),
+            .optional()
+            .describe(openApiHidden()),
           apiConfig: z
             .object({
               autoRenew: z.boolean().default(false),
               renewBeforeDays: z.number().min(1).max(30).optional()
             })
             .optional()
+            .describe(openApiHidden()),
+          acmeConfig: z
+            .object({
+              skipDnsOwnershipVerification: z.boolean().optional(),
+              skipEabBinding: z.boolean().optional()
+            })
+            .optional()
+            .describe(openApiHidden()),
+          scepConfig: z
+            .object({
+              challengeType: z.nativeEnum(ScepChallengeType).optional(),
+              challengePassword: z.string().optional(),
+              includeCaCertInResponse: z.boolean().optional(),
+              allowCertBasedRenewal: z.boolean().optional(),
+              dynamicChallengeExpiryMinutes: z.number().int().min(1).max(1440).optional(),
+              dynamicChallengeMaxPending: z.number().int().min(1).max(1000).optional()
+            })
+            .optional()
+            .describe(openApiHidden()),
+          externalConfigs: ExternalConfigUnionSchema,
+          defaults: z
+            .object({
+              ttlDays: z.number().int().positive().optional(),
+              commonName: z.string().optional(),
+              keyAlgorithm: z.nativeEnum(CertKeyAlgorithm).optional(),
+              signatureAlgorithm: z.nativeEnum(CertSignatureAlgorithm).optional(),
+              keyUsages: z.array(z.nativeEnum(CertKeyUsageType)).optional(),
+              extendedKeyUsages: z.array(z.nativeEnum(CertExtendedKeyUsageType)).optional(),
+              basicConstraints: z
+                .object({
+                  isCA: z.boolean(),
+                  pathLength: z.number().int().min(0).optional()
+                })
+                .optional(),
+              organization: z.string().optional(),
+              organizationalUnit: z.string().optional(),
+              country: z.string().optional(),
+              state: z.string().optional(),
+              locality: z.string().optional()
+            })
+            .nullish()
         })
         .refine(
           (data) => {
@@ -431,10 +626,36 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
           {
             message: "Cannot have EST config with API enrollment type or API config with EST enrollment type."
           }
+        )
+        .refine(
+          (data) => {
+            if (data.acmeConfig) {
+              return !(data.acmeConfig.skipEabBinding && data.acmeConfig.skipDnsOwnershipVerification);
+            }
+            return true;
+          },
+          {
+            message: "Cannot skip both External Account Binding (EAB) and DNS ownership verification at the same time."
+          }
+        )
+        .refine(
+          (data) => {
+            if (data.scepConfig?.challengePassword) {
+              if (data.scepConfig.challengeType === ScepChallengeType.DYNAMIC) return true;
+              return data.scepConfig.challengePassword.length >= 8;
+            }
+            return true;
+          },
+          {
+            message: "SCEP static challenge requires a challenge password with at least 8 characters"
+          }
         ),
       response: {
         200: z.object({
-          certificateProfile: PkiCertificateProfilesSchema
+          certificateProfile: PkiCertificateProfilesSchema.extend({
+            externalConfigs: ExternalConfigUnionSchema,
+            defaults: CertificateProfileDefaultsResponseSchema
+          })
         })
       }
     },
@@ -473,13 +694,17 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "deleteCertificateProfile" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       params: z.object({
         id: z.string().uuid()
       }),
       response: {
         200: z.object({
-          certificateProfile: PkiCertificateProfilesSchema
+          certificateProfile: PkiCertificateProfilesSchema.extend({
+            externalConfigs: ExternalConfigUnionSchema,
+            defaults: CertificateProfileDefaultsResponseSchema
+          })
         })
       }
     },
@@ -505,6 +730,15 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
         }
       });
 
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CertificateProfileDeleted,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          orgId: req.permission.orgId
+        }
+      });
+
       return { certificateProfile };
     }
   });
@@ -517,6 +751,7 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "listCertificateProfileCertificates" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       params: z.object({
         id: z.string().uuid()
@@ -567,6 +802,7 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "getCertificateProfileLatestActiveBundle" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       description: "Get latest active certificate bundle for a profile",
       params: z.object({
@@ -632,6 +868,7 @@ export const registerCertificateProfilesRouter = async (server: FastifyZodProvid
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: "revealCertificateProfileAcmeEabSecret" } : {}),
       tags: [ApiDocsTags.PkiCertificateProfiles],
       params: z.object({
         id: z.string().uuid()

@@ -15,6 +15,7 @@ export const registerAuthRoutes = async (server: FastifyZodProvider) => {
       rateLimit: authRateLimit
     },
     schema: {
+      operationId: "logout",
       response: {
         200: z.object({
           message: z.string()
@@ -22,21 +23,28 @@ export const registerAuthRoutes = async (server: FastifyZodProvider) => {
       }
     },
     handler: async (req, res) => {
-      const { decodedToken } = await server.services.authToken.validateRefreshToken(req.cookies.jid);
       const appCfg = getConfig();
 
-      await server.services.login.logout(decodedToken.userId, decodedToken.tokenVersionId);
+      try {
+        const { decodedToken } = await server.services.authToken.validateRefreshToken(req.cookies.jid);
+        await server.services.login.logout(decodedToken.userId, decodedToken.tokenVersionId);
+      } catch (err) {
+        // If token validation fails (e.g. expired/malformed refresh token),
+        // we still proceed to clear all session cookies below.
+        req.log.warn(err, "Logout token validation failed; proceeding to clear cookies");
+      }
 
       void res.cookie("jid", "", {
         httpOnly: true,
-        path: "/",
+        path: "/api",
         sameSite: "strict",
-        secure: appCfg.HTTPS_ENABLED
+        secure: appCfg.HTTPS_ENABLED,
+        maxAge: 0
       });
 
       void res.cookie("infisical-project-assume-privileges", "", {
         httpOnly: true,
-        path: "/",
+        path: "/api",
         sameSite: "strict",
         secure: appCfg.HTTPS_ENABLED,
         maxAge: 0
@@ -44,7 +52,7 @@ export const registerAuthRoutes = async (server: FastifyZodProvider) => {
 
       void res.cookie("aod", "", {
         httpOnly: false,
-        path: "/",
+        path: "/api",
         sameSite: "lax",
         secure: appCfg.HTTPS_ENABLED,
         maxAge: 0
@@ -61,6 +69,7 @@ export const registerAuthRoutes = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "checkAuth",
       response: {
         200: z.object({
           message: z.literal("Authenticated")
@@ -78,25 +87,57 @@ export const registerAuthRoutes = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "refreshAuthToken",
       response: {
         200: z.object({
           token: z.string(),
-          organizationId: z.string().optional()
+          refreshToken: z.string().optional(),
+          organizationId: z.string().optional(),
+          subOrganizationId: z.string().optional()
         })
       }
     },
-    handler: async (req) => {
-      const { decodedToken, tokenVersion } = await server.services.authToken.validateRefreshToken(req.cookies.jid);
+    handler: async (req, res) => {
       const appCfg = getConfig();
+
+      let decodedToken;
+      let tokenVersion;
+      let isGraceHit;
+      try {
+        ({ decodedToken, tokenVersion, isGraceHit } = await server.services.authToken.validateRefreshToken(
+          req.cookies.jid
+        ));
+      } catch (err) {
+        // Clear the expired/invalid jid cookie so it doesn't cause login loops
+        // when the browser keeps sending the stale cookie on subsequent requests.
+        void res.cookie("jid", "", {
+          httpOnly: true,
+          path: "/api",
+          sameSite: "strict",
+          secure: appCfg.HTTPS_ENABLED,
+          maxAge: 0
+        });
+        throw err;
+      }
+
+      let newRefreshToken: string | undefined;
+
+      if (!isGraceHit) {
+        // Normal rotation: issue new refresh token and invalidate the old one
+        const rotation = await server.services.authToken.rotateRefreshToken(decodedToken, tokenVersion);
+        newRefreshToken = rotation.newRefreshToken;
+      }
+
       let expiresIn: string | number = appCfg.JWT_AUTH_LIFETIME;
+
       if (decodedToken.organizationId) {
-        const org = await server.services.org.findOrganizationById(
-          decodedToken.userId,
-          decodedToken.organizationId,
-          decodedToken.authMethod,
-          decodedToken.organizationId,
-          decodedToken.organizationId
-        );
+        const org = await server.services.org.findOrganizationById({
+          userId: decodedToken.userId,
+          orgId: decodedToken.subOrganizationId ? decodedToken.subOrganizationId : decodedToken.organizationId,
+          actorAuthMethod: decodedToken.authMethod,
+          actorOrgId: decodedToken.subOrganizationId ? decodedToken.subOrganizationId : decodedToken.organizationId,
+          rootOrgId: decodedToken.organizationId
+        });
         if (org && org.userTokenExpiration) {
           expiresIn = getMinExpiresIn(appCfg.JWT_AUTH_LIFETIME, org.userTokenExpiration);
         }
@@ -110,6 +151,7 @@ export const registerAuthRoutes = async (server: FastifyZodProvider) => {
           tokenVersionId: tokenVersion.id,
           accessVersion: tokenVersion.accessVersion,
           organizationId: decodedToken.organizationId,
+          ...(decodedToken.subOrganizationId && { subOrganizationId: decodedToken.subOrganizationId }),
           isMfaVerified: decodedToken.isMfaVerified,
           mfaMethod: decodedToken.mfaMethod
         },
@@ -117,7 +159,22 @@ export const registerAuthRoutes = async (server: FastifyZodProvider) => {
         { expiresIn }
       );
 
-      return { token, organizationId: decodedToken.organizationId };
+      // Set rotated refresh token cookie (only when rotation happened, not on grace hits)
+      if (newRefreshToken) {
+        void res.setCookie("jid", newRefreshToken, {
+          httpOnly: true,
+          path: "/api",
+          sameSite: "strict",
+          secure: appCfg.HTTPS_ENABLED
+        });
+      }
+
+      return {
+        token,
+        refreshToken: newRefreshToken,
+        organizationId: decodedToken.organizationId,
+        subOrganizationId: decodedToken.subOrganizationId
+      };
     }
   });
 };

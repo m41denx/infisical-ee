@@ -2,10 +2,12 @@ import { useState } from "react";
 import { DiRedis } from "react-icons/di";
 import {
   SiApachecassandra,
+  SiClickhouse,
   SiCouchbase,
   SiElasticsearch,
   SiFiles,
   SiKubernetes,
+  SiMilvus,
   SiMongodb,
   SiRabbitmq,
   SiSap,
@@ -13,7 +15,7 @@ import {
 } from "react-icons/si";
 import { VscAzure } from "react-icons/vsc";
 import { faAws, faGithub, faGoogle } from "@fortawesome/free-brands-svg-icons";
-import { faClock, faDatabase } from "@fortawesome/free-solid-svg-icons";
+import { faClock, faDatabase, faGlobe, faTerminal } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -24,15 +26,19 @@ import { ProjectEnv } from "@app/hooks/api/types";
 
 import { AwsElastiCacheInputForm } from "./AwsElastiCacheInputForm";
 import { AwsIamInputForm } from "./AwsIamInputForm";
+import { AwsMemoryDbInputForm } from "./AwsMemoryDbInputForm";
 import { AzureEntraIdInputForm } from "./AzureEntraIdInputForm";
 import { AzureSqlDatabaseInputForm } from "./AzureSqlDatabaseInputForm";
 import { CassandraInputForm } from "./CassandraInputForm";
+import { ClickHouseInputForm } from "./ClickHouseInputForm";
 import { CouchbaseInputForm } from "./CouchbaseInputForm";
 import { ElasticSearchInputForm } from "./ElasticSearchInputForm";
 import { GcpIamInputForm } from "./GcpIamInputForm";
 import { GithubInputForm } from "./GithubInputForm";
+import { IbmApiConnectInputForm } from "./IbmApiConnectInputForm";
 import { KubernetesInputForm } from "./KubernetesInputForm";
 import { LdapInputForm } from "./LdapInputForm";
+import { MilvusInputForm } from "./MilvusInputForm";
 import { MongoAtlasInputForm } from "./MongoAtlasInputForm";
 import { MongoDBDatabaseInputForm } from "./MongoDBInputForm";
 import { RabbitMqInputForm } from "./RabbitMqInputForm";
@@ -41,6 +47,7 @@ import { SapAseInputForm } from "./SapAseInputForm";
 import { SapHanaInputForm } from "./SapHanaInputForm";
 import { SnowflakeInputForm } from "./SnowflakeInputForm";
 import { SqlDatabaseInputForm } from "./SqlDatabaseInputForm";
+import { SshInputForm } from "./SshInputForm";
 import { TotpInputForm } from "./TotpInputForm";
 import { VerticaInputForm } from "./VerticaInputForm";
 
@@ -78,6 +85,11 @@ const DYNAMIC_SECRET_LIST = [
     icon: <FontAwesomeIcon icon={faAws} size="lg" />,
     provider: DynamicSecretProviders.AwsElastiCache,
     title: "AWS ElastiCache"
+  },
+  {
+    icon: <FontAwesomeIcon icon={faAws} size="lg" />,
+    provider: DynamicSecretProviders.AwsMemoryDb,
+    title: "AWS MemoryDB"
   },
   {
     icon: <FontAwesomeIcon icon={faAws} size="lg" />,
@@ -163,6 +175,26 @@ const DYNAMIC_SECRET_LIST = [
     icon: <SiCouchbase size="1.5rem" />,
     provider: DynamicSecretProviders.Couchbase,
     title: "Couchbase"
+  },
+  {
+    icon: <SiMilvus size="1.5rem" />,
+    provider: DynamicSecretProviders.Milvus,
+    title: "Milvus"
+  },
+  {
+    icon: <SiClickhouse size="1.5rem" />,
+    provider: DynamicSecretProviders.Clickhouse,
+    title: "ClickHouse"
+  },
+  {
+    icon: <FontAwesomeIcon icon={faTerminal} size="lg" />,
+    provider: DynamicSecretProviders.Ssh,
+    title: "SSH"
+  },
+  {
+    icon: <FontAwesomeIcon icon={faGlobe} size="lg" />,
+    provider: DynamicSecretProviders.IbmApiConnect,
+    title: "IBM API Connect"
   }
 ];
 
@@ -291,6 +323,25 @@ export const CreateDynamicSecretForm = ({
                 exit={{ opacity: 0, translateX: -30 }}
               >
                 <AwsElastiCacheInputForm
+                  onCompleted={handleFormReset}
+                  onCancel={handleFormReset}
+                  projectSlug={projectSlug}
+                  secretPath={secretPath}
+                  environments={environments}
+                  isSingleEnvironmentMode={isSingleEnvironmentMode}
+                />
+              </motion.div>
+            )}
+          {wizardStep === WizardSteps.ProviderInputs &&
+            selectedProvider === DynamicSecretProviders.AwsMemoryDb && (
+              <motion.div
+                key="dynamic-aws-memorydb-step"
+                transition={{ duration: 0.1 }}
+                initial={{ opacity: 0, translateX: 30 }}
+                animate={{ opacity: 1, translateX: 0 }}
+                exit={{ opacity: 0, translateX: -30 }}
+              >
+                <AwsMemoryDbInputForm
                   onCompleted={handleFormReset}
                   onCancel={handleFormReset}
                   projectSlug={projectSlug}
@@ -634,6 +685,82 @@ export const CreateDynamicSecretForm = ({
                 exit={{ opacity: 0, translateX: -30 }}
               >
                 <CouchbaseInputForm
+                  onCompleted={handleFormReset}
+                  onCancel={handleFormReset}
+                  projectSlug={projectSlug}
+                  secretPath={secretPath}
+                  environments={environments}
+                  isSingleEnvironmentMode={isSingleEnvironmentMode}
+                />
+              </motion.div>
+            )}
+          {wizardStep === WizardSteps.ProviderInputs &&
+            selectedProvider === DynamicSecretProviders.Milvus && (
+              <motion.div
+                key="dynamic-milvus-step"
+                transition={{ duration: 0.1 }}
+                initial={{ opacity: 0, translateX: 30 }}
+                animate={{ opacity: 1, translateX: 0 }}
+                exit={{ opacity: 0, translateX: -30 }}
+              >
+                <MilvusInputForm
+                  onCompleted={handleFormReset}
+                  onCancel={handleFormReset}
+                  projectSlug={projectSlug}
+                  secretPath={secretPath}
+                  environments={environments}
+                  isSingleEnvironmentMode={isSingleEnvironmentMode}
+                />
+              </motion.div>
+            )}
+          {wizardStep === WizardSteps.ProviderInputs &&
+            selectedProvider === DynamicSecretProviders.Clickhouse && (
+              <motion.div
+                key="dynamic-clickhouse-step"
+                transition={{ duration: 0.1 }}
+                initial={{ opacity: 0, translateX: 30 }}
+                animate={{ opacity: 1, translateX: 0 }}
+                exit={{ opacity: 0, translateX: -30 }}
+              >
+                <ClickHouseInputForm
+                  onCompleted={handleFormReset}
+                  onCancel={handleFormReset}
+                  projectSlug={projectSlug}
+                  secretPath={secretPath}
+                  environments={environments}
+                  isSingleEnvironmentMode={isSingleEnvironmentMode}
+                />
+              </motion.div>
+            )}
+          {wizardStep === WizardSteps.ProviderInputs &&
+            selectedProvider === DynamicSecretProviders.Ssh && (
+              <motion.div
+                key="dynamic-ssh-step"
+                transition={{ duration: 0.1 }}
+                initial={{ opacity: 0, translateX: 30 }}
+                animate={{ opacity: 1, translateX: 0 }}
+                exit={{ opacity: 0, translateX: -30 }}
+              >
+                <SshInputForm
+                  onCompleted={handleFormReset}
+                  onCancel={handleFormReset}
+                  projectSlug={projectSlug}
+                  secretPath={secretPath}
+                  environments={environments}
+                  isSingleEnvironmentMode={isSingleEnvironmentMode}
+                />
+              </motion.div>
+            )}
+          {wizardStep === WizardSteps.ProviderInputs &&
+            selectedProvider === DynamicSecretProviders.IbmApiConnect && (
+              <motion.div
+                key="dynamic-ibm-api-connect-step"
+                transition={{ duration: 0.1 }}
+                initial={{ opacity: 0, translateX: 30 }}
+                animate={{ opacity: 1, translateX: 0 }}
+                exit={{ opacity: 0, translateX: -30 }}
+              >
+                <IbmApiConnectInputForm
                   onCompleted={handleFormReset}
                   onCancel={handleFormReset}
                   projectSlug={projectSlug}

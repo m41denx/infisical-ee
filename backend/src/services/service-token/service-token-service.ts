@@ -3,14 +3,18 @@ import { ForbiddenError, subject } from "@casl/ability";
 import { ActionProjectType } from "@app/db/schemas";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import {
+  buildServiceTokenProjectPermission,
   ProjectPermissionActions,
   ProjectPermissionSecretActions,
   ProjectPermissionSub
 } from "@app/ee/services/permission/project-permission";
+import { validatePermissionBoundary } from "@app/lib/casl/boundary";
 import { getConfig } from "@app/lib/config/env";
 import { crypto } from "@app/lib/crypto/cryptography";
-import { ForbiddenRequestError, NotFoundError, UnauthorizedError } from "@app/lib/errors";
+import { ForbiddenRequestError, NotFoundError, PermissionBoundaryError, UnauthorizedError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 
 import { TAccessTokenQueueServiceFactory } from "../access-token-queue/access-token-queue";
 import { ActorType } from "../auth/auth-type";
@@ -74,12 +78,58 @@ export const serviceTokenServiceFactory = ({
     });
     ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionActions.Create, ProjectPermissionSub.ServiceTokens);
 
+    const canRead = permissions.includes("read");
+    const canWrite = permissions.includes("write");
+
     scopes.forEach(({ environment, secretPath }) => {
-      ForbiddenError.from(permission).throwUnlessCan(
-        ProjectPermissionSecretActions.Create,
-        subject(ProjectPermissionSub.Secrets, { environment, secretPath })
-      );
+      const secretSubject = subject(ProjectPermissionSub.Secrets, { environment, secretPath });
+
+      ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionSecretActions.Create, secretSubject);
+
+      if (canRead) {
+        const hasLegacyReadUmbrella = permission.can(
+          ProjectPermissionSecretActions.DescribeAndReadValue,
+          secretSubject
+        );
+        if (!hasLegacyReadUmbrella) {
+          ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionSecretActions.ReadValue, secretSubject);
+          ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionSecretActions.DescribeSecret, secretSubject);
+        }
+      }
+
+      if (canWrite) {
+        ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionSecretActions.Edit, secretSubject);
+        ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionSecretActions.Delete, secretSubject);
+      }
     });
+
+    if (canRead) {
+      const tokenAbilityLegacy = buildServiceTokenProjectPermission(scopes, permissions);
+      const boundaryLegacy = validatePermissionBoundary(permission, tokenAbilityLegacy);
+      if (!boundaryLegacy.isValid) {
+        const tokenAbilityGranular = buildServiceTokenProjectPermission(scopes, permissions, { useLegacyRead: false });
+        const boundaryGranular = validatePermissionBoundary(permission, tokenAbilityGranular);
+        if (!boundaryGranular.isValid) {
+          const legacyMissing = boundaryLegacy.missingPermissions ?? [];
+          const granularMissing = boundaryGranular.missingPermissions ?? [];
+          const decisiveMissing = legacyMissing.length <= granularMissing.length ? legacyMissing : granularMissing;
+          throw new PermissionBoundaryError({
+            message: "Cannot create service token whose permissions exceed the caller's permissions",
+            details: { missingPermissions: decisiveMissing }
+          });
+        }
+      }
+    } else {
+      // Write-only tokens have no read aliasing concern; a single boundary check suffices.
+      const tokenAbility = buildServiceTokenProjectPermission(scopes, permissions);
+      const boundary = validatePermissionBoundary(permission, tokenAbility);
+      if (!boundary.isValid) {
+        throw new PermissionBoundaryError({
+          message: "Cannot create service token whose permissions exceed the caller's permissions",
+          details: { missingPermissions: boundary.missingPermissions }
+        });
+      }
+    }
 
     const appCfg = getConfig();
 
@@ -174,7 +224,9 @@ export const serviceTokenServiceFactory = ({
     const serviceToken = await serviceTokenDAL.findById(tokenIdentifier);
 
     if (!serviceToken) throw new NotFoundError({ message: `Service token with ID '${tokenIdentifier}' not found` });
-    const project = await projectDAL.findById(serviceToken.projectId);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(serviceToken.projectId), () =>
+      projectDAL.findById(serviceToken.projectId)
+    );
 
     if (!project) throw new NotFoundError({ message: `Project with ID '${serviceToken.projectId}' not found` });
 
@@ -187,7 +239,9 @@ export const serviceTokenServiceFactory = ({
     if (!isMatch) throw new UnauthorizedError({ message: "Invalid service token" });
     await accessTokenQueue.updateServiceTokenStatus(serviceToken.id);
 
-    const serviceTokenOrgDetails = await orgDAL.findById(project.orgId);
+    const serviceTokenOrgDetails = await requestMemoize(requestMemoKeys.orgFindById(project.orgId), () =>
+      orgDAL.findById(project.orgId)
+    );
 
     return {
       ...serviceToken,

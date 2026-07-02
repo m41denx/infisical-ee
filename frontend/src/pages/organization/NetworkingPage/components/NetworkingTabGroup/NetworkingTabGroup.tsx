@@ -8,9 +8,8 @@ import { GatewayTab } from "../GatewayTab/GatewayTab";
 import { RelayTab } from "../RelayTab/RelayTab";
 
 export const NetworkingTabGroup = () => {
-  const navigate = useNavigate({
-    from: ROUTE_PATHS.Organization.NetworkingPage.path
-  });
+  const navigate = useNavigate();
+  const { currentOrg, isSubOrganization } = useOrganization();
   const selectedTab = useSearch({
     from: ROUTE_PATHS.Organization.NetworkingPage.id,
     select: (el) => el.selectedTab,
@@ -18,24 +17,24 @@ export const NetworkingTabGroup = () => {
   });
 
   const tabs = [
-    { name: "Gateways", key: "gateways", component: GatewayTab },
-    { name: "Relays", key: "relays", component: RelayTab }
+    { key: "gateways", label: "Gateways", component: GatewayTab },
+    { key: "relays", label: "Relays", component: RelayTab }
   ];
 
-  const handleTabChange = (tab: string) => {
+  const updateSelectedTab = (tab: string) => {
     navigate({
+      to: "/organizations/$orgId/networking",
+      params: { orgId: currentOrg.id },
       search: { selectedTab: tab }
     });
   };
 
-  const { isSubOrganization } = useOrganization();
-
   return (
-    <Tabs orientation="vertical" value={selectedTab} onValueChange={handleTabChange}>
+    <Tabs value={selectedTab} onValueChange={updateSelectedTab}>
       <TabList>
-        {tabs.map((tab) => (
-          <Tab variant={isSubOrganization ? "namespace" : "org"} value={tab.key} key={tab.key}>
-            {tab.name}
+        {tabs.map(({ key, label }) => (
+          <Tab variant={isSubOrganization ? "namespace" : "org"} value={key} key={`tab-${key}`}>
+            {label}
           </Tab>
         ))}
       </TabList>

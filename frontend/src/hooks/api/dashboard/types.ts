@@ -1,6 +1,7 @@
 import { ProjectPermissionSecretActions } from "@app/context/ProjectPermissionContext/types";
 import { TDynamicSecret } from "@app/hooks/api/dynamicSecret/types";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
+import { TDashboardHoneyToken } from "@app/hooks/api/honeyTokens/types";
 import { TSecretFolder } from "@app/hooks/api/secretFolders/types";
 import { TSecretImport } from "@app/hooks/api/secretImports/types";
 import { TSecretRotationV2 } from "@app/hooks/api/secretRotationsV2";
@@ -19,6 +20,8 @@ export type DashboardProjectSecretsOverviewResponse = {
     secrets: (SecretV3Raw | null)[];
   })[];
   totalSecretRotationCount?: number;
+  honeyTokens?: TDashboardHoneyToken[];
+  totalHoneyTokenCount?: number;
   totalCount: number;
   totalUniqueSecretsInPage: number;
   totalUniqueDynamicSecretsInPage: number;
@@ -45,11 +48,13 @@ export type DashboardProjectSecretsDetailsResponse = {
   secretRotations?: (TSecretRotationV2 & {
     secrets: (SecretV3Raw | null)[];
   })[];
+  honeyTokens?: TDashboardHoneyToken[];
   totalImportCount?: number;
   totalFolderCount?: number;
   totalDynamicSecretCount?: number;
   totalSecretCount?: number;
   totalSecretRotationCount?: number;
+  totalHoneyTokenCount?: number;
   totalCount: number;
   importedBy?: ProjectSecretsImportedBy[];
   usedBySecretSyncs?: UsedBySecretSyncs[];
@@ -76,6 +81,7 @@ export type DashboardProjectSecretsOverview = Omit<
   secretRotations?: (TSecretRotationV2 & {
     secrets: (SecretV3RawSanitized | null)[];
   })[];
+  honeyTokens?: TDashboardHoneyToken[];
 };
 
 export type DashboardProjectSecretsDetails = Omit<
@@ -86,6 +92,7 @@ export type DashboardProjectSecretsDetails = Omit<
   secretRotations?: (TSecretRotationV2 & {
     secrets: (SecretV3RawSanitized | null)[];
   })[];
+  honeyTokens?: TDashboardHoneyToken[];
 };
 
 export enum DashboardSecretsOrderBy {
@@ -100,11 +107,13 @@ export type TGetDashboardProjectSecretsOverviewDTO = {
   orderBy?: DashboardSecretsOrderBy;
   orderDirection?: OrderByDirection;
   search?: string;
+  tags?: Record<string, boolean>;
   includeSecrets?: boolean;
   includeFolders?: boolean;
   includeDynamicSecrets?: boolean;
   includeImports?: boolean;
   includeSecretRotations?: boolean;
+  includeHoneyTokens?: boolean;
   environments: string[];
 };
 
@@ -173,3 +182,29 @@ export type DashboardSecretValue =
       value: undefined;
       valueOverride: string;
     };
+
+export type FolderMoveBlockingType =
+  | "dynamic_secret"
+  | "secret_rotation"
+  | "honey_token"
+  | "secret_import"
+  | "secret_approval_policy";
+
+export type FolderMoveEligibilityResponse = {
+  canMove: boolean;
+  folderName: string;
+  blockingType?: FolderMoveBlockingType;
+  blockingPath?: string;
+  // present only when the eligibility check was given a destination
+  destinationBlocked?: boolean;
+  // the destination policy's path/name are disclosed only when the actor may read that path
+  destinationBlockingPath?: string;
+  destinationPolicyName?: string;
+};
+
+export type TFolderMoveDestinationCheck = {
+  folderId: string;
+  folderName: string;
+  destinationEnvironment: string;
+  destinationPath: string;
+};

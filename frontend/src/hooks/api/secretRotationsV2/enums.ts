@@ -8,7 +8,18 @@ export enum SecretRotation {
   LdapPassword = "ldap-password",
   AwsIamUserSecret = "aws-iam-user-secret",
   OktaClientSecret = "okta-client-secret",
-  RedisCredentials = "redis-credentials"
+  RedisCredentials = "redis-credentials",
+  MongoDBCredentials = "mongodb-credentials",
+  DatabricksServicePrincipalSecret = "databricks-service-principal-secret",
+  UnixLinuxLocalAccount = "unix-linux-local-account",
+  DbtServiceToken = "dbt-service-token",
+  WindowsLocalAccount = "windows-local-account",
+  OpenRouterApiKey = "open-router-api-key",
+  HpIloLocalAccount = "hp-ilo-local-account",
+  SupabaseApiKey = "supabase-api-key",
+  SalesforceOauthCredentials = "salesforce-oauth-credentials",
+  DatadogApplicationKeySecret = "datadog-application-key-secret",
+  ConvexAccessKey = "convex-access-key"
 }
 
 export enum SecretRotationStatus {

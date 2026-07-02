@@ -1,4 +1,14 @@
+import { UserAgentType } from "@app/ee/services/audit-log/audit-log-types";
 import { TProjectPermission } from "@app/lib/types";
+
+export type TLoginUaDTO = {
+  clientId: string;
+  clientSecret: string;
+  ip: string;
+  organizationSlug?: string;
+  userAgent?: string;
+  userAgentType?: UserAgentType;
+};
 
 export type TAttachUaDTO = {
   identityId: string;

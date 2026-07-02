@@ -1,9 +1,10 @@
 /* eslint-disable no-await-in-loop */
-import { ForbiddenError } from "@casl/ability";
+import { ForbiddenError, subject } from "@casl/ability";
 
 import { ActionProjectType } from "@app/db/schemas";
 import { Event, EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ProjectPermissionCommitsActions, ProjectPermissionSub } from "@app/ee/services/permission/project-permission";
+import { AUDIT_LOG_SENSITIVE_VALUE } from "@app/lib/config/const";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 import { ActorAuthMethod, ActorType } from "@app/services/auth/auth-type";
@@ -19,6 +20,7 @@ import {
 } from "@app/services/folder-commit-changes/folder-commit-changes-dal";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 import { TProjectEnvDALFactory } from "@app/services/project-env/project-env-dal";
+import { TSecretQueueFactory } from "@app/services/secret/secret-queue";
 import { TSecretServiceFactory } from "@app/services/secret/secret-service";
 import { TProcessNewCommitRawDTO } from "@app/services/secret/secret-types";
 import { TSecretFolderDALFactory } from "@app/services/secret-folder/secret-folder-dal";
@@ -48,6 +50,7 @@ type TPitServiceFactoryDep = {
   projectDAL: Pick<TProjectDALFactory, "checkProjectUpgradeStatus" | "findProjectBySlug" | "findById">;
   secretV2BridgeService: TSecretV2BridgeServiceFactory;
   folderCommitDAL: Pick<TFolderCommitDALFactory, "transaction">;
+  secretQueueService: Pick<TSecretQueueFactory, "syncSecrets">;
 };
 
 export type TPitServiceFactory = ReturnType<typeof pitServiceFactory>;
@@ -63,7 +66,8 @@ export const pitServiceFactory = ({
   secretApprovalPolicyService,
   projectDAL,
   secretV2BridgeService,
-  folderCommitDAL
+  folderCommitDAL,
+  secretQueueService
 }: TPitServiceFactoryDep) => {
   const getCommitsCount = async ({
     actor,
@@ -344,6 +348,11 @@ export const pitServiceFactory = ({
     message?: string;
     environment: string;
   }) => {
+    const [folderWithPath] = await folderDAL.findSecretPathByFolderIds(projectId, [folderId]);
+    if (!folderWithPath) {
+      throw new NotFoundError({ message: `Folder with ID ${folderId} not found` });
+    }
+
     const { permission: userPermission } = await permissionService.getProjectPermission({
       actor,
       actorId,
@@ -353,10 +362,32 @@ export const pitServiceFactory = ({
       actionProjectType: ActionProjectType.SecretManager
     });
 
-    ForbiddenError.from(userPermission).throwUnlessCan(
-      ProjectPermissionCommitsActions.PerformRollback,
-      ProjectPermissionSub.Commits
-    );
+    if (deepRollback) {
+      ForbiddenError.from(userPermission).throwUnlessCan(
+        ProjectPermissionCommitsActions.PerformRollback,
+        subject(ProjectPermissionSub.Commits, {
+          environment,
+          secretPath: folderWithPath.path
+        })
+      );
+
+      const deeperPath = folderWithPath.path === "/" ? "/**" : `${folderWithPath.path.replace(/\/$/, "")}/**`;
+      ForbiddenError.from(userPermission).throwUnlessCan(
+        ProjectPermissionCommitsActions.PerformRollback,
+        subject(ProjectPermissionSub.Commits, {
+          environment,
+          secretPath: deeperPath
+        })
+      );
+    } else {
+      ForbiddenError.from(userPermission).throwUnlessCan(
+        ProjectPermissionCommitsActions.PerformRollback,
+        subject(ProjectPermissionSub.Commits, {
+          environment,
+          secretPath: folderWithPath.path
+        })
+      );
+    }
 
     const latestCommit = await folderCommitService.getLatestCommit({
       folderId,
@@ -396,7 +427,33 @@ export const pitServiceFactory = ({
     }
 
     if (deepRollback) {
-      await folderCommitService.deepRollbackFolder(commitId, env.id, actorId, actor, projectId, message);
+      const { affectedFolderIds } = await folderCommitService.deepRollbackFolder(
+        commitId,
+        env.id,
+        actorId,
+        actor,
+        projectId,
+        message
+      );
+
+      // Trigger secret syncs for all affected folders in the deep rollback
+      const folderPaths = await folderDAL.findSecretPathByFolderIds(projectId, affectedFolderIds);
+      await Promise.all(
+        folderPaths
+          .filter((fp): fp is NonNullable<typeof fp> => fp != null && fp.path != null && fp.environmentSlug != null)
+          .map((fp) =>
+            secretQueueService.syncSecrets({
+              secretPath: fp.path,
+              projectId,
+              orgId: actorOrgId,
+              environmentSlug: fp.environmentSlug,
+              environmentName: fp.environmentName,
+              actorId,
+              actor
+            })
+          )
+      );
+
       return { success: true };
     }
 
@@ -416,6 +473,23 @@ export const pitServiceFactory = ({
       projectId,
       reconstructNewFolders: deepRollback
     });
+
+    // Trigger secret sync for the rolled-back folder if changes were made
+    if (response.totalChanges > 0) {
+      const folderPaths = await folderDAL.findSecretPathByFolderIds(projectId, [folderId]);
+      const folderPath = folderPaths?.[0];
+      if (folderPath?.path != null && folderPath.environmentSlug != null) {
+        await secretQueueService.syncSecrets({
+          secretPath: folderPath.path,
+          projectId,
+          orgId: actorOrgId,
+          environmentSlug: folderPath.environmentSlug,
+          environmentName: folderPath.environmentName,
+          actorId,
+          actor
+        });
+      }
+    }
 
     return {
       success: true,
@@ -448,6 +522,23 @@ export const pitServiceFactory = ({
       actorOrgId,
       projectId
     });
+
+    // Trigger secret sync for the reverted folder
+    if (response.folderId) {
+      const folderPaths = await folderDAL.findSecretPathByFolderIds(projectId, [response.folderId]);
+      const folderPath = folderPaths?.[0];
+      if (folderPath?.path != null && folderPath.environmentSlug != null) {
+        await secretQueueService.syncSecrets({
+          secretPath: folderPath.path,
+          projectId,
+          orgId: actorOrgId,
+          environmentSlug: folderPath.environmentSlug,
+          environmentName: folderPath.environmentName,
+          actorId,
+          actor
+        });
+      }
+    }
 
     return response;
   };
@@ -679,6 +770,27 @@ export const pitServiceFactory = ({
       }
 
       if (policy) {
+        // When a policy exists, secret changes go through approval workflow
+        // but folder changes should still be committed immediately since they're not affected by approval policies
+        let commitId: string | undefined;
+        if (commitChanges.length > 0) {
+          const commit = await folderCommitService.createCommit(
+            {
+              actor: {
+                type: actor || ActorType.PLATFORM,
+                metadata: {
+                  id: actorId
+                }
+              },
+              message,
+              folderId: targetFolder.id,
+              changes: commitChanges
+            },
+            trx
+          );
+          commitId = commit?.id;
+        }
+
         if (
           (changes.secrets?.create?.length ?? 0) > 0 ||
           (changes.secrets?.update?.length ?? 0) > 0 ||
@@ -688,6 +800,7 @@ export const pitServiceFactory = ({
             policy,
             secretPath,
             environment,
+            commitMessage: message,
             projectId,
             actor,
             actorId,
@@ -723,11 +836,13 @@ export const pitServiceFactory = ({
           });
           return {
             approvalId: approval.id,
+            commitId,
             folderChanges,
             secretMutationEvents
           };
         }
         return {
+          commitId,
           folderChanges,
           secretMutationEvents
         };
@@ -755,7 +870,12 @@ export const pitServiceFactory = ({
               secretId: secret.id,
               secretKey: secret.secretKey,
               secretVersion: secret.version,
-              secretTags: secret.tags?.map((tag) => tag.name)
+              secretTags: secret.tags?.map((tag) => tag.name),
+              secretMetadata: secret.secretMetadata?.map((meta) => ({
+                key: meta.key,
+                isEncrypted: meta.isEncrypted,
+                value: meta.isEncrypted ? AUDIT_LOG_SENSITIVE_VALUE : meta.value
+              }))
             }))
           }
         });
@@ -783,7 +903,12 @@ export const pitServiceFactory = ({
               secretId: secret.id,
               secretKey: secret.secretKey,
               secretVersion: secret.version,
-              secretTags: secret.tags?.map((tag) => tag.name)
+              secretTags: secret.tags?.map((tag) => tag.name),
+              secretMetadata: secret.secretMetadata?.map((meta) => ({
+                key: meta.key,
+                isEncrypted: meta.isEncrypted,
+                value: meta.isEncrypted ? AUDIT_LOG_SENSITIVE_VALUE : meta.value
+              }))
             }))
           }
         });

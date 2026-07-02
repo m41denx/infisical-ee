@@ -5,13 +5,15 @@ import * as crypto from "crypto";
 import { TCertificateSyncs } from "@app/db/schemas";
 import { request } from "@app/lib/config/request";
 import { logger } from "@app/lib/logger";
+import { blockLocalAndPrivateIpAddresses } from "@app/lib/validator";
 import { TAppConnectionDALFactory } from "@app/services/app-connection/app-connection-dal";
-import { getAzureConnectionAccessToken } from "@app/services/app-connection/azure-key-vault";
+import { getAzureConnectionAccessToken } from "@app/services/app-connection/azure-key-vault/azure-key-vault-connection-fns";
 import { TCertificateDALFactory } from "@app/services/certificate/certificate-dal";
 import { TCertificateSyncDALFactory } from "@app/services/certificate-sync/certificate-sync-dal";
 import { CertificateSyncStatus } from "@app/services/certificate-sync/certificate-sync-enums";
 import { createConnectionQueue, RateLimitConfig } from "@app/services/connection-queue";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
+import { certificateNameSchemaHasFreeTextPlaceholder } from "@app/services/pki-sync/pki-sync-certificate-name-fns";
 import { matchesCertificateNameSchema } from "@app/services/pki-sync/pki-sync-fns";
 import { TCertificateMap } from "@app/services/pki-sync/pki-sync-types";
 
@@ -42,8 +44,7 @@ const isInfisicalManagedCertificate = (certificateName: string, pkiSync: TPkiSyn
   const certificateNameSchema = syncOptions?.certificateNameSchema;
 
   if (certificateNameSchema) {
-    const environment = "global";
-    return matchesCertificateNameSchema(certificateName, environment, certificateNameSchema);
+    return matchesCertificateNameSchema(certificateName, certificateNameSchema);
   }
 
   return certificateName.startsWith("Infisical-PKI-Sync-");
@@ -211,6 +212,8 @@ export const azureKeyVaultPkiSyncFactory = ({
   certificateDAL
 }: TAzureKeyVaultPkiSyncFactoryDeps) => {
   const $getAzureKeyVaultCertificates = async (accessToken: string, vaultBaseUrl: string, syncId = "unknown") => {
+    await blockLocalAndPrivateIpAddresses(vaultBaseUrl);
+
     const paginateAzureKeyVaultCertificates = async () => {
       let result: GetAzureKeyVaultCertificate[] = [];
 
@@ -218,6 +221,7 @@ export const azureKeyVaultPkiSyncFactory = ({
 
       while (currentUrl) {
         const urlToFetch = currentUrl; // Capture current URL to avoid loop function issue
+        await blockLocalAndPrivateIpAddresses(urlToFetch);
         const res = await withRateLimitRetry(
           () =>
             request.get<{ value: GetAzureKeyVaultCertificate[]; nextLink: string }>(urlToFetch, {
@@ -248,14 +252,13 @@ export const azureKeyVaultPkiSyncFactory = ({
     const certificateResults = await executeWithConcurrencyLimit(
       enabledAzureKeyVaultCertificates,
       async (getAzureKeyVaultCertificate) => {
-        const azureKeyVaultCertificate = await request.get<GetAzureKeyVaultCertificate>(
-          `${getAzureKeyVaultCertificate.id}?api-version=7.4`,
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`
-            }
+        const certificateDetailUrl = `${getAzureKeyVaultCertificate.id}?api-version=7.4`;
+        await blockLocalAndPrivateIpAddresses(certificateDetailUrl);
+        const azureKeyVaultCertificate = await request.get<GetAzureKeyVaultCertificate>(certificateDetailUrl, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`
           }
-        );
+        });
 
         let certPem = "";
         if (azureKeyVaultCertificate.data.cer) {
@@ -445,21 +448,23 @@ export const azureKeyVaultPkiSyncFactory = ({
         }
       });
 
-      Object.keys(vaultCertificates).forEach((certificateName) => {
-        const isInfisicalManaged = isInfisicalManagedCertificate(certificateName, pkiSync);
+      if (!certificateNameSchemaHasFreeTextPlaceholder(syncOptions?.certificateNameSchema)) {
+        Object.keys(vaultCertificates).forEach((certificateName) => {
+          const isInfisicalManaged = isInfisicalManagedCertificate(certificateName, pkiSync);
 
-        if (isInfisicalManaged) {
-          const isTrackedInSyncRecords = existingSyncRecords.some(
-            (record) => record.externalIdentifier === certificateName
-          );
+          if (isInfisicalManaged) {
+            const isTrackedInSyncRecords = existingSyncRecords.some(
+              (record) => record.externalIdentifier === certificateName
+            );
 
-          const isInActiveSet = activeExternalIdentifiers.has(certificateName);
+            const isInActiveSet = activeExternalIdentifiers.has(certificateName);
 
-          if (!isTrackedInSyncRecords && !isInActiveSet && !certificatesToRemove.includes(certificateName)) {
-            certificatesToRemove.push(certificateName);
+            if (!isTrackedInSyncRecords && !isInActiveSet && !certificatesToRemove.includes(certificateName)) {
+              certificatesToRemove.push(certificateName);
+            }
           }
-        }
-      });
+        });
+      }
     }
 
     // Upload certificates to Azure Key Vault with rate limiting
@@ -732,6 +737,8 @@ export const azureKeyVaultPkiSyncFactory = ({
 
     // Cast destination config to Azure Key Vault config
     const destinationConfig = pkiSync.destinationConfig as TAzureKeyVaultPkiSyncConfig;
+
+    await blockLocalAndPrivateIpAddresses(destinationConfig.vaultBaseUrl);
 
     const existingSyncRecords = await certificateSyncDAL.findByPkiSyncId(pkiSync.id);
     const certificateNamesToRemove: string[] = [];

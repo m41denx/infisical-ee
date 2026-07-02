@@ -4,7 +4,11 @@ export {
   OrgPermissionActions,
   OrgPermissionAuditLogsActions,
   OrgPermissionBillingActions,
+  OrgPermissionEmailDomainActions,
   OrgPermissionGroupActions,
+  OrgPermissionHoneyTokenActions,
   OrgPermissionIdentityActions,
+  OrgPermissionProjectActions,
+  OrgPermissionSsoActions,
   OrgPermissionSubjects
 } from "./types";

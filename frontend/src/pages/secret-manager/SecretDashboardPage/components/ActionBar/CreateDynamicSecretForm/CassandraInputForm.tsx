@@ -1,9 +1,13 @@
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
+import { faQuestionCircle } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
 import ms from "ms";
 import { z } from "zod";
 
 import { TtlFormLabel } from "@app/components/features";
+import { createNotification } from "@app/components/notifications";
 import {
   Accordion,
   AccordionContent,
@@ -14,12 +18,22 @@ import {
   FormControl,
   Input,
   SecretInput,
-  TextArea
+  Switch,
+  TextArea,
+  Tooltip
 } from "@app/components/v2";
+import { ProjectPermissionSub, useProject } from "@app/context";
+import { useCanUseProjectAppConnectionImport } from "@app/hooks";
 import { useCreateDynamicSecret } from "@app/hooks/api";
+import { useListAvailableAppConnections } from "@app/hooks/api/appConnections";
+import { AppConnection } from "@app/hooks/api/appConnections/enums";
 import { DynamicSecretProviders } from "@app/hooks/api/dynamicSecret/types";
+import { VaultDatabaseRole } from "@app/hooks/api/migration/types";
 import { ProjectEnv } from "@app/hooks/api/types";
 import { slugSchema } from "@app/lib/schemas";
+
+import { LoadFromVaultBanner } from "./components/LoadFromVaultBanner";
+import { VaultCassandraImportModal } from "./VaultCassandraImportModal";
 
 const formSchema = z.object({
   provider: z.object({
@@ -32,7 +46,8 @@ const formSchema = z.object({
     creationStatement: z.string().min(1),
     revocationStatement: z.string().min(1),
     renewStatement: z.string().optional(),
-    ca: z.string().optional()
+    ca: z.string().optional(),
+    sslRejectUnauthorized: z.boolean().default(true)
   }),
   defaultTTL: z.string().superRefine((val, ctx) => {
     const valMs = ms(val);
@@ -84,20 +99,129 @@ export const CassandraInputForm = ({
   projectSlug,
   isSingleEnvironmentMode
 }: Props) => {
+  const [isVaultImportModalOpen, setIsVaultImportModalOpen] = useState(false);
+
+  const { projectId } = useProject();
+  const canUseAppConnectionImport = useCanUseProjectAppConnectionImport(
+    ProjectPermissionSub.Secrets
+  );
+  const { data: vaultAppConnections = [] } = useListAvailableAppConnections(
+    AppConnection.HCVault,
+    projectId,
+    { enabled: canUseAppConnectionImport }
+  );
+
   const {
     control,
     formState: { isSubmitting },
-    handleSubmit
+    handleSubmit,
+    setValue
   } = useForm<TForm>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      provider: getSqlStatements(),
+      provider: { ...getSqlStatements(), sslRejectUnauthorized: true },
       environment: isSingleEnvironmentMode ? environments[0] : undefined,
       usernameTemplate: "{{randomUsername}}"
     }
   });
 
   const createDynamicSecret = useCreateDynamicSecret();
+
+  const handleVaultImport = (role: VaultDatabaseRole) => {
+    try {
+      setValue("name", role.name);
+
+      // Parse hosts field or connection_url
+      const hostsField = role.config.connection_details.hosts || "";
+      const connectionUrl = role.config.connection_details.connection_url || "";
+      const connectionString = hostsField || connectionUrl;
+
+      try {
+        const trimmedUrl = connectionString.trim();
+        if (trimmedUrl) {
+          // Try to extract host and port from various formats
+          const parts = trimmedUrl.split(",");
+          const hosts: string[] = [];
+          let port = 9042; // Default Cassandra port
+
+          parts.forEach((part) => {
+            const hostPort = part.trim().split(":");
+            hosts.push(hostPort[0]);
+            if (hostPort[1]) {
+              port = parseInt(hostPort[1], 10);
+            }
+          });
+
+          if (hosts.length > 0) {
+            setValue("provider.host", hosts.join(","));
+          }
+          if (!Number.isNaN(port)) {
+            setValue("provider.port", port);
+          }
+        }
+      } catch {
+        createNotification({
+          type: "info",
+          text: "Could not parse connection URL. Host and port fields may need to be filled manually."
+        });
+      }
+
+      if (role.config.connection_details.username) {
+        setValue("provider.username", role.config.connection_details.username);
+      }
+
+      if (role.config.connection_details.tls_ca) {
+        setValue("provider.ca", role.config.connection_details.tls_ca);
+      }
+
+      // Convert {{name}} variable to {{username}}
+      const convertVaultVariables = (statement: string) =>
+        statement.replace(/\{\{name\}\}/g, "{{username}}");
+
+      // Set statements
+      if (role.creation_statements && role.creation_statements.length > 0) {
+        setValue(
+          "provider.creationStatement",
+          role.creation_statements.map(convertVaultVariables).join("\n")
+        );
+      }
+
+      if (role.revocation_statements && role.revocation_statements.length > 0) {
+        setValue(
+          "provider.revocationStatement",
+          role.revocation_statements.map(convertVaultVariables).join("\n")
+        );
+      }
+
+      if (role.renew_statements && role.renew_statements.length > 0) {
+        setValue(
+          "provider.renewStatement",
+          role.renew_statements.map(convertVaultVariables).join("\n")
+        );
+      }
+
+      // Set TTLs
+      if (role.default_ttl) {
+        const defaultTTL = `${role.default_ttl}s`;
+        setValue("defaultTTL", defaultTTL);
+      }
+
+      if (role.max_ttl) {
+        const maxTTL = `${role.max_ttl}s`;
+        setValue("maxTTL", maxTTL);
+      }
+
+      createNotification({
+        type: "info",
+        text: "Configuration loaded successfully from HashiCorp Vault"
+      });
+    } catch {
+      createNotification({
+        type: "error",
+        text: "Failed to load configuration from HashiCorp Vault"
+      });
+    }
+  };
 
   const handleCreateDynamicSecret = async ({
     name,
@@ -129,6 +253,7 @@ export const CassandraInputForm = ({
     <div>
       <form onSubmit={handleSubmit(handleCreateDynamicSecret)} autoComplete="off">
         <div>
+          <LoadFromVaultBanner onClick={() => setIsVaultImportModalOpen(true)} />
           <div className="flex items-center space-x-2">
             <div className="grow">
               <Controller
@@ -291,6 +416,37 @@ export const CassandraInputForm = ({
                     </FormControl>
                   )}
                 />
+                <Controller
+                  name="provider.sslRejectUnauthorized"
+                  control={control}
+                  render={({ field: { value, onChange }, fieldState: { error } }) => (
+                    <FormControl isError={Boolean(error?.message)} errorText={error?.message}>
+                      <Switch
+                        className="bg-mineshaft-400/50 shadow-inner data-[state=checked]:bg-green/80"
+                        id="ssl-reject-unauthorized"
+                        thumbClassName="bg-mineshaft-800"
+                        isChecked={value}
+                        onCheckedChange={onChange}
+                      >
+                        <p className="w-full">
+                          SSL Reject Unauthorized
+                          <Tooltip
+                            className="max-w-md"
+                            content={
+                              <p>
+                                If enabled, the server certificate will be verified against the list
+                                of supplied CAs. Disable this option if you are using a self-signed
+                                certificate.
+                              </p>
+                            }
+                          >
+                            <FontAwesomeIcon icon={faQuestionCircle} size="sm" className="ml-1" />
+                          </Tooltip>
+                        </p>
+                      </Switch>
+                    </FormControl>
+                  )}
+                />
                 <Accordion type="single" collapsible className="mb-2 w-full bg-mineshaft-700">
                   <AccordionItem value="advance-statements">
                     <AccordionTrigger>Modify CQL Statements</AccordionTrigger>
@@ -409,6 +565,12 @@ export const CassandraInputForm = ({
             Cancel
           </Button>
         </div>
+        <VaultCassandraImportModal
+          isOpen={isVaultImportModalOpen}
+          onOpenChange={setIsVaultImportModalOpen}
+          appConnections={vaultAppConnections}
+          onImport={handleVaultImport}
+        />
       </form>
     </div>
   );

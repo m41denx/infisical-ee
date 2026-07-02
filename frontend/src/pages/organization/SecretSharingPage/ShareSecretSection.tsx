@@ -17,21 +17,40 @@ enum SecretSharingPageTabs {
 
 export const ShareSecretSection = () => {
   const navigate = useNavigate();
-  const { isSubOrganization, currentOrg } = useOrganization();
-
+  const { currentOrg, isSubOrganization } = useOrganization();
   const { selectedTab } = useSearch({
     from: ROUTE_PATHS.Organization.SecretSharing.id
   });
 
+  const tabs = [
+    { key: SecretSharingPageTabs.ShareSecret, label: "Share Secrets", component: ShareSecretTab },
+    {
+      key: SecretSharingPageTabs.RequestSecret,
+      label: "Request Secrets",
+      component: RequestSecretTab
+    },
+    ...(!isSubOrganization
+      ? [
+          {
+            key: SecretSharingPageTabs.Settings,
+            label: "Settings",
+            component: SecretSharingSettingsTab
+          }
+        ]
+      : [])
+  ];
+
+  const activeTab = tabs.some((tab) => tab.key === selectedTab)
+    ? selectedTab
+    : SecretSharingPageTabs.ShareSecret;
+
   const updateSelectedTab = (tab: string) => {
     navigate({
-      to: ROUTE_PATHS.Organization.SecretSharing.path,
+      to: "/organizations/$orgId/projects/secret-management/secret-sharing",
       params: { orgId: currentOrg.id },
-      search: (prev) => ({ ...prev, selectedTab: tab as SecretSharingPageTabs })
+      search: { selectedTab: tab }
     });
   };
-
-  const tabVariant = isSubOrganization ? "namespace" : "org";
 
   return (
     <div>
@@ -41,29 +60,19 @@ export const ShareSecretSection = () => {
         <meta property="og:image" content="/images/message.png" />
       </Helmet>
 
-      <Tabs orientation="vertical" value={selectedTab} onValueChange={updateSelectedTab}>
+      <Tabs value={activeTab} onValueChange={updateSelectedTab}>
         <TabList>
-          <Tab variant={tabVariant} value={SecretSharingPageTabs.ShareSecret}>
-            Share Secrets
-          </Tab>
-          <Tab variant={tabVariant} value={SecretSharingPageTabs.RequestSecret}>
-            Request Secrets
-          </Tab>
-          {!isSubOrganization && (
-            <Tab variant={tabVariant} value={SecretSharingPageTabs.Settings}>
-              Settings
+          {tabs.map(({ key, label }) => (
+            <Tab variant="project" value={key} key={`tab-${key}`}>
+              {label}
             </Tab>
-          )}
+          ))}
         </TabList>
-        <TabPanel value={SecretSharingPageTabs.ShareSecret}>
-          <ShareSecretTab />
-        </TabPanel>
-        <TabPanel value={SecretSharingPageTabs.RequestSecret}>
-          <RequestSecretTab />
-        </TabPanel>
-        <TabPanel value={SecretSharingPageTabs.Settings}>
-          <SecretSharingSettingsTab />
-        </TabPanel>
+        {tabs.map(({ key, component: Component }) => (
+          <TabPanel value={key} key={`tab-panel-${key}`}>
+            <Component />
+          </TabPanel>
+        ))}
       </Tabs>
     </div>
   );

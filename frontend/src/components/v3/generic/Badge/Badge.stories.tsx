@@ -4,6 +4,9 @@ import {
   AlertTriangleIcon,
   AsteriskIcon,
   BanIcon,
+  BoxesIcon as SubOrgIcon,
+  BoxIcon as ProjectIcon,
+  Building2Icon as OrgIcon,
   CheckIcon,
   ChevronsUpDownIcon,
   CircleXIcon,
@@ -15,7 +18,7 @@ import {
   UserIcon
 } from "lucide-react";
 
-import { OrgIcon, ProjectIcon, SubOrgIcon } from "../../platform";
+import { ButtonGroup } from "../ButtonGroup";
 import { Badge } from "./Badge";
 
 /**
@@ -33,9 +36,30 @@ const meta = {
   argTypes: {
     variant: {
       control: "select",
-      options: ["neutral", "success", "info", "warning", "danger", "project", "org", "sub-org"]
+      options: [
+        "default",
+        "outline",
+        "neutral",
+        "success",
+        "info",
+        "warning",
+        "danger",
+        "project",
+        "org",
+        "sub-org"
+      ]
     },
     isTruncatable: {
+      table: {
+        disable: true
+      }
+    },
+    isFullWidth: {
+      table: {
+        disable: true
+      }
+    },
+    isSquare: {
       table: {
         disable: true
       }
@@ -57,6 +81,38 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const Default: Story = {
+  name: "Variant: Default",
+  args: {
+    variant: "default",
+    children: <>Default</>
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Use this variant when other badge variants are not applicable or as the key when displaying key-value pairs with ButtonGroup."
+      }
+    }
+  }
+};
+
+export const Outline: Story = {
+  name: "Variant: Outline",
+  args: {
+    variant: "outline",
+    children: <>Outline</>
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Use this variant when other badge variants are not applicable or as the value when displaying key-value pairs with ButtonGroup."
+      }
+    }
+  }
+};
+
 export const Neutral: Story = {
   name: "Variant: Neutral",
   args: {
@@ -71,8 +127,7 @@ export const Neutral: Story = {
   parameters: {
     docs: {
       description: {
-        story:
-          "Use this variant when indicating neutral or disabled states or when linking to external documents."
+        story: "Use this variant when indicating neutral or disabled states."
       }
     }
   }
@@ -133,7 +188,8 @@ export const Info: Story = {
   parameters: {
     docs: {
       description: {
-        story: "Use this variant when indicating informational states."
+        story:
+          "Use this variant when indicating informational states or when linking to external documentation."
       }
     }
   }
@@ -372,5 +428,24 @@ export const IsFullWidth: Story = {
     <div className="w-32">
       <Story />
     </div>
+  )
+};
+
+export const KeyValuePair: Story = {
+  name: "Example: Key-Value Pair",
+  args: {},
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Use a default and outline badge in conjunction with the `<ButtonGroup />` component to display key-value pairs."
+      }
+    }
+  },
+  decorators: () => (
+    <ButtonGroup>
+      <Badge>Key</Badge>
+      <Badge variant="outline">Value</Badge>
+    </ButtonGroup>
   )
 };

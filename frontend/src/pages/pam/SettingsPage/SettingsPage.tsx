@@ -1,17 +1,23 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { InfoIcon } from "lucide-react";
 
-import { PageHeader, Tab, TabList, TabPanel, Tabs } from "@app/components/v2";
+import { PageHeader } from "@app/components/v2";
+import { ROUTE_PATHS } from "@app/const/routes";
 import { useOrganization } from "@app/context";
 import { ProjectType } from "@app/hooks/api/projects/types";
 import { ProjectGeneralTab } from "@app/pages/project/SettingsPage/components/ProjectGeneralTab";
 
+import { PamRecordingConfigTab } from "./components/PamRecordingConfigTab";
+
 export const SettingsPage = () => {
   const { t } = useTranslation();
+  const { currentOrg, isSubOrganization } = useOrganization();
 
-  const { currentOrg } = useOrganization();
+  const { selectedTab } = useSearch({
+    from: ROUTE_PATHS.Pam.SettingsPage.id
+  });
 
   return (
     <div className="flex h-full w-full justify-center bg-bunker-800 text-white">
@@ -31,19 +37,12 @@ export const SettingsPage = () => {
             }}
             className="flex items-center gap-x-1.5 text-xs whitespace-nowrap text-neutral hover:underline"
           >
-            <InfoIcon size={12} /> Looking for organization settings?
+            <InfoIcon size={12} /> Looking for {isSubOrganization ? "sub-" : ""}organization
+            settings?
           </Link>
         </PageHeader>
-        <Tabs orientation="vertical" defaultValue="tab-project-general">
-          <TabList>
-            <Tab variant="project" value="tab-project-general">
-              General
-            </Tab>
-          </TabList>
-          <TabPanel value="tab-project-general">
-            <ProjectGeneralTab />
-          </TabPanel>
-        </Tabs>
+        {selectedTab === "tab-project-general" && <ProjectGeneralTab />}
+        {selectedTab === "tab-pam-session-recording" && <PamRecordingConfigTab />}
       </div>
     </div>
   );

@@ -1,35 +1,38 @@
-import { faCertificate, faEllipsis } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { subject } from "@casl/ability";
 import * as x509 from "@peculiar/x509";
 import { format } from "date-fns";
 import FileSaver from "file-saver";
-import { twMerge } from "tailwind-merge";
+import { EllipsisIcon } from "lucide-react";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
+import { Lottie } from "@app/components/v2";
 import {
+  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  EmptyState,
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+  IconButton,
   Table,
-  TableContainer,
-  TableSkeleton,
-  TBody,
-  Td,
-  Th,
-  THead,
-  Tr
-} from "@app/components/v2";
-import { Badge } from "@app/components/v3";
-import { ProjectPermissionActions, ProjectPermissionSub } from "@app/context";
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@app/components/v3";
+import { ProjectPermissionCertificateAuthorityActions, ProjectPermissionSub } from "@app/context";
 import { useGetCaCerts } from "@app/hooks/api";
 
 type Props = {
   caId: string;
+  caName: string;
 };
 
-export const CaCertificatesTable = ({ caId }: Props) => {
+export const CaCertificatesTable = ({ caId, caName }: Props) => {
   const { data: caCerts, isPending } = useGetCaCerts(caId);
 
   const downloadTxtFile = (filename: string, content: string) => {
@@ -37,97 +40,100 @@ export const CaCertificatesTable = ({ caId }: Props) => {
     FileSaver.saveAs(blob, filename);
   };
 
+  if (isPending) {
+    return (
+      <div className="flex h-40 w-full items-center justify-center">
+        <Lottie icon="infisical_loading_white" isAutoPlay className="w-16" />
+      </div>
+    );
+  }
+
+  if (!caCerts?.length) {
+    return (
+      <Empty className="border">
+        <EmptyHeader>
+          <EmptyTitle>This CA does not have any CA certificates installed</EmptyTitle>
+          <EmptyDescription>Install a CA certificate to get started</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
   return (
-    <TableContainer>
-      <Table>
-        <THead>
-          <Tr>
-            <Th>CA Certificate #</Th>
-            <Th>Not Before</Th>
-            <Th>Not After</Th>
-            <Th className="w-5" />
-          </Tr>
-        </THead>
-        <TBody>
-          {isPending && <TableSkeleton columns={4} innerKey="ca-certificates" />}
-          {!isPending &&
-            caCerts?.map?.((caCert, index) => {
-              const isLastItem = index === caCerts.length - 1;
-              const caCertObj = new x509.X509Certificate(caCert.certificate);
-              return (
-                <Tr key={`ca-cert=${caCert.serialNumber}`}>
-                  <Td>
-                    <div className="flex items-center">
-                      CA Certificate {caCert.version}
-                      {isLastItem && (
-                        <Badge variant="info" className="ml-4">
-                          Current
-                        </Badge>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>CA Certificate #</TableHead>
+          <TableHead>Not Before</TableHead>
+          <TableHead>Not After</TableHead>
+          <TableHead className="w-5" />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {caCerts.map((caCert, index) => {
+          const isLastItem = index === caCerts.length - 1;
+          const caCertObj = new x509.X509Certificate(caCert.certificate);
+          return (
+            <TableRow key={`ca-cert=${caCert.serialNumber}`}>
+              <TableCell>
+                <div className="flex items-center gap-x-2">
+                  CA Certificate {caCert.version}
+                  {isLastItem && <Badge variant="info">Current</Badge>}
+                </div>
+              </TableCell>
+              <TableCell>{format(new Date(caCertObj.notBefore), "yyyy-MM-dd")}</TableCell>
+              <TableCell>{format(new Date(caCertObj.notAfter), "yyyy-MM-dd")}</TableCell>
+              <TableCell>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <IconButton variant="ghost" size="xs">
+                      <EllipsisIcon />
+                    </IconButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <ProjectPermissionCan
+                      I={ProjectPermissionCertificateAuthorityActions.Read}
+                      a={subject(ProjectPermissionSub.CertificateAuthorities, {
+                        name: caName
+                      })}
+                    >
+                      {(isAllowed) => (
+                        <DropdownMenuItem
+                          isDisabled={!isAllowed}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            downloadTxtFile("cert.pem", caCert.certificate);
+                          }}
+                        >
+                          Download CA Certificate
+                        </DropdownMenuItem>
                       )}
-                    </div>
-                  </Td>
-                  <Td>{format(new Date(caCertObj.notBefore), "yyyy-MM-dd")}</Td>
-                  <Td>{format(new Date(caCertObj.notAfter), "yyyy-MM-dd")}</Td>
-                  <Td>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild className="rounded-lg">
-                        <div className="hover:text-primary-400 data-[state=open]:text-primary-400">
-                          <FontAwesomeIcon size="sm" icon={faEllipsis} />
-                        </div>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" className="p-1">
-                        <ProjectPermissionCan
-                          I={ProjectPermissionActions.Edit}
-                          a={ProjectPermissionSub.Identity}
+                    </ProjectPermissionCan>
+                    <ProjectPermissionCan
+                      I={ProjectPermissionCertificateAuthorityActions.Read}
+                      a={subject(ProjectPermissionSub.CertificateAuthorities, {
+                        name: caName
+                      })}
+                    >
+                      {(isAllowed) => (
+                        <DropdownMenuItem
+                          isDisabled={!isAllowed}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            downloadTxtFile("chain.pem", caCert.certificateChain);
+                          }}
                         >
-                          {(isAllowed) => (
-                            <DropdownMenuItem
-                              className={twMerge(
-                                !isAllowed && "pointer-events-none cursor-not-allowed opacity-50"
-                              )}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                downloadTxtFile("cert.pem", caCert.certificate);
-                              }}
-                              disabled={!isAllowed}
-                            >
-                              Download CA Certificate
-                            </DropdownMenuItem>
-                          )}
-                        </ProjectPermissionCan>
-                        <ProjectPermissionCan
-                          I={ProjectPermissionActions.Delete}
-                          a={ProjectPermissionSub.Identity}
-                        >
-                          {(isAllowed) => (
-                            <DropdownMenuItem
-                              className={twMerge(
-                                !isAllowed && "pointer-events-none cursor-not-allowed opacity-50"
-                              )}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                downloadTxtFile("chain.pem", caCert.certificateChain);
-                              }}
-                              disabled={!isAllowed}
-                            >
-                              Download CA Certificate Chain
-                            </DropdownMenuItem>
-                          )}
-                        </ProjectPermissionCan>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </Td>
-                </Tr>
-              );
-            })}
-        </TBody>
-      </Table>
-      {!isPending && !caCerts?.length && (
-        <EmptyState
-          title="This CA does not have any CA certificates installed"
-          icon={faCertificate}
-        />
-      )}
-    </TableContainer>
+                          Download CA Certificate Chain
+                        </DropdownMenuItem>
+                      )}
+                    </ProjectPermissionCan>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 };

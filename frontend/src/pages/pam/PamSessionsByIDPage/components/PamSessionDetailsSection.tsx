@@ -5,12 +5,13 @@ import { PackageOpenIcon } from "lucide-react";
 import { IconButton, Tooltip } from "@app/components/v2";
 import { Badge } from "@app/components/v3";
 import { useTimedReset } from "@app/hooks";
-import { PAM_RESOURCE_TYPE_MAP, TPamSession } from "@app/hooks/api/pam";
+import { PAM_RESOURCE_TYPE_MAP, PamSessionStatus, TPamSession } from "@app/hooks/api/pam";
 
 import { PamSessionStatusBadge } from "../../PamSessionsPage/components/PamSessionStatusBadge";
 
 type Props = {
   session: TPamSession;
+  statusOverride?: PamSessionStatus;
 };
 
 const DetailItem = ({ label, children }: { label: string; children: React.ReactNode }) => (
@@ -34,9 +35,12 @@ export const PamSessionDetailsSection = ({
     actorIp,
     actorUserAgent,
     startedAt,
-    expiresAt
-  }
+    expiresAt,
+    reason
+  },
+  statusOverride
 }: Props) => {
+  const displayStatus = statusOverride ?? status;
   const [copyTextId, isCopyingId, setCopyTextId] = useTimedReset<string>({
     initialState: "Copy ID to clipboard"
   });
@@ -95,7 +99,7 @@ export const PamSessionDetailsSection = ({
         </DetailItem>
 
         <DetailItem label="Status">
-          <PamSessionStatusBadge status={status} />
+          <PamSessionStatusBadge status={displayStatus} />
         </DetailItem>
 
         <DetailItem label="IP Address">
@@ -104,6 +108,12 @@ export const PamSessionDetailsSection = ({
 
         <DetailItem label="User Agent">
           <p className="truncate">{actorUserAgent}</p>
+        </DetailItem>
+
+        <DetailItem label="Reason">
+          <div className="max-h-32 overflow-y-auto">
+            <p className="break-words whitespace-pre-wrap">{reason || "—"}</p>
+          </div>
         </DetailItem>
 
         <DetailItem label="Created At">

@@ -6,8 +6,10 @@ import { ApiDocsTags, FOLDERS } from "@app/lib/api-docs";
 import { prefixWithSlash, removeTrailingSlash } from "@app/lib/fn";
 import { isValidFolderName } from "@app/lib/validator";
 import { readLimit, secretsLimit } from "@app/server/config/rateLimiter";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 import { booleanSchema } from "../sanitizedSchemas";
 
@@ -20,6 +22,7 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "createSecretFolder",
       tags: [ApiDocsTags.Folders],
       description: "Create folders",
       security: [
@@ -78,6 +81,19 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
           }
         }
       });
+
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.SecretFolderCreated,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          projectId: req.body.projectId,
+          environment: req.body.environment,
+          folderPath: req.body.path,
+          folderId: folder.id
+        }
+      });
+
       return { folder };
     }
   });
@@ -90,6 +106,7 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "updateSecretFolder",
       tags: [ApiDocsTags.Folders],
       description: "Update folder",
       security: [
@@ -152,6 +169,20 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretFolderUpdated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            projectId: req.body.projectId,
+            environment: req.body.environment,
+            folderId: folder.id
+          }
+        })
+        .catch(() => {});
+
       return { folder };
     }
   });
@@ -164,6 +195,7 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "updateSecretFoldersBatch",
       tags: [ApiDocsTags.Folders],
       description: "Update folders by batch",
       security: [
@@ -244,6 +276,7 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "deleteSecretFolder",
       tags: [ApiDocsTags.Folders],
       description: "Delete a folder",
       security: [
@@ -296,6 +329,20 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretFolderDeleted,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            projectId: req.body.projectId,
+            environment: req.body.environment,
+            folderId: folder.id
+          }
+        })
+        .catch(() => {});
+
       return { folder };
     }
   });
@@ -308,6 +355,7 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "listSecretFolders",
       tags: [ApiDocsTags.Folders],
       description: "Get folders",
       security: [
@@ -356,6 +404,7 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
     },
     schema: {
       hide: false,
+      operationId: "getSecretFolderById",
       tags: [ApiDocsTags.Folders],
       description: "Get folder by id",
       security: [
@@ -390,6 +439,70 @@ export const registerSecretFolderRouter = async (server: FastifyZodProvider) => 
         id: req.params.id
       });
       return { folder };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/move",
+    config: {
+      rateLimit: secretsLimit
+    },
+    schema: {
+      hide: false,
+      operationId: "moveSecretFolder",
+      tags: [ApiDocsTags.Folders],
+      description: "Move a folder and its static-secret contents to a new path, optionally in a different environment",
+      security: [
+        {
+          bearerAuth: []
+        }
+      ],
+      body: z.object({
+        projectId: z.string().trim(),
+        folderId: z.string().trim().uuid(),
+        destinationEnvironment: z.string().trim(),
+        destinationPath: z.string().trim().default("/").transform(prefixWithSlash).transform(removeTrailingSlash)
+      }),
+      response: {
+        200: z.object({
+          folderId: z.string(),
+          sourceEnvironment: z.string(),
+          sourcePath: z.string(),
+          destinationEnvironment: z.string(),
+          destinationPath: z.string()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const result = await server.services.folder.moveFolder({
+        actorId: req.permission.id,
+        actor: req.permission.type,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId,
+        projectId: req.body.projectId,
+        folderId: req.body.folderId,
+        destinationEnvironment: req.body.destinationEnvironment,
+        destinationPath: req.body.destinationPath
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: req.body.projectId,
+        event: {
+          type: EventType.MOVE_FOLDER,
+          metadata: {
+            folderId: result.folderId,
+            sourceEnvironment: result.sourceEnvironment,
+            sourcePath: result.sourcePath,
+            destinationEnvironment: result.destinationEnvironment,
+            destinationPath: result.destinationPath
+          }
+        }
+      });
+
+      return result;
     }
   });
 };

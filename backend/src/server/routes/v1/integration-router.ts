@@ -28,6 +28,7 @@ export const registerIntegrationRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "createIntegration",
       tags: [ApiDocsTags.Integrations],
       description: "Create an integration to sync secrets.",
       security: [
@@ -52,7 +53,7 @@ export const registerIntegrationRouter = async (server: FastifyZodProvider) => {
         targetService: z.string().trim().optional().describe(INTEGRATION.CREATE.targetService),
         targetServiceId: z.string().trim().optional().describe(INTEGRATION.CREATE.targetServiceId),
         owner: z.string().trim().optional().describe(INTEGRATION.CREATE.owner),
-        url: z.string().trim().optional().describe(INTEGRATION.CREATE.url),
+        url: z.string().trim().url().optional().describe(INTEGRATION.CREATE.url),
         path: z.string().trim().optional().describe(INTEGRATION.CREATE.path),
         region: z.string().trim().optional().describe(INTEGRATION.CREATE.region),
         scope: z.string().trim().optional().describe(INTEGRATION.CREATE.scope),
@@ -128,6 +129,7 @@ export const registerIntegrationRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "updateIntegration",
       tags: [ApiDocsTags.Integrations],
       description: "Update an integration by integration id",
       security: [
@@ -189,6 +191,7 @@ export const registerIntegrationRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "getIntegration",
       tags: [ApiDocsTags.Integrations],
       description: "Get an integration by integration id",
       security: [
@@ -260,6 +263,7 @@ export const registerIntegrationRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "deleteIntegration",
       tags: [ApiDocsTags.Integrations],
       description: "Remove an integration using the integration object ID",
       security: [
@@ -346,6 +350,7 @@ export const registerIntegrationRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "syncIntegration",
       tags: [ApiDocsTags.Integrations],
       description: "Manually trigger sync of an integration by integration id",
       security: [

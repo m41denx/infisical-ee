@@ -1,11 +1,12 @@
 import { z } from "zod";
 
-import { AuthTokenSessionsSchema, UserEncryptionKeysSchema, UsersSchema } from "@app/db/schemas";
-import { ApiKeysSchema } from "@app/db/schemas/api-keys";
+import { AuthTokenSessionsSchema } from "@app/db/schemas";
 import { readLimit, smtpRateLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMethod, AuthMode, MfaMethod } from "@app/services/auth/auth-type";
 import { sanitizedOrganizationSchema } from "@app/services/org/org-schema";
+
+import { SanitizedUserSchema } from "../sanitizedSchemas";
 
 export const registerUserRouter = async (server: FastifyZodProvider) => {
   server.route({
@@ -17,6 +18,7 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       })
     },
     schema: {
+      operationId: "sendEmailVerificationCode",
       body: z.object({
         token: z.string().trim()
       }),
@@ -31,42 +33,20 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
   });
 
   server.route({
-    method: "POST",
-    url: "/me/emails/verify",
-    config: {
-      rateLimit: smtpRateLimit({
-        keyGenerator: (req) => (req.body as { username?: string })?.username?.trim().substring(0, 100) || req.realIp
-      })
-    },
-    schema: {
-      body: z.object({
-        username: z.string().trim(),
-        code: z.string().trim()
-      }),
-      response: {
-        200: z.object({})
-      }
-    },
-    handler: async (req) => {
-      await server.services.user.verifyEmailVerificationCode(req.body.username, req.body.code);
-      return {};
-    }
-  });
-
-  server.route({
     method: "PATCH",
     url: "/me/mfa",
     config: {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "updateUserMfa",
       body: z.object({
         isMfaEnabled: z.boolean().optional(),
         selectedMfaMethod: z.nativeEnum(MfaMethod).optional()
       }),
       response: {
         200: z.object({
-          user: UsersSchema
+          user: SanitizedUserSchema
         })
       }
     },
@@ -89,13 +69,14 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "updateUserName",
       body: z.object({
         firstName: z.string().trim(),
         lastName: z.string().trim()
       }),
       response: {
         200: z.object({
-          user: UsersSchema
+          user: SanitizedUserSchema
         })
       }
     },
@@ -113,12 +94,13 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "updateUserAuthMethods",
       body: z.object({
         authMethods: z.nativeEnum(AuthMethod).array().min(1)
       }),
       response: {
         200: z.object({
-          user: UsersSchema
+          user: SanitizedUserSchema
         })
       }
     },
@@ -138,6 +120,7 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       })
     },
     schema: {
+      operationId: "requestEmailChangeOtp",
       body: z.object({
         newEmail: z.string().email().trim()
       }),
@@ -159,19 +142,50 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
   });
 
   server.route({
+    method: "POST",
+    url: "/me/email-change/verify-current",
+    config: {
+      rateLimit: smtpRateLimit({
+        keyGenerator: (req) => req.permission.id
+      })
+    },
+    schema: {
+      operationId: "verifyCurrentEmailOtp",
+      body: z.object({
+        otpCode: z.string().trim().length(6)
+      }),
+      response: {
+        200: z.object({
+          success: z.boolean(),
+          newEmail: z.string()
+        })
+      }
+    },
+    preHandler: verifyAuth([AuthMode.JWT], { requireOrg: false }),
+    handler: async (req) => {
+      const result = await server.services.user.verifyCurrentEmailOTP({
+        userId: req.permission.id,
+        otpCode: req.body.otpCode
+      });
+      return result;
+    }
+  });
+
+  server.route({
     method: "PATCH",
     url: "/me/email",
     config: {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "updateUserEmail",
       body: z.object({
         newEmail: z.string().email().trim(),
         otpCode: z.string().trim().length(6)
       }),
       response: {
         200: z.object({
-          user: UsersSchema
+          user: SanitizedUserSchema
         })
       }
     },
@@ -193,6 +207,7 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       rateLimit: readLimit
     },
     schema: {
+      operationId: "listUserOrganizations",
       description: "Return organizations that current user is part of",
       response: {
         200: z.object({
@@ -209,77 +224,12 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
 
   server.route({
     method: "GET",
-    url: "/me/api-keys",
-    config: {
-      rateLimit: readLimit
-    },
-    schema: {
-      response: {
-        200: ApiKeysSchema.omit({ secretHash: true }).array()
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const apiKeys = await server.services.apiKey.getMyApiKeys(req.permission.id);
-      return apiKeys;
-    }
-  });
-
-  server.route({
-    method: "POST",
-    url: "/me/api-keys",
-    config: {
-      rateLimit: writeLimit
-    },
-    schema: {
-      body: z.object({
-        name: z.string().trim(),
-        expiresIn: z.number()
-      }),
-      response: {
-        200: z.object({
-          apiKey: z.string(),
-          apiKeyData: ApiKeysSchema.omit({ secretHash: true })
-        })
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const apiKeys = await server.services.apiKey.createApiKey(req.permission.id, req.body.name, req.body.expiresIn);
-      return apiKeys;
-    }
-  });
-
-  server.route({
-    method: "DELETE",
-    url: "/me/api-keys/:apiKeyDataId",
-    config: {
-      rateLimit: writeLimit
-    },
-    schema: {
-      params: z.object({
-        apiKeyDataId: z.string().trim()
-      }),
-      response: {
-        200: z.object({
-          apiKeyData: ApiKeysSchema.omit({ secretHash: true })
-        })
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const apiKeyData = await server.services.apiKey.deleteApiKey(req.permission.id, req.params.apiKeyDataId);
-      return { apiKeyData };
-    }
-  });
-
-  server.route({
-    method: "GET",
     url: "/me/sessions",
     config: {
       rateLimit: readLimit
     },
     schema: {
+      operationId: "listUserSessions",
       response: {
         200: AuthTokenSessionsSchema.array()
       }
@@ -298,6 +248,7 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "revokeAllUserSessions",
       response: {
         200: z.object({
           message: z.string()
@@ -320,6 +271,7 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "revokeUserSession",
       params: z.object({
         sessionId: z.string().trim()
       }),
@@ -345,26 +297,42 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getCurrentUser",
       description: "Retrieve the current user on the request",
       response: {
         200: z.object({
-          user: UsersSchema.merge(
-            UserEncryptionKeysSchema.pick({
-              clientPublicKey: true,
-              serverPrivateKey: true,
-              encryptionVersion: true,
-              protectedKey: true,
-              protectedKeyIV: true,
-              protectedKeyTag: true,
-              publicKey: true,
-              encryptedPrivateKey: true,
-              iv: true,
-              tag: true,
-              salt: true,
-              verifier: true,
-              userId: true
-            })
-          )
+          user: z.object({
+            id: z.string().uuid(),
+            email: z.string().nullable().optional(),
+            authMethods: z.string().array().nullable().optional(),
+            superAdmin: z.boolean().default(false).nullable().optional(),
+            firstName: z.string().nullable().optional(),
+            lastName: z.string().nullable().optional(),
+            isAccepted: z.boolean().default(false).nullable().optional(),
+            isMfaEnabled: z.boolean().default(false).nullable().optional(),
+            mfaMethods: z.string().array().nullable().optional(),
+            devices: z.unknown().nullable().optional(),
+            createdAt: z.date(),
+            updatedAt: z.date(),
+            isGhost: z.boolean().default(false),
+            username: z.string(),
+            isEmailVerified: z.boolean().default(false).nullable().optional(),
+            consecutiveFailedMfaAttempts: z.number().default(0).nullable().optional(),
+            isLocked: z.boolean().default(false).nullable().optional(),
+            temporaryLockDateEnd: z.date().nullable().optional(),
+            consecutiveFailedPasswordAttempts: z.number().default(0).nullable().optional(),
+            selectedMfaMethod: z.string().nullable().optional(),
+            isGitHubVerified: z.boolean().nullable().optional(),
+            isGitLabVerified: z.boolean().nullable().optional(),
+            isGoogleVerified: z.boolean().nullable().optional(),
+            encryptedPrivateKey: z.string().nullable().optional(),
+            iv: z.string().nullable().optional(),
+            tag: z.string().nullable().optional(),
+            salt: z.string().nullable().optional(),
+            protectedKey: z.string().nullable().optional(),
+            protectedKeyIV: z.string().nullable().optional(),
+            protectedKeyTag: z.string().nullable().optional()
+          })
         })
       }
     },
@@ -382,9 +350,10 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "deleteUser",
       response: {
         200: z.object({
-          user: UsersSchema
+          user: SanitizedUserSchema
         })
       }
     },

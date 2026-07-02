@@ -1,8 +1,9 @@
 /* eslint-disable no-await-in-loop */
 import { EventType, TAuditLogServiceFactory } from "@app/ee/services/audit-log/audit-log-types";
 import { getConfig } from "@app/lib/config/env";
+import { CronJobName, TCronJobFactory } from "@app/lib/cron/cron-job";
 import { logger } from "@app/lib/logger";
-import { QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue";
+import { QueueJobs } from "@app/queue";
 
 import { ActorType } from "../auth/auth-type";
 import { TCertificateDALFactory } from "../certificate/certificate-dal";
@@ -10,35 +11,27 @@ import { CERTIFICATE_RENEWAL_CONFIG } from "../certificate-common/certificate-co
 import { TCertificateV3ServiceFactory } from "./certificate-v3-service";
 
 type TCertificateV3QueueServiceFactoryDep = {
-  queueService: TQueueServiceFactory;
+  cronJob: TCronJobFactory;
   certificateDAL: Pick<TCertificateDALFactory, "findCertificatesEligibleForRenewal" | "updateById">;
   certificateV3Service: TCertificateV3ServiceFactory;
   auditLogService: Pick<TAuditLogServiceFactory, "createAuditLog">;
 };
 
 export const certificateV3QueueServiceFactory = ({
-  queueService,
+  cronJob,
   certificateDAL,
   certificateV3Service,
   auditLogService
 }: TCertificateV3QueueServiceFactoryDep) => {
   const appCfg = getConfig();
 
-  const init = async () => {
-    if (appCfg.isSecondaryInstance) {
-      return;
-    }
-
-    await queueService.stopRepeatableJob(
-      QueueName.CertificateV3AutoRenewal,
-      QueueJobs.CertificateV3DailyAutoRenewal,
-      { pattern: CERTIFICATE_RENEWAL_CONFIG.DAILY_CRON_SCHEDULE, utc: true },
-      QueueName.CertificateV3AutoRenewal
-    );
-
-    await queueService.startPg<QueueName.CertificateV3AutoRenewal>(
-      QueueJobs.CertificateV3DailyAutoRenewal,
-      async () => {
+  const init = () => {
+    cronJob.register({
+      name: CronJobName.CertificateV3AutoRenewal,
+      pattern: CERTIFICATE_RENEWAL_CONFIG.DAILY_CRON_SCHEDULE,
+      runHashTtlS: 3 * 24 * 60 * 60,
+      enabled: !appCfg.isSecondaryInstance,
+      handler: async () => {
         try {
           logger.info(`${QueueJobs.CertificateV3DailyAutoRenewal}: queue task started`);
 
@@ -139,20 +132,8 @@ export const certificateV3QueueServiceFactory = ({
           logger.error(error, `${QueueJobs.CertificateV3DailyAutoRenewal}: certificate renewal failed`);
           throw error;
         }
-      },
-      {
-        batchSize: 1,
-        workerCount: 1,
-        pollingIntervalSeconds: 60
       }
-    );
-
-    await queueService.schedulePg(
-      QueueJobs.CertificateV3DailyAutoRenewal,
-      CERTIFICATE_RENEWAL_CONFIG.DAILY_CRON_SCHEDULE,
-      undefined,
-      { tz: "UTC" }
-    );
+    });
   };
 
   return {

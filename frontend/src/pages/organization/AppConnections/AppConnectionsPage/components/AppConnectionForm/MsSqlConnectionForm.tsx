@@ -1,18 +1,30 @@
 import { useState } from "react";
 import { Controller, FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
+import { Info } from "lucide-react";
 import { z } from "zod";
 
 import { OrgPermissionCan } from "@app/components/permissions";
-import { Button, FormControl, ModalClose, Select, SelectItem, Tooltip } from "@app/components/v2";
+import {
+  Field,
+  FieldError,
+  FieldLabel,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from "@app/components/v3";
+import { GatewayPicker } from "@app/components/v3/platform/GatewayPicker";
 import { useSubscription } from "@app/context";
 import {
   OrgGatewayPermissionActions,
   OrgPermissionSubjects
 } from "@app/context/OrgPermissionContext/types";
 import { APP_CONNECTION_MAP, getAppConnectionMethodDetails } from "@app/helpers/appConnections";
-import { gatewaysQueryKeys } from "@app/hooks/api";
 import { AppConnection } from "@app/hooks/api/appConnections/enums";
 import {
   MsSqlConnectionMethod,
@@ -20,6 +32,7 @@ import {
 } from "@app/hooks/api/appConnections/types/mssql-connection";
 import { PlatformManagedConfirmationModal } from "@app/pages/organization/AppConnections/AppConnectionsPage/components/AppConnectionForm/shared/PlatformManagedConfirmationModal";
 
+import { AppConnectionFormFooter } from "./AppConnectionFormFooter";
 import {
   genericAppConnectionFieldsSchema,
   GenericAppConnectionsFields
@@ -60,6 +73,7 @@ export const MsSqlConnectionForm = ({ appConnection, onSubmit }: Props) => {
       app: AppConnection.MsSql,
       method: MsSqlConnectionMethod.UsernameAndPassword,
       gatewayId: null,
+      gatewayPoolId: null,
       credentials: {
         host: "",
         port: 1433,
@@ -73,15 +87,12 @@ export const MsSqlConnectionForm = ({ appConnection, onSubmit }: Props) => {
     }
   });
 
-  const {
-    handleSubmit,
-    control,
-    formState: { isSubmitting, isDirty }
-  } = form;
+  const { handleSubmit, control, setValue, watch } = form;
 
   const { subscription } = useSubscription();
   const isPlatformManagedCredentials = appConnection?.isPlatformManagedCredentials ?? false;
-  const { data: gateways, isPending: isGatewaysLoading } = useQuery(gatewaysQueryKeys.list());
+  const gatewayId = watch("gatewayId");
+  const gatewayPoolId = watch("gatewayPoolId");
 
   const confirmSubmit = async (formData: FormData) => {
     if (formData.isPlatformManagedCredentials) {
@@ -107,48 +118,32 @@ export const MsSqlConnectionForm = ({ appConnection, onSubmit }: Props) => {
             a={OrgPermissionSubjects.Gateway}
           >
             {(isAllowed) => (
-              <Controller
-                control={control}
-                name="gatewayId"
-                defaultValue=""
-                render={({ field: { value, onChange }, fieldState: { error } }) => (
-                  <FormControl
-                    isError={Boolean(error?.message)}
-                    errorText={error?.message}
-                    label="Gateway"
-                  >
-                    <Tooltip
-                      isDisabled={isAllowed}
-                      content="Restricted access. You don't have permission to attach gateways to resources."
-                    >
-                      <div>
-                        <Select
-                          isDisabled={!isAllowed}
-                          value={value as string}
-                          onValueChange={onChange}
-                          className="w-full border border-mineshaft-500"
-                          dropdownContainerClassName="max-w-none"
-                          isLoading={isGatewaysLoading}
-                          placeholder="Default: Internet Gateway"
-                          position="popper"
-                        >
-                          <SelectItem
-                            value={null as unknown as string}
-                            onClick={() => onChange(undefined)}
-                          >
-                            Internet Gateway
-                          </SelectItem>
-                          {gateways?.map((el) => (
-                            <SelectItem value={el.id} key={el.id}>
-                              {el.name}
-                            </SelectItem>
-                          ))}
-                        </Select>
-                      </div>
-                    </Tooltip>
-                  </FormControl>
-                )}
-              />
+              <Field className="mb-4">
+                <FieldLabel>Gateway</FieldLabel>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div>
+                      <GatewayPicker
+                        isDisabled={!isAllowed}
+                        value={{
+                          gatewayId: gatewayId ?? null,
+                          gatewayPoolId: gatewayPoolId ?? null
+                        }}
+                        onChange={({ gatewayId: newGwId, gatewayPoolId: newPoolId }) => {
+                          setValue("gatewayId", newGwId, { shouldDirty: true });
+                          setValue("gatewayPoolId", newPoolId, { shouldDirty: true });
+                        }}
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  {!isAllowed && (
+                    <TooltipContent>
+                      Restricted access. You don&apos;t have permission to attach gateways to
+                      resources.
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </Field>
             )}
           </OrgPermissionCan>
         )}
@@ -156,31 +151,34 @@ export const MsSqlConnectionForm = ({ appConnection, onSubmit }: Props) => {
           name="method"
           control={control}
           render={({ field: { value, onChange }, fieldState: { error } }) => (
-            <FormControl
-              tooltipText={`The method you would like to use to connect with ${
-                APP_CONNECTION_MAP[AppConnection.MsSql].name
-              }. This field cannot be changed after creation.`}
-              errorText={error?.message}
-              isError={Boolean(error?.message)}
-              label="Method"
-            >
-              <Select
-                isDisabled={isUpdate}
-                value={value}
-                onValueChange={(val) => onChange(val)}
-                className="w-full border border-mineshaft-500"
-                position="popper"
-                dropdownContainerClassName="max-w-none"
-              >
-                {Object.values(MsSqlConnectionMethod).map((method) => {
-                  return (
+            <Field className="mb-4">
+              <FieldLabel>
+                Method
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-sm">
+                    The method you would like to use to connect with{" "}
+                    {APP_CONNECTION_MAP[AppConnection.MsSql].name}. This field cannot be changed
+                    after creation.
+                  </TooltipContent>
+                </Tooltip>
+              </FieldLabel>
+              <Select disabled={isUpdate} value={value} onValueChange={(val) => onChange(val)}>
+                <SelectTrigger className="w-full" isError={Boolean(error?.message)}>
+                  <SelectValue placeholder="Select a method..." />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  {Object.values(MsSqlConnectionMethod).map((method) => (
                     <SelectItem value={method} key={method}>
                       {getAppConnectionMethodDetails(method).name}{" "}
                     </SelectItem>
-                  );
-                })}
+                  ))}
+                </SelectContent>
               </Select>
-            </FormControl>
+              <FieldError errors={[error]} />
+            </Field>
           )}
         />
         <SqlConnectionFields
@@ -191,23 +189,9 @@ export const MsSqlConnectionForm = ({ appConnection, onSubmit }: Props) => {
         {isPlatformManagedCredentials ? (
           <PlatformManagedNoticeBanner />
         ) : (
-          <div className="mt-6 flex items-center">
-            <Button
-              className="mr-4"
-              size="sm"
-              type="submit"
-              colorSchema="secondary"
-              isLoading={isSubmitting}
-              isDisabled={isSubmitting || !isDirty}
-            >
-              {isUpdate ? "Update Credentials" : "Connect to Database"}
-            </Button>
-            <ModalClose asChild>
-              <Button colorSchema="secondary" variant="plain">
-                Cancel
-              </Button>
-            </ModalClose>
-          </div>
+          <AppConnectionFormFooter
+            submitLabel={isUpdate ? "Update Credentials" : "Connect to Database"}
+          />
         )}
       </form>
       <PlatformManagedConfirmationModal

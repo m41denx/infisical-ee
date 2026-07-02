@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@app/config/request";
 import { projectIdentityQuery, projectKeys } from "@app/hooks/api";
 
+import { gatewayPoolsQueryKeys as gatewayPoolsKeys } from "../gateway-pools/queries";
 import { organizationKeys } from "../organization/queries";
 import { identitiesKeys } from "./queries";
 import {
@@ -15,6 +16,7 @@ import {
   AddIdentityLdapAuthDTO,
   AddIdentityOciAuthDTO,
   AddIdentityOidcAuthDTO,
+  AddIdentitySpiffeAuthDTO,
   AddIdentityTlsCertAuthDTO,
   AddIdentityTokenAuthDTO,
   AddIdentityUniversalAuthDTO,
@@ -34,6 +36,7 @@ import {
   DeleteIdentityLdapAuthDTO,
   DeleteIdentityOciAuthDTO,
   DeleteIdentityOidcAuthDTO,
+  DeleteIdentitySpiffeAuthDTO,
   DeleteIdentityTlsCertAuthDTO,
   DeleteIdentityTokenAuthDTO,
   DeleteIdentityUniversalAuthClientSecretDTO,
@@ -48,6 +51,7 @@ import {
   IdentityLdapAuth,
   IdentityOciAuth,
   IdentityOidcAuth,
+  IdentitySpiffeAuth,
   IdentityTlsCertAuth,
   IdentityTokenAuth,
   IdentityUniversalAuth,
@@ -62,6 +66,7 @@ import {
   UpdateIdentityLdapAuthDTO,
   UpdateIdentityOciAuthDTO,
   UpdateIdentityOidcAuthDTO,
+  UpdateIdentitySpiffeAuthDTO,
   UpdateIdentityTlsCertAuthDTO,
   UpdateIdentityTokenAuthDTO,
   UpdateIdentityUniversalAuthDTO,
@@ -266,6 +271,11 @@ export const useClearIdentityUniversalAuthLockouts = () => {
     onSuccess: (_, { identityId }) => {
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityUniversalAuth(identityId)
+      });
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.searchIdentitiesRoot });
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
+      queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey.includes("project-identity-memberships")
       });
     }
   });
@@ -791,6 +801,7 @@ export const useAddIdentityTlsCertAuth = () => {
     mutationFn: async ({
       identityId,
       allowedCommonNames,
+      allowedSubjectAltNames,
       caCertificate,
       accessTokenTTL,
       accessTokenMaxTTL,
@@ -803,6 +814,7 @@ export const useAddIdentityTlsCertAuth = () => {
         `/api/v1/auth/tls-cert-auth/identities/${identityId}`,
         {
           allowedCommonNames,
+          allowedSubjectAltNames,
           caCertificate,
           accessTokenTTL,
           accessTokenMaxTTL,
@@ -841,6 +853,7 @@ export const useUpdateIdentityTlsCertAuth = () => {
     mutationFn: async ({
       identityId,
       allowedCommonNames,
+      allowedSubjectAltNames,
       caCertificate,
       accessTokenTTL,
       accessTokenMaxTTL,
@@ -854,6 +867,7 @@ export const useUpdateIdentityTlsCertAuth = () => {
         {
           caCertificate,
           allowedCommonNames,
+          allowedSubjectAltNames,
           accessTokenTTL,
           accessTokenMaxTTL,
           accessTokenNumUsesLimit,
@@ -1209,6 +1223,139 @@ export const useDeleteIdentityJwtAuth = () => {
   });
 };
 
+export const useAddIdentitySpiffeAuth = () => {
+  const queryClient = useQueryClient();
+  return useMutation<IdentitySpiffeAuth, object, AddIdentitySpiffeAuthDTO>({
+    mutationFn: async ({
+      identityId,
+      trustDomain,
+      allowedSpiffeIds,
+      allowedAudiences,
+      trustBundleDistribution,
+      accessTokenTTL,
+      accessTokenMaxTTL,
+      accessTokenNumUsesLimit,
+      accessTokenTrustedIps
+    }) => {
+      const {
+        data: { identitySpiffeAuth }
+      } = await apiRequest.post<{ identitySpiffeAuth: IdentitySpiffeAuth }>(
+        `/api/v1/auth/spiffe-auth/identities/${identityId}`,
+        {
+          trustDomain,
+          allowedSpiffeIds,
+          allowedAudiences,
+          trustBundleDistribution,
+          accessTokenTTL,
+          accessTokenMaxTTL,
+          accessTokenNumUsesLimit,
+          accessTokenTrustedIps
+        }
+      );
+
+      return identitySpiffeAuth;
+    },
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentitySpiffeAuth(identityId) });
+    }
+  });
+};
+
+export const useUpdateIdentitySpiffeAuth = () => {
+  const queryClient = useQueryClient();
+  return useMutation<IdentitySpiffeAuth, object, UpdateIdentitySpiffeAuthDTO>({
+    mutationFn: async ({
+      identityId,
+      trustDomain,
+      allowedSpiffeIds,
+      allowedAudiences,
+      trustBundleDistribution,
+      accessTokenTTL,
+      accessTokenMaxTTL,
+      accessTokenNumUsesLimit,
+      accessTokenTrustedIps
+    }) => {
+      const {
+        data: { identitySpiffeAuth }
+      } = await apiRequest.patch<{ identitySpiffeAuth: IdentitySpiffeAuth }>(
+        `/api/v1/auth/spiffe-auth/identities/${identityId}`,
+        {
+          trustDomain,
+          allowedSpiffeIds,
+          allowedAudiences,
+          trustBundleDistribution,
+          accessTokenTTL,
+          accessTokenMaxTTL,
+          accessTokenNumUsesLimit,
+          accessTokenTrustedIps
+        }
+      );
+
+      return identitySpiffeAuth;
+    },
+    onSuccess: (_, { identityId, organizationId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentitySpiffeAuth(identityId) });
+    }
+  });
+};
+
+export const useDeleteIdentitySpiffeAuth = () => {
+  const queryClient = useQueryClient();
+  return useMutation<IdentitySpiffeAuth, object, DeleteIdentitySpiffeAuthDTO>({
+    mutationFn: async ({ identityId }) => {
+      const {
+        data: { identitySpiffeAuth }
+      } = await apiRequest.delete(`/api/v1/auth/spiffe-auth/identities/${identityId}`);
+      return identitySpiffeAuth;
+    },
+    onSuccess: (_, { organizationId, identityId, projectId }) => {
+      if (organizationId) {
+        queryClient.invalidateQueries({
+          queryKey: organizationKeys.getOrgIdentityMemberships(organizationId)
+        });
+      }
+      if (projectId) {
+        queryClient.invalidateQueries({
+          queryKey: projectKeys.getProjectIdentityMemberships(projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: projectIdentityQuery.getByIdKey({ identityId, projectId })
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentitySpiffeAuth(identityId) });
+    }
+  });
+};
+
 export const useAddIdentityAzureAuth = () => {
   const queryClient = useQueryClient();
   return useMutation<IdentityAzureAuth, object, AddIdentityAzureAuthDTO>({
@@ -1277,6 +1424,7 @@ export const useAddIdentityKubernetesAuth = () => {
       accessTokenNumUsesLimit,
       accessTokenTrustedIps,
       gatewayId,
+      gatewayPoolId,
       tokenReviewMode
     }) => {
       const {
@@ -1295,6 +1443,7 @@ export const useAddIdentityKubernetesAuth = () => {
           accessTokenNumUsesLimit,
           accessTokenTrustedIps,
           gatewayId,
+          gatewayPoolId,
           tokenReviewMode
         }
       );
@@ -1316,7 +1465,10 @@ export const useAddIdentityKubernetesAuth = () => {
         });
       }
       queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
-      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityAzureAuth(identityId) });
+      queryClient.invalidateQueries({
+        queryKey: identitiesKeys.getIdentityKubernetesAuth(identityId)
+      });
+      queryClient.invalidateQueries({ queryKey: gatewayPoolsKeys.allKey() });
     }
   });
 };
@@ -1416,6 +1568,7 @@ export const useUpdateIdentityKubernetesAuth = () => {
       accessTokenNumUsesLimit,
       accessTokenTrustedIps,
       gatewayId,
+      gatewayPoolId,
       tokenReviewMode
     }) => {
       const {
@@ -1434,6 +1587,7 @@ export const useUpdateIdentityKubernetesAuth = () => {
           accessTokenNumUsesLimit,
           accessTokenTrustedIps,
           gatewayId,
+          gatewayPoolId,
           tokenReviewMode
         }
       );
@@ -1458,6 +1612,7 @@ export const useUpdateIdentityKubernetesAuth = () => {
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityKubernetesAuth(identityId)
       });
+      queryClient.invalidateQueries({ queryKey: gatewayPoolsKeys.allKey() });
     }
   });
 };
@@ -1853,6 +2008,11 @@ export const useClearIdentityLdapAuthLockouts = () => {
     onSuccess: (_, { identityId }) => {
       queryClient.invalidateQueries({
         queryKey: identitiesKeys.getIdentityLdapAuth(identityId)
+      });
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.searchIdentitiesRoot });
+      queryClient.invalidateQueries({ queryKey: identitiesKeys.getIdentityById(identityId) });
+      queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey.includes("project-identity-memberships")
       });
     }
   });

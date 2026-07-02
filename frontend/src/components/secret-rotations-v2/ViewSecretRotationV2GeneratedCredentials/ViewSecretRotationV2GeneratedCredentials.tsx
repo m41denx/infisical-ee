@@ -5,6 +5,8 @@ import { format } from "date-fns";
 
 import { ViewAuth0ClientSecretRotationGeneratedCredentials } from "@app/components/secret-rotations-v2/ViewSecretRotationV2GeneratedCredentials/ViewAuth0ClientSecretRotationGeneratedCredentials";
 import { ViewAzureClientSecretRotationGeneratedCredentials } from "@app/components/secret-rotations-v2/ViewSecretRotationV2GeneratedCredentials/ViewAzureClientSecretRotationGeneratedCredentials";
+import { ViewConvexAccessKeyRotationGeneratedCredentials } from "@app/components/secret-rotations-v2/ViewSecretRotationV2GeneratedCredentials/ViewConvexAccessKeyRotationGeneratedCredentials";
+import { ViewDatabricksServicePrincipalSecretRotationGeneratedCredentials } from "@app/components/secret-rotations-v2/ViewSecretRotationV2GeneratedCredentials/ViewDatabricksServicePrincipalSecretRotationGeneratedCredentials";
 import { ViewLdapPasswordRotationGeneratedCredentials } from "@app/components/secret-rotations-v2/ViewSecretRotationV2GeneratedCredentials/ViewLdapPasswordRotationGeneratedCredentials";
 import { Modal, ModalContent, Spinner } from "@app/components/v2";
 import { NoticeBannerV2 } from "@app/components/v2/NoticeBannerV2/NoticeBannerV2";
@@ -22,8 +24,16 @@ import {
 
 import { ViewSqlCredentialsRotationGeneratedCredentials } from "./shared";
 import { ViewAwsIamUserSecretRotationGeneratedCredentials } from "./ViewAwsIamUserSecretRotationGeneratedCredentials";
+import { ViewDatadogApplicationKeySecretRotationGeneratedCredentials } from "./ViewDatadogApplicationKeySecretRotationGeneratedCredentials";
+import { ViewDbtServiceTokenRotationGeneratedCredentials } from "./ViewDbtSeviceTokenRotationGeneratedCredentials";
+import { ViewHpIloRotationGeneratedCredentials } from "./ViewHpIloRotationGeneratedCredentials";
 import { ViewOktaClientSecretRotationGeneratedCredentials } from "./ViewOktaClientSecretRotationGeneratedCredentials";
+import { ViewOpenRouterApiKeyRotationGeneratedCredentials } from "./ViewOpenRouterApiKeyRotationGeneratedCredentials";
 import { ViewRedisCredentialsRotationGeneratedCredentials } from "./ViewRedisCredentialsRotationGeneratedCredentials";
+import { ViewSalesforceOauthCredentialsRotationGeneratedCredentials } from "./ViewSalesforceOauthCredentialsRotationGeneratedCredentials";
+import { ViewSupabaseApiKeyRotationGeneratedCredentials } from "./ViewSupabaseApiKeyRotationGeneratedCredentials";
+import { ViewUnixLinuxLocalAccountRotationGeneratedCredentials } from "./ViewUnixLinuxLocalAccountRotationGeneratedCredentials";
+import { ViewWindowsLocalAccountRotationGeneratedCredentials } from "./ViewWindowsLocalAccountRotationGeneratedCredentials";
 
 type Props = {
   secretRotation?: TSecretRotationV2;
@@ -67,6 +77,7 @@ const Content = ({ secretRotation }: ContentProps) => {
     case SecretRotation.MySqlCredentials:
     case SecretRotation.MsSqlCredentials:
     case SecretRotation.OracleDBCredentials:
+    case SecretRotation.MongoDBCredentials:
       Component = (
         <ViewSqlCredentialsRotationGeneratedCredentials
           generatedCredentialsResponse={generatedCredentialsResponse}
@@ -111,6 +122,76 @@ const Content = ({ secretRotation }: ContentProps) => {
     case SecretRotation.RedisCredentials:
       Component = (
         <ViewRedisCredentialsRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.DatabricksServicePrincipalSecret:
+      Component = (
+        <ViewDatabricksServicePrincipalSecretRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.UnixLinuxLocalAccount:
+      Component = (
+        <ViewUnixLinuxLocalAccountRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.DbtServiceToken:
+      Component = (
+        <ViewDbtServiceTokenRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.WindowsLocalAccount:
+      Component = (
+        <ViewWindowsLocalAccountRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.OpenRouterApiKey:
+      Component = (
+        <ViewOpenRouterApiKeyRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.HpIloLocalAccount:
+      Component = (
+        <ViewHpIloRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.SupabaseApiKey:
+      Component = (
+        <ViewSupabaseApiKeyRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.SalesforceOauthCredentials:
+      Component = (
+        <ViewSalesforceOauthCredentialsRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.DatadogApplicationKeySecret:
+      Component = (
+        <ViewDatadogApplicationKeySecretRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.ConvexAccessKey:
+      Component = (
+        <ViewConvexAccessKeyRotationGeneratedCredentials
           generatedCredentialsResponse={generatedCredentialsResponse}
         />
       );

@@ -1,10 +1,16 @@
 import { components, OptionProps } from "react-select";
-import { faCheckCircle } from "@fortawesome/free-regular-svg-icons";
 import { faPlus } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { CheckIcon } from "lucide-react";
 
-import { Tooltip } from "@app/components/v2";
-import { Badge, OrgIcon, SubOrgIcon } from "@app/components/v3";
+import {
+  Badge,
+  OrgIcon,
+  SubOrgIcon,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from "@app/components/v3";
 import { useOrganization } from "@app/context";
 import { TAvailableAppConnection } from "@app/hooks/api/appConnections";
 
@@ -14,6 +20,7 @@ export const AppConnectionOption = ({
   ...props
 }: OptionProps<TAvailableAppConnection>) => {
   const isCreateOption = props.data.id === "_create";
+  const isOnlyOption = isCreateOption && props.selectProps.options.length === 1;
 
   const { isSubOrganization } = useOrganization();
 
@@ -21,7 +28,9 @@ export const AppConnectionOption = ({
     <components.Option isSelected={isSelected} {...props}>
       <div className="flex flex-row items-center justify-between">
         {isCreateOption ? (
-          <div className="flex items-center gap-x-1 text-mineshaft-400">
+          <div
+            className={`flex items-center gap-x-1 ${isOnlyOption ? "text-foreground" : "text-accent"}`}
+          >
             <FontAwesomeIcon icon={faPlus} size="sm" />
             <span className="mr-auto">Create New Connection</span>
           </div>
@@ -29,25 +38,28 @@ export const AppConnectionOption = ({
           <>
             <p className="mr-auto truncate">{children}</p>
             {!props.data.projectId && (
-              <Tooltip
-                content={`This connection belongs to your ${isSubOrganization ? "sub-" : ""}organization.`}
-              >
-                {isSubOrganization ? (
-                  <Badge variant="sub-org">
-                    <SubOrgIcon />
-                    Sub-Organization
-                  </Badge>
-                ) : (
-                  <Badge variant="org">
-                    <OrgIcon />
-                    Organization
-                  </Badge>
-                )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    {isSubOrganization ? (
+                      <Badge variant="sub-org">
+                        <SubOrgIcon />
+                        Sub-Organization
+                      </Badge>
+                    ) : (
+                      <Badge variant="org">
+                        <OrgIcon />
+                        Organization
+                      </Badge>
+                    )}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  This connection belongs to your {isSubOrganization ? "sub-" : ""}organization.
+                </TooltipContent>
               </Tooltip>
             )}
-            {isSelected && (
-              <FontAwesomeIcon className="ml-2 text-primary" icon={faCheckCircle} size="sm" />
-            )}
+            {isSelected && <CheckIcon className="ml-2 size-4" />}
           </>
         )}
       </div>

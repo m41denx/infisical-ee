@@ -3,28 +3,19 @@ import { customAlphabet } from "nanoid";
 import odbc from "odbc";
 import { z } from "zod";
 
+import { TDynamicSecrets } from "@app/db/schemas";
 import { BadRequestError } from "@app/lib/errors";
 import { sanitizeString } from "@app/lib/fn";
-import { alphaNumericNanoId } from "@app/lib/nanoid";
 import { validateHandlebarTemplate } from "@app/lib/template/validate-handlebars";
 
+import { ActorIdentityAttributes } from "../../dynamic-secret-lease/dynamic-secret-lease-types";
 import { verifyHostInputValidity } from "../dynamic-secret-fns";
 import { DynamicSecretSapAseSchema, TDynamicProviderFns } from "./models";
-import { compileUsernameTemplate } from "./templateUtils";
+import { generateUsername } from "./templateUtils";
 
 const generatePassword = (size = 48) => {
   const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   return customAlphabet(charset, 48)(size);
-};
-
-const generateUsername = (usernameTemplate?: string | null, identity?: { name: string }) => {
-  const randomUsername = `inf_${alphaNumericNanoId(25)}`; // Username must start with an ascii letter, so we prepend the username with "inf-"
-  if (!usernameTemplate) return randomUsername;
-  return compileUsernameTemplate({
-    usernameTemplate,
-    randomUsername,
-    identity
-  });
 };
 
 enum SapCommands {
@@ -36,7 +27,7 @@ export const SapAseProvider = (): TDynamicProviderFns => {
   const validateProviderInputs = async (inputs: unknown) => {
     const providerInputs = await DynamicSecretSapAseSchema.parseAsync(inputs);
 
-    await verifyHostInputValidity(providerInputs.host);
+    await verifyHostInputValidity({ host: providerInputs.host, isDynamicSecret: true });
     validateHandlebarTemplate("SAP ASE creation", providerInputs.creationStatement, {
       allowedExpressions: (val) => ["username", "password"].includes(val)
     });
@@ -102,11 +93,24 @@ export const SapAseProvider = (): TDynamicProviderFns => {
     }
   };
 
-  const create = async (data: { inputs: unknown; usernameTemplate?: string | null; identity?: { name: string } }) => {
-    const { inputs, usernameTemplate, identity } = data;
+  const create = async (data: {
+    inputs: unknown;
+    usernameTemplate?: string | null;
+    identity: ActorIdentityAttributes;
+    dynamicSecret: TDynamicSecrets;
+  }) => {
+    const { inputs, usernameTemplate, identity, dynamicSecret } = data;
     const providerInputs = await validateProviderInputs(inputs);
 
-    const username = generateUsername(usernameTemplate, identity);
+    const username = await generateUsername(usernameTemplate, {
+      decryptedDynamicSecretInputs: inputs,
+      dynamicSecret,
+      identity,
+
+      // Username must start with an ascii letter, so we prepend the username with "inf_"
+      usernamePrefix: "inf_",
+      usernameLength: 25
+    });
     const password = generatePassword();
 
     const client = await $getClient(providerInputs);
@@ -154,7 +158,7 @@ export const SapAseProvider = (): TDynamicProviderFns => {
     const masterClient = await $getClient(providerInputs, true);
 
     // Get all processes for this login and kill them. If there are active connections to the database when drop login happens, it will throw an error.
-    const result = await masterClient.query<{ spid?: string }>(`sp_who '${username}'`);
+    const result = await masterClient.query<{ spid?: string }>(`sp_who ?`, [username]);
 
     if (result && result.length > 0) {
       for await (const row of result) {

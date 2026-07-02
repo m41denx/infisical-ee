@@ -170,6 +170,7 @@ export const secretDALFactory = (db: TDbClient) => {
   const findManySecretsWithTags = async (
     filter: {
       secretIds: string[];
+      folderId: string;
       type: SecretType;
     },
     tx?: Knex
@@ -324,6 +325,7 @@ export const secretDALFactory = (db: TDbClient) => {
         .join(TableName.SecretFolder, `${TableName.Secret}.folderId`, `${TableName.SecretFolder}.id`)
         .join(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
         .where("projectId", projectId)
+        .whereNull(`${TableName.Environment}.deleteAfter`)
         .select(selectAllTableCols(TableName.SecretReference))
         .select("folderId");
       return docs;
@@ -339,6 +341,7 @@ export const secretDALFactory = (db: TDbClient) => {
         .join(TableName.SecretFolder, `${TableName.Secret}.folderId`, `${TableName.SecretFolder}.id`)
         .join(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
         .where("projectId", projectId)
+        .whereNull(`${TableName.Environment}.deleteAfter`)
         // not empty
         .whereNotNull("secretValueCiphertext")
         .select("secretValueTag", "secretValueCiphertext", "secretValueIV", `${TableName.Secret}.id` as "id");

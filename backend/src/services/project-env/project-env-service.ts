@@ -6,22 +6,29 @@ import { TLicenseServiceFactory } from "@app/ee/services/license/license-service
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { ProjectPermissionActions, ProjectPermissionSub } from "@app/ee/services/permission/project-permission";
 import { TSecretApprovalPolicyEnvironmentDALFactory } from "@app/ee/services/secret-approval-policy/secret-approval-policy-environment-dal";
-import { KeyStorePrefixes, TKeyStoreFactory } from "@app/keystore/keystore";
+import { KeyStorePrefixes, KeyStoreTtls, TKeyStoreFactory } from "@app/keystore/keystore";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 
-import { TProjectDALFactory } from "../project/project-dal";
+import { ActorType } from "../auth/auth-type";
 import { TSecretFolderDALFactory } from "../secret-folder/secret-folder-dal";
 import { TProjectEnvDALFactory } from "./project-env-dal";
-import { TCreateEnvDTO, TDeleteEnvDTO, TGetEnvDTO, TUpdateEnvDTO } from "./project-env-types";
+import { SOFT_DELETE_GRACE_MS } from "./project-env-queue";
+import {
+  TCreateEnvDTO,
+  TDeleteEnvDTO,
+  TGetEnvBySlugDTO,
+  TGetEnvDTO,
+  TRestoreEnvDTO,
+  TUpdateEnvDTO
+} from "./project-env-types";
 
 type TProjectEnvServiceFactoryDep = {
   projectEnvDAL: TProjectEnvDALFactory;
   folderDAL: Pick<TSecretFolderDALFactory, "create">;
-  projectDAL: Pick<TProjectDALFactory, "findById">;
   permissionService: Pick<TPermissionServiceFactory, "getProjectPermission">;
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
-  keyStore: Pick<TKeyStoreFactory, "acquireLock" | "setItemWithExpiry" | "getItem" | "waitTillReady">;
+  keyStore: Pick<TKeyStoreFactory, "acquireLock" | "setItemWithExpiry" | "getItem" | "waitTillReady" | "deleteItem">;
   accessApprovalPolicyEnvironmentDAL: Pick<TAccessApprovalPolicyEnvironmentDALFactory, "findAvailablePoliciesByEnvId">;
   secretApprovalPolicyEnvironmentDAL: Pick<TSecretApprovalPolicyEnvironmentDALFactory, "findAvailablePoliciesByEnvId">;
 };
@@ -33,7 +40,6 @@ export const projectEnvServiceFactory = ({
   permissionService,
   licenseService,
   keyStore,
-  projectDAL,
   folderDAL,
   accessApprovalPolicyEnvironmentDAL,
   secretApprovalPolicyEnvironmentDAL
@@ -73,15 +79,24 @@ export const projectEnvServiceFactory = ({
       }
 
       const envs = await projectEnvDAL.find({ projectId });
-      const existingEnv = envs.find(({ slug: envSlug }) => envSlug === slug);
-      if (existingEnv)
+
+      const slugHolder = await projectEnvDAL.findBySlugIncludingExpired(projectId, slug);
+      if (slugHolder) {
+        if (slugHolder.deleteAfter) {
+          throw new BadRequestError({
+            message: `Environment slug '${slug}' is held by a pending-deletion environment. Permanently delete that environment first, then retry.`,
+            name: "CreateEnvironment"
+          });
+        }
         throw new BadRequestError({
           message: "Environment with slug already exists",
           name: "CreateEnvironment"
         });
+      }
 
-      const project = await projectDAL.findById(projectId);
-      const plan = await licenseService.getPlan(project.orgId);
+      // getProjectPermission above guarantees project existence and org membership,
+      // so actorOrgId === project.orgId — no separate project lookup needed.
+      const plan = await licenseService.getPlan(actorOrgId);
       if (plan.environmentLimit !== null && envs.length >= plan.environmentLimit) {
         // case: limit imposed on number of environments allowed
         // case: number of environments used exceeds the number of environments allowed
@@ -116,7 +131,7 @@ export const projectEnvServiceFactory = ({
 
       await keyStore.setItemWithExpiry(
         KeyStorePrefixes.WaitUntilReadyProjectEnvironmentOperation(projectId),
-        10,
+        KeyStoreTtls.ProjectEnvironmentOperationMarkerInSeconds,
         "true"
       );
 
@@ -168,8 +183,14 @@ export const projectEnvServiceFactory = ({
         });
       }
       if (slug) {
-        const existingEnv = await projectEnvDAL.findOne({ slug, projectId });
-        if (existingEnv && existingEnv.id !== id) {
+        const slugHolder = await projectEnvDAL.findBySlugIncludingExpired(projectId, slug);
+        if (slugHolder && slugHolder.id !== id) {
+          if (slugHolder.deleteAfter) {
+            throw new BadRequestError({
+              message: `Environment slug '${slug}' is held by a pending-deletion environment. Permanently delete that environment first, then retry.`,
+              name: "UpdateEnvironment"
+            });
+          }
           throw new BadRequestError({
             message: "Environment with slug already exists",
             name: "UpdateEnvironment"
@@ -178,8 +199,9 @@ export const projectEnvServiceFactory = ({
       }
 
       const envs = await projectEnvDAL.find({ projectId });
-      const project = await projectDAL.findById(projectId);
-      const plan = await licenseService.getPlan(project.orgId);
+      // getProjectPermission above guarantees project existence and org membership,
+      // so actorOrgId === project.orgId — no separate project lookup needed.
+      const plan = await licenseService.getPlan(actorOrgId);
       if (plan.environmentLimit !== null && envs.length > plan.environmentLimit) {
         // case: limit imposed on number of environments allowed
         // case: number of environments used exceeds the number of environments allowed
@@ -202,7 +224,7 @@ export const projectEnvServiceFactory = ({
 
       await keyStore.setItemWithExpiry(
         KeyStorePrefixes.WaitUntilReadyProjectEnvironmentOperation(projectId),
-        10,
+        KeyStoreTtls.ProjectEnvironmentOperationMarkerInSeconds,
         "true"
       );
 
@@ -212,7 +234,15 @@ export const projectEnvServiceFactory = ({
     }
   };
 
-  const deleteEnvironment = async ({ projectId, actor, actorId, actorOrgId, actorAuthMethod, id }: TDeleteEnvDTO) => {
+  const deleteEnvironment = async ({
+    projectId,
+    actor,
+    actorId,
+    actorOrgId,
+    actorAuthMethod,
+    id,
+    hardDelete = false
+  }: TDeleteEnvDTO) => {
     const { permission } = await permissionService.getProjectPermission({
       actor,
       actorId,
@@ -252,7 +282,46 @@ export const projectEnvServiceFactory = ({
             name: "DeleteEnvironment"
           });
         }
-        const [doc] = await projectEnvDAL.delete({ id, projectId }, tx);
+        if (hardDelete) {
+          const [doc] = await projectEnvDAL.delete({ id, projectId }, tx);
+          if (!doc)
+            throw new NotFoundError({
+              message: `Environment with id '${id}' in project with ID '${projectId}' not found`,
+              name: "DeleteEnvironment"
+            });
+
+          await projectEnvDAL.closePositionGap(projectId, doc.position, tx);
+
+          return doc;
+        }
+
+        const target = await projectEnvDAL.findOne({ id, projectId }, tx);
+        if (!target)
+          throw new NotFoundError({
+            message: `Environment with id '${id}' in project with ID '${projectId}' not found`,
+            name: "DeleteEnvironment"
+          });
+
+        const maxPos = await projectEnvDAL.findLastEnvPosition(projectId, tx);
+        // Shift active rows first (closes the gap at oldPos), then place the
+        // soft-deleted row at the pre-shift max active position. That slot is
+        // now free since its previous active occupant was shifted down.
+        await projectEnvDAL.closePositionGap(projectId, target.position, tx);
+
+        const softDeletedAt = new Date();
+        const deleteAfter = new Date(softDeletedAt.getTime() + SOFT_DELETE_GRACE_MS);
+        const deletedByUserId = actor === ActorType.USER ? actorId : null;
+        const deletedByIdentityId = actor === ActorType.IDENTITY ? actorId : null;
+        const doc = await projectEnvDAL.softDeleteById(
+          id,
+          projectId,
+          deleteAfter,
+          softDeletedAt,
+          deletedByUserId,
+          deletedByIdentityId,
+          maxPos,
+          tx
+        );
         if (!doc)
           throw new NotFoundError({
             message: `Environment with id '${id}' in project with ID '${projectId}' not found`,
@@ -264,12 +333,91 @@ export const projectEnvServiceFactory = ({
 
       await keyStore.setItemWithExpiry(
         KeyStorePrefixes.WaitUntilReadyProjectEnvironmentOperation(projectId),
-        10,
+        KeyStoreTtls.ProjectEnvironmentOperationMarkerInSeconds,
         "true"
       );
 
       return env;
     } finally {
+      await lock?.release();
+    }
+  };
+
+  const restoreEnvironment = async ({ projectId, actor, actorId, actorOrgId, actorAuthMethod, id }: TRestoreEnvDTO) => {
+    const { permission } = await permissionService.getProjectPermission({
+      actor,
+      actorId,
+      projectId,
+      actorAuthMethod,
+      actorOrgId,
+      actionProjectType: ActionProjectType.SecretManager
+    });
+    ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionActions.Delete, ProjectPermissionSub.Environments);
+
+    const operationMarkerKey = KeyStorePrefixes.WaitUntilReadyProjectEnvironmentOperation(projectId);
+    const lock = await keyStore
+      .acquireLock([KeyStorePrefixes.ProjectEnvironmentLock(projectId)], 5000)
+      .catch(() => null);
+
+    try {
+      if (!lock) {
+        await keyStore.waitTillReady({
+          key: operationMarkerKey,
+          keyCheckCb: (val) => !val || val === "false",
+          waitingCb: () =>
+            logger.debug("Restore project environment. Waiting for previous environment operation to finish"),
+          delay: 500
+        });
+      }
+
+      await keyStore.setItemWithExpiry(
+        operationMarkerKey,
+        KeyStoreTtls.ProjectEnvironmentOperationMarkerInSeconds,
+        "true"
+      );
+
+      const env = await projectEnvDAL.transaction(async (tx) => {
+        const target = await projectEnvDAL.findByIdIncludingExpired(id, tx);
+        if (!target || target.projectId !== projectId || target.deleteAfter === null) {
+          throw new NotFoundError({
+            message: `Soft-deleted environment with id '${id}' in project with ID '${projectId}' not found`,
+            name: "RestoreEnvironment"
+          });
+        }
+
+        const slugConflict = await projectEnvDAL.findOne({ projectId, slug: target.slug }, tx);
+        if (slugConflict) {
+          throw new BadRequestError({
+            message: `Cannot restore environment: slug '${target.slug}' is already in use by another environment in this project. Rename or remove the conflicting environment, then retry.`,
+            name: "RestoreEnvironment"
+          });
+        }
+
+        const activeEnvs = await projectEnvDAL.find({ projectId }, { tx });
+        // getProjectPermission above guarantees project existence and org membership,
+        // so actorOrgId === project.orgId — no separate project lookup needed.
+        const plan = await licenseService.getPlan(actorOrgId);
+        if (plan.environmentLimit !== null && activeEnvs.length >= plan.environmentLimit) {
+          throw new BadRequestError({
+            message:
+              "Failed to restore environment due to environment limit reached. Upgrade plan or remove an existing environment."
+          });
+        }
+
+        const lastPos = await projectEnvDAL.findLastEnvPosition(projectId, tx);
+        const doc = await projectEnvDAL.restoreById(id, projectId, lastPos + 1, tx);
+        if (!doc)
+          throw new NotFoundError({
+            message: `Soft-deleted environment with id '${id}' in project with ID '${projectId}' not found`,
+            name: "RestoreEnvironment"
+          });
+
+        return doc;
+      });
+
+      return env;
+    } finally {
+      await keyStore.deleteItem(operationMarkerKey);
       await lock?.release();
     }
   };
@@ -297,10 +445,42 @@ export const projectEnvServiceFactory = ({
     return environment;
   };
 
+  const getEnvironmentBySlug = async ({
+    actor,
+    actorId,
+    actorOrgId,
+    actorAuthMethod,
+    projectId,
+    slug
+  }: TGetEnvBySlugDTO) => {
+    const { permission } = await permissionService.getProjectPermission({
+      actor,
+      actorId,
+      projectId,
+      actorAuthMethod,
+      actorOrgId,
+      actionProjectType: ActionProjectType.SecretManager
+    });
+
+    ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionActions.Read, ProjectPermissionSub.Environments);
+
+    const environment = await projectEnvDAL.findOne({ projectId, slug });
+
+    if (!environment) {
+      throw new NotFoundError({
+        message: `Environment with slug '${slug}' in project with ID '${projectId}' not found`
+      });
+    }
+
+    return environment;
+  };
+
   return {
     createEnvironment,
     updateEnvironment,
     deleteEnvironment,
-    getEnvironmentById
+    restoreEnvironment,
+    getEnvironmentById,
+    getEnvironmentBySlug
   };
 };

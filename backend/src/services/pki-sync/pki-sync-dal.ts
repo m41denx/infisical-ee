@@ -4,6 +4,10 @@ import { TDbClient } from "@app/db";
 import { TableName, TPkiSyncs } from "@app/db/schemas";
 import { DatabaseError } from "@app/lib/errors";
 import { buildFindFilter, ormify, prependTableNameToFindFilter, selectAllTableCols } from "@app/lib/knex";
+import {
+  applyProcessedPermissionRulesToQuery,
+  type ProcessedPermissionRules
+} from "@app/lib/knex/permission-filter-utils";
 
 import { PkiSync } from "./pki-sync-enums";
 
@@ -14,6 +18,7 @@ type PkiSyncFindFilter = Parameters<typeof buildFindFilter<TPkiSyncs>>[0];
 const basePkiSyncQuery = ({ filter, db, tx }: { db: TDbClient; filter?: PkiSyncFindFilter; tx?: Knex }) => {
   const query = (tx || db.replicaNode())(TableName.PkiSync)
     .leftJoin(TableName.AppConnection, `${TableName.PkiSync}.connectionId`, `${TableName.AppConnection}.id`)
+    .leftJoin(TableName.PkiApplication, `${TableName.PkiSync}.applicationId`, `${TableName.PkiApplication}.id`)
     .select(selectAllTableCols(TableName.PkiSync))
     .select(
       // app connection fields
@@ -26,12 +31,14 @@ const basePkiSyncQuery = ({ filter, db, tx }: { db: TDbClient; filter?: PkiSyncF
       db.ref("description").withSchema(TableName.AppConnection).as("appConnectionDescription"),
       db.ref("version").withSchema(TableName.AppConnection).as("appConnectionVersion"),
       db.ref("gatewayId").withSchema(TableName.AppConnection).as("appConnectionGatewayId"),
+      db.ref("gatewayPoolId").withSchema(TableName.AppConnection).as("appConnectionGatewayPoolId"),
       db.ref("createdAt").withSchema(TableName.AppConnection).as("appConnectionCreatedAt"),
       db.ref("updatedAt").withSchema(TableName.AppConnection).as("appConnectionUpdatedAt"),
       db
         .ref("isPlatformManagedCredentials")
         .withSchema(TableName.AppConnection)
-        .as("appConnectionIsPlatformManagedCredentials")
+        .as("appConnectionIsPlatformManagedCredentials"),
+      db.ref("name").withSchema(TableName.PkiApplication).as("applicationName")
     );
 
   if (filter) {
@@ -45,15 +52,18 @@ const basePkiSyncQuery = ({ filter, db, tx }: { db: TDbClient; filter?: PkiSyncF
 const basePkiSyncWithSubscriberQuery = ({
   filter,
   db,
-  tx
+  tx,
+  processedRules
 }: {
   db: TDbClient;
   filter?: PkiSyncFindFilter;
   tx?: Knex;
+  processedRules?: ProcessedPermissionRules;
 }) => {
-  const query = (tx || db.replicaNode())(TableName.PkiSync)
+  let query = (tx || db.replicaNode())(TableName.PkiSync)
     .leftJoin(TableName.AppConnection, `${TableName.PkiSync}.connectionId`, `${TableName.AppConnection}.id`)
     .leftJoin(TableName.PkiSubscriber, `${TableName.PkiSync}.subscriberId`, `${TableName.PkiSubscriber}.id`)
+    .leftJoin(TableName.PkiApplication, `${TableName.PkiSync}.applicationId`, `${TableName.PkiApplication}.id`)
     .select(selectAllTableCols(TableName.PkiSync))
     .select(
       // app connection fields
@@ -66,12 +76,14 @@ const basePkiSyncWithSubscriberQuery = ({
       db.ref("description").withSchema(TableName.AppConnection).as("appConnectionDescription"),
       db.ref("version").withSchema(TableName.AppConnection).as("appConnectionVersion"),
       db.ref("gatewayId").withSchema(TableName.AppConnection).as("appConnectionGatewayId"),
+      db.ref("gatewayPoolId").withSchema(TableName.AppConnection).as("appConnectionGatewayPoolId"),
       db.ref("createdAt").withSchema(TableName.AppConnection).as("appConnectionCreatedAt"),
       db.ref("updatedAt").withSchema(TableName.AppConnection).as("appConnectionUpdatedAt"),
       db
         .ref("isPlatformManagedCredentials")
         .withSchema(TableName.AppConnection)
         .as("appConnectionIsPlatformManagedCredentials"),
+      db.ref("name").withSchema(TableName.PkiApplication).as("applicationName"),
       // pki subscriber fields
       db.ref("id").withSchema(TableName.PkiSubscriber).as("pkiSubscriberId"),
       db.ref("name").withSchema(TableName.PkiSubscriber).as("subscriberName")
@@ -80,6 +92,10 @@ const basePkiSyncWithSubscriberQuery = ({
   if (filter) {
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     void query.where(buildFindFilter(prependTableNameToFindFilter(TableName.PkiSync, filter)));
+  }
+
+  if (processedRules) {
+    query = applyProcessedPermissionRulesToQuery(query, TableName.PkiSync, processedRules) as typeof query;
   }
 
   return query;
@@ -96,6 +112,7 @@ const expandPkiSync = (pkiSync: Awaited<ReturnType<typeof basePkiSyncQuery>>[num
     appConnectionDescription,
     appConnectionVersion,
     appConnectionGatewayId,
+    appConnectionGatewayPoolId,
     appConnectionCreatedAt,
     appConnectionUpdatedAt,
     appConnectionIsPlatformManagedCredentials,
@@ -120,6 +137,7 @@ const expandPkiSync = (pkiSync: Awaited<ReturnType<typeof basePkiSyncQuery>>[num
       description: appConnectionDescription,
       version: appConnectionVersion,
       gatewayId: appConnectionGatewayId,
+      gatewayPoolId: appConnectionGatewayPoolId,
       createdAt: appConnectionCreatedAt,
       updatedAt: appConnectionUpdatedAt,
       isPlatformManagedCredentials: appConnectionIsPlatformManagedCredentials
@@ -138,6 +156,7 @@ const expandPkiSyncWithSubscriber = (pkiSync: Awaited<ReturnType<typeof basePkiS
     appConnectionDescription,
     appConnectionVersion,
     appConnectionGatewayId,
+    appConnectionGatewayPoolId,
     appConnectionCreatedAt,
     appConnectionUpdatedAt,
     appConnectionIsPlatformManagedCredentials,
@@ -164,6 +183,7 @@ const expandPkiSyncWithSubscriber = (pkiSync: Awaited<ReturnType<typeof basePkiS
       description: appConnectionDescription,
       version: appConnectionVersion,
       gatewayId: appConnectionGatewayId,
+      gatewayPoolId: appConnectionGatewayPoolId,
       createdAt: appConnectionCreatedAt,
       updatedAt: appConnectionUpdatedAt,
       isPlatformManagedCredentials: appConnectionIsPlatformManagedCredentials
@@ -184,9 +204,23 @@ export const pkiSyncDALFactory = (db: TDbClient) => {
     }
   };
 
-  const findByProjectIdWithSubscribers = async (projectId: string, tx?: Knex) => {
+  const findByProjectIdWithSubscribers = async (
+    projectId: string,
+    processedRules?: ProcessedPermissionRules,
+    tx?: Knex,
+    options?: { applicationId?: string | null }
+  ) => {
     try {
-      const pkiSyncs = await basePkiSyncWithSubscriberQuery({ filter: { projectId }, db, tx });
+      const filter: PkiSyncFindFilter = { projectId };
+      if (options?.applicationId !== undefined) {
+        (filter as Record<string, unknown>).applicationId = options.applicationId;
+      }
+      const pkiSyncs = await basePkiSyncWithSubscriberQuery({
+        filter,
+        db,
+        tx,
+        processedRules
+      });
       return pkiSyncs.map(expandPkiSyncWithSubscriber);
     } catch (error) {
       throw new DatabaseError({ error, name: "Find By Project ID With Subscribers - PKI Sync" });

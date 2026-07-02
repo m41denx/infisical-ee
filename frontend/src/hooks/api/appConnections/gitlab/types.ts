@@ -6,6 +6,8 @@ export type TGitLabProject = {
 export type TGitLabGroup = {
   id: string;
   name: string;
+  fullName: string;
+  fullPath: string;
 };
 
 export enum GitLabAccessTokenType {

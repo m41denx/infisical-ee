@@ -6,6 +6,7 @@ import {
   TAvailableProjectIdentities,
   TListAvailableProjectIdentitiesDTO
 } from "@app/hooks/api";
+import { availableIdentitiesUrl, identityMembershipsBase } from "@app/hooks/api/certManagerAccess";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
 import {
   IdentityProjectMembershipV1,
@@ -23,7 +24,7 @@ export const projectIdentityMembershipQuery = {
       queryFn: async () => {
         const { data } = await apiRequest.get<{
           identities: TAvailableProjectIdentities;
-        }>(`/api/v1/projects/${params.projectId}/memberships/available-identities`, {
+        }>(availableIdentitiesUrl(params.projectType, params.projectId), {
           params: {
             offset: params.offset,
             limit: params.limit,
@@ -40,11 +41,13 @@ export const projectIdentityMembershipQuery = {
 export const useListProjectIdentityMemberships = (
   {
     projectId,
+    projectType,
     offset = 0,
     limit = 100,
     orderBy = ProjectIdentityOrderBy.Name,
     orderDirection = OrderByDirection.ASC,
-    search = ""
+    search = "",
+    roles = []
   }: TListProjectIdentitiesDTO,
   options?: Omit<
     UseQueryOptions<
@@ -63,7 +66,8 @@ export const useListProjectIdentityMemberships = (
       limit,
       orderBy,
       orderDirection,
-      search
+      search,
+      roles
     }),
     queryFn: async () => {
       const params = new URLSearchParams({
@@ -71,11 +75,15 @@ export const useListProjectIdentityMemberships = (
         limit: String(limit),
         orderBy: String(orderBy),
         orderDirection: String(orderDirection),
-        search: String(search)
+        identityName: String(search)
       });
 
+      if (roles.length) {
+        params.set("roles", roles.join(","));
+      }
+
       const { data } = await apiRequest.get<TProjectIdentityMembershipsListV2>(
-        `/api/v1/projects/${projectId}/memberships/identities`,
+        identityMembershipsBase(projectType, projectId),
         { params }
       );
       return data;
@@ -100,7 +108,11 @@ export const useGetProjectIdentityMembership = (projectId: string, identityId: s
   });
 };
 
-export const useGetProjectIdentityMembershipV2 = (projectId: string, identityId: string) => {
+export const useGetProjectIdentityMembershipV2 = (
+  projectId: string,
+  identityId: string,
+  projectType?: string
+) => {
   return useQuery({
     enabled: Boolean(projectId && identityId),
     queryKey: projectKeys.getProjectIdentityMembershipDetailsV2(projectId, identityId),
@@ -108,7 +120,7 @@ export const useGetProjectIdentityMembershipV2 = (projectId: string, identityId:
       const {
         data: { identityMembership }
       } = await apiRequest.get<{ identityMembership: IdentityProjectMembershipV1 }>(
-        `/api/v1/projects/${projectId}/memberships/identities/${identityId}`
+        `${identityMembershipsBase(projectType, projectId)}/${identityId}`
       );
       return identityMembership;
     }

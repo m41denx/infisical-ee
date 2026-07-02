@@ -1,9 +1,17 @@
-import { faPlus } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { PlusIcon } from "lucide-react";
 
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
-import { DeleteActionModal, IconButton } from "@app/components/v2";
+import { DeleteActionModal } from "@app/components/v2";
+import {
+  Button,
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@app/components/v3";
 import { OrgPermissionGroupActions, OrgPermissionSubjects } from "@app/context";
 import { useDeleteGroupFromWorkspace as useRemoveProjectFromGroup } from "@app/hooks/api";
 import { usePopUp } from "@app/hooks/usePopUp";
@@ -14,9 +22,10 @@ import { GroupProjectsTable } from "./GroupProjectsTable";
 type Props = {
   groupId: string;
   groupSlug: string;
+  hideAddToProject?: boolean;
 };
 
-export const GroupProjectsSection = ({ groupId, groupSlug }: Props) => {
+export const GroupProjectsSection = ({ groupId, groupSlug, hideAddToProject = false }: Props) => {
   const { popUp, handlePopUpOpen, handlePopUpToggle } = usePopUp([
     "addGroupProjects",
     "removeProjectFromGroup"
@@ -39,35 +48,43 @@ export const GroupProjectsSection = ({ groupId, groupSlug }: Props) => {
   };
 
   return (
-    <div className="w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-      <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-medium text-mineshaft-100">Projects</h3>
-        <OrgPermissionCan I={OrgPermissionGroupActions.Edit} a={OrgPermissionSubjects.Groups}>
-          {(isAllowed) => (
-            <IconButton
-              isDisabled={!isAllowed}
-              ariaLabel="add project"
-              variant="plain"
-              className="group relative"
-              onClick={() => {
-                handlePopUpOpen("addGroupProjects", {
-                  groupId,
-                  slug: groupSlug
-                });
-              }}
-            >
-              <FontAwesomeIcon icon={faPlus} />
-            </IconButton>
-          )}
-        </OrgPermissionCan>
-      </div>
-      <div className="py-4">
-        <GroupProjectsTable
-          groupId={groupId}
-          groupSlug={groupSlug}
-          handlePopUpOpen={handlePopUpOpen}
-        />
-      </div>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Projects</CardTitle>
+          <CardDescription>Manage group project memberships</CardDescription>
+          <CardAction>
+            {!hideAddToProject && (
+              <OrgPermissionCan I={OrgPermissionGroupActions.Edit} a={OrgPermissionSubjects.Groups}>
+                {(isAllowed) => (
+                  <Button
+                    isDisabled={!isAllowed}
+                    onClick={() => {
+                      handlePopUpOpen("addGroupProjects", {
+                        groupId,
+                        slug: groupSlug
+                      });
+                    }}
+                    size="xs"
+                    variant="outline"
+                  >
+                    <PlusIcon />
+                    Add to Project
+                  </Button>
+                )}
+              </OrgPermissionCan>
+            )}
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <GroupProjectsTable
+            groupId={groupId}
+            groupSlug={groupSlug}
+            handlePopUpOpen={handlePopUpOpen}
+            hideAddToProject={hideAddToProject}
+          />
+        </CardContent>
+      </Card>
       <AddGroupProjectModal popUp={popUp} handlePopUpToggle={handlePopUpToggle} />
       <DeleteActionModal
         isOpen={popUp.removeProjectFromGroup.isOpen}
@@ -85,6 +102,6 @@ export const GroupProjectsSection = ({ groupId, groupSlug }: Props) => {
           return handleRemoveProjectFromGroup(projectData.projectId, projectData.projectName);
         }}
       />
-    </div>
+    </>
   );
 };

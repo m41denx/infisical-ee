@@ -23,6 +23,7 @@ export const SECRET_SYNC_NAME_MAP: Record<SecretSync, string> = {
   [SecretSync.Heroku]: "Heroku",
   [SecretSync.Render]: "Render",
   [SecretSync.Flyio]: "Fly.io",
+  [SecretSync.TriggerDev]: "Trigger.dev",
   [SecretSync.GitLab]: "GitLab",
   [SecretSync.CloudflarePages]: "Cloudflare Pages",
   [SecretSync.CloudflareWorkers]: "Cloudflare Workers",
@@ -35,7 +36,18 @@ export const SECRET_SYNC_NAME_MAP: Record<SecretSync, string> = {
   [SecretSync.Northflank]: "Northflank",
   [SecretSync.Bitbucket]: "Bitbucket",
   [SecretSync.LaravelForge]: "Laravel Forge",
-  [SecretSync.Chef]: "Chef"
+  [SecretSync.Chef]: "Chef",
+  [SecretSync.OctopusDeploy]: "Octopus Deploy",
+  [SecretSync.CircleCI]: "CircleCI",
+  [SecretSync.AzureEntraIdScim]: "Azure Entra ID SCIM",
+  [SecretSync.ExternalInfisical]: "Infisical",
+  [SecretSync.OVH]: "OVH",
+  [SecretSync.Devin]: "Devin",
+  [SecretSync.Ona]: "Ona",
+  [SecretSync.TravisCI]: "Travis CI",
+  [SecretSync.Snowflake]: "Snowflake",
+  [SecretSync.Qovery]: "Qovery",
+  [SecretSync.Cloud66]: "Cloud 66"
 };
 
 export const SECRET_SYNC_CONNECTION_MAP: Record<SecretSync, AppConnection> = {
@@ -59,6 +71,7 @@ export const SECRET_SYNC_CONNECTION_MAP: Record<SecretSync, AppConnection> = {
   [SecretSync.Heroku]: AppConnection.Heroku,
   [SecretSync.Render]: AppConnection.Render,
   [SecretSync.Flyio]: AppConnection.Flyio,
+  [SecretSync.TriggerDev]: AppConnection.TriggerDev,
   [SecretSync.GitLab]: AppConnection.GitLab,
   [SecretSync.CloudflarePages]: AppConnection.Cloudflare,
   [SecretSync.CloudflareWorkers]: AppConnection.Cloudflare,
@@ -71,7 +84,18 @@ export const SECRET_SYNC_CONNECTION_MAP: Record<SecretSync, AppConnection> = {
   [SecretSync.Northflank]: AppConnection.Northflank,
   [SecretSync.Bitbucket]: AppConnection.Bitbucket,
   [SecretSync.LaravelForge]: AppConnection.LaravelForge,
-  [SecretSync.Chef]: AppConnection.Chef
+  [SecretSync.Chef]: AppConnection.Chef,
+  [SecretSync.OctopusDeploy]: AppConnection.OctopusDeploy,
+  [SecretSync.CircleCI]: AppConnection.CircleCI,
+  [SecretSync.AzureEntraIdScim]: AppConnection.AzureEntraId,
+  [SecretSync.ExternalInfisical]: AppConnection.ExternalInfisical,
+  [SecretSync.OVH]: AppConnection.OVH,
+  [SecretSync.Devin]: AppConnection.Devin,
+  [SecretSync.Ona]: AppConnection.Ona,
+  [SecretSync.TravisCI]: AppConnection.TravisCI,
+  [SecretSync.Snowflake]: AppConnection.Snowflake,
+  [SecretSync.Qovery]: AppConnection.Qovery,
+  [SecretSync.Cloud66]: AppConnection.Cloud66
 };
 
 export const SECRET_SYNC_PLAN_MAP: Record<SecretSync, SecretSyncPlanType> = {
@@ -95,6 +119,7 @@ export const SECRET_SYNC_PLAN_MAP: Record<SecretSync, SecretSyncPlanType> = {
   [SecretSync.Heroku]: SecretSyncPlanType.Regular,
   [SecretSync.Render]: SecretSyncPlanType.Regular,
   [SecretSync.Flyio]: SecretSyncPlanType.Regular,
+  [SecretSync.TriggerDev]: SecretSyncPlanType.Regular,
   [SecretSync.GitLab]: SecretSyncPlanType.Regular,
   [SecretSync.CloudflarePages]: SecretSyncPlanType.Regular,
   [SecretSync.CloudflareWorkers]: SecretSyncPlanType.Regular,
@@ -107,7 +132,18 @@ export const SECRET_SYNC_PLAN_MAP: Record<SecretSync, SecretSyncPlanType> = {
   [SecretSync.Northflank]: SecretSyncPlanType.Regular,
   [SecretSync.Bitbucket]: SecretSyncPlanType.Regular,
   [SecretSync.LaravelForge]: SecretSyncPlanType.Regular,
-  [SecretSync.Chef]: SecretSyncPlanType.Enterprise
+  [SecretSync.Chef]: SecretSyncPlanType.Enterprise,
+  [SecretSync.OctopusDeploy]: SecretSyncPlanType.Regular,
+  [SecretSync.CircleCI]: SecretSyncPlanType.Regular,
+  [SecretSync.AzureEntraIdScim]: SecretSyncPlanType.Regular,
+  [SecretSync.ExternalInfisical]: SecretSyncPlanType.Regular,
+  [SecretSync.OVH]: SecretSyncPlanType.Regular,
+  [SecretSync.Devin]: SecretSyncPlanType.Regular,
+  [SecretSync.Ona]: SecretSyncPlanType.Regular,
+  [SecretSync.TravisCI]: SecretSyncPlanType.Regular,
+  [SecretSync.Snowflake]: SecretSyncPlanType.Regular,
+  [SecretSync.Qovery]: SecretSyncPlanType.Regular,
+  [SecretSync.Cloud66]: SecretSyncPlanType.Regular
 };
 
 export const SECRET_SYNC_SKIP_FIELDS_MAP: Record<SecretSync, string[]> = {
@@ -131,6 +167,7 @@ export const SECRET_SYNC_SKIP_FIELDS_MAP: Record<SecretSync, string[]> = {
   [SecretSync.Heroku]: ["appName"],
   [SecretSync.Render]: [],
   [SecretSync.Flyio]: [],
+  [SecretSync.TriggerDev]: [],
   [SecretSync.GitLab]: [
     "projectName",
     "shouldProtectSecrets",
@@ -152,7 +189,18 @@ export const SECRET_SYNC_SKIP_FIELDS_MAP: Record<SecretSync, string[]> = {
   [SecretSync.Northflank]: [],
   [SecretSync.Bitbucket]: [],
   [SecretSync.LaravelForge]: [],
-  [SecretSync.Chef]: []
+  [SecretSync.Chef]: [],
+  [SecretSync.OctopusDeploy]: [],
+  [SecretSync.CircleCI]: [],
+  [SecretSync.AzureEntraIdScim]: [],
+  [SecretSync.ExternalInfisical]: [],
+  [SecretSync.OVH]: [],
+  [SecretSync.Devin]: [],
+  [SecretSync.Ona]: ["projectName"],
+  [SecretSync.TravisCI]: ["repositorySlug"],
+  [SecretSync.Snowflake]: [],
+  [SecretSync.Qovery]: ["organizationName", "projectName", "environmentName"],
+  [SecretSync.Cloud66]: ["stackName"]
 };
 
 const defaultDuplicateCheck: DestinationDuplicateCheckFn = () => true;
@@ -178,6 +226,7 @@ export const DESTINATION_DUPLICATE_CHECK_MAP: Record<SecretSync, DestinationDupl
   [SecretSync.Heroku]: defaultDuplicateCheck,
   [SecretSync.Render]: defaultDuplicateCheck,
   [SecretSync.Flyio]: defaultDuplicateCheck,
+  [SecretSync.TriggerDev]: defaultDuplicateCheck,
   [SecretSync.GitLab]: (existingConfig, newConfig) => {
     const existingTargetEnv = existingConfig.targetEnvironment as string | undefined;
     const newTargetEnv = newConfig.targetEnvironment as string | undefined;
@@ -214,5 +263,24 @@ export const DESTINATION_DUPLICATE_CHECK_MAP: Record<SecretSync, DestinationDupl
   [SecretSync.Northflank]: defaultDuplicateCheck,
   [SecretSync.Bitbucket]: defaultDuplicateCheck,
   [SecretSync.LaravelForge]: defaultDuplicateCheck,
-  [SecretSync.Chef]: defaultDuplicateCheck
+  [SecretSync.Chef]: defaultDuplicateCheck,
+  [SecretSync.OctopusDeploy]: defaultDuplicateCheck,
+  [SecretSync.CircleCI]: defaultDuplicateCheck,
+  [SecretSync.AzureEntraIdScim]: defaultDuplicateCheck,
+  [SecretSync.ExternalInfisical]: defaultDuplicateCheck,
+  [SecretSync.OVH]: defaultDuplicateCheck,
+  [SecretSync.Devin]: defaultDuplicateCheck,
+  [SecretSync.Ona]: defaultDuplicateCheck,
+  [SecretSync.TravisCI]: defaultDuplicateCheck,
+  [SecretSync.Snowflake]: defaultDuplicateCheck,
+  [SecretSync.Qovery]: defaultDuplicateCheck,
+  [SecretSync.Cloud66]: defaultDuplicateCheck
 };
+
+/**
+ * Destinations that require a daily retry when their last sync has failed.
+ * These providers may be unavailable due to network partitions or temporary
+ * outages that outlast the normal BullMQ retry window, so the resource-cleanup
+ * queue re-enqueues them once per day until they succeed.
+ */
+export const SECRET_SYNC_DAILY_RETRY_DESTINATIONS = new Set<SecretSync>([SecretSync.ExternalInfisical]);

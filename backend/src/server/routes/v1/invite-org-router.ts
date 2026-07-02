@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-import { AccessScope, OrgMembershipRole, UsersSchema } from "@app/db/schemas";
+import { AccessScope, OrgMembershipRole } from "@app/db/schemas";
+import { unique } from "@app/lib/fn";
+import { sanitizeEmail } from "@app/lib/validator";
 import { inviteUserRateLimit, smtpRateLimit } from "@app/server/config/rateLimiter";
 import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
@@ -15,13 +17,15 @@ export const registerInviteOrgRouter = async (server: FastifyZodProvider) => {
     },
     method: "POST",
     schema: {
+      operationId: "inviteUsersToOrganization",
       body: z.object({
         inviteeEmails: z
           .string()
           .trim()
           .email()
           .array()
-          .refine((val) => val.every((el) => el === el.toLowerCase()), "Email must be lowercase"),
+          .max(100)
+          .transform((val) => unique(val.map((el) => sanitizeEmail(el)))),
         organizationId: z.string().trim(),
         organizationRoleSlug: z.string().default(OrgMembershipRole.Member)
       }),
@@ -83,6 +87,7 @@ export const registerInviteOrgRouter = async (server: FastifyZodProvider) => {
     },
     method: "POST",
     schema: {
+      operationId: "resendOrganizationMemberInvitation",
       body: z.object({
         membershipId: z.string()
       }),
@@ -117,6 +122,7 @@ export const registerInviteOrgRouter = async (server: FastifyZodProvider) => {
       rateLimit: inviteUserRateLimit
     },
     schema: {
+      operationId: "verifyUserToOrganization",
       body: z.object({
         email: z
           .string()
@@ -129,13 +135,12 @@ export const registerInviteOrgRouter = async (server: FastifyZodProvider) => {
       response: {
         200: z.object({
           message: z.string(),
-          token: z.string().optional(),
-          user: UsersSchema
+          token: z.string().optional()
         })
       }
     },
     handler: async (req) => {
-      const { user, token } = await server.services.org.verifyUserToOrg({
+      const { token } = await server.services.org.verifyUserToOrg({
         orgId: req.body.organizationId,
         code: req.body.code,
         email: req.body.email
@@ -143,7 +148,6 @@ export const registerInviteOrgRouter = async (server: FastifyZodProvider) => {
 
       return {
         message: "Successfully verified email",
-        user,
         token
       };
     }

@@ -3,13 +3,15 @@ import { z } from "zod";
 
 import { BadRequestError } from "@app/lib/errors";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
+import { ExternalMigrationProviders } from "@app/services/external-migration/external-migration-schemas";
 import {
-  ExternalMigrationProviders,
-  VaultImportStatus,
+  ExternalMigrationImportStatus,
   VaultMappingType
 } from "@app/services/external-migration/external-migration-types";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 const MB25_IN_BYTES = 26214400;
 
@@ -22,6 +24,9 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
     url: "/env-key",
     config: {
       rateLimit: writeLimit
+    },
+    schema: {
+      operationId: "importEnvKeyDataV3"
     },
     onRequest: verifyAuth([AuthMode.JWT]),
     handler: async (req) => {
@@ -56,6 +61,15 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
         actorOrgId: req.permission.orgId,
         actorAuthMethod: req.permission.authMethod
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.ExternalMigrationCreated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: { sourcePlatform: "env-key" }
+        })
+        .catch(() => {});
     }
   });
 
@@ -66,12 +80,14 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "importVaultDataV3",
       body: z.object({
         vaultAccessToken: z.string(),
         vaultNamespace: z.string().trim().optional(),
         vaultUrl: z.string(),
         mappingType: z.nativeEnum(VaultMappingType),
-        gatewayId: z.string().optional()
+        gatewayId: z.string().optional(),
+        gatewayPoolId: z.string().optional()
       })
     },
     onRequest: verifyAuth([AuthMode.JWT]),
@@ -83,6 +99,15 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
         actorAuthMethod: req.permission.authMethod,
         ...req.body
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.ExternalMigrationCreated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: { sourcePlatform: "hashicorp-vault" }
+        })
+        .catch(() => {});
     }
   });
 
@@ -93,6 +118,7 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getCustomMigrationEnabledV3",
       params: z.object({
         provider: z.nativeEnum(ExternalMigrationProviders)
       }),
@@ -117,161 +143,26 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
 
   server.route({
     method: "GET",
-    url: "/vault/configs",
-    config: {
-      rateLimit: readLimit
-    },
-    schema: {
-      response: {
-        200: z.object({
-          configs: z
-            .object({
-              id: z.string(),
-              orgId: z.string(),
-              namespace: z.string(),
-              connectionId: z.string().nullish(),
-              createdAt: z.date(),
-              updatedAt: z.date()
-            })
-            .array()
-        })
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const configs = await server.services.migration.getVaultExternalMigrationConfigs({
-        actor: req.permission
-      });
-
-      return { configs };
-    }
-  });
-
-  server.route({
-    method: "POST",
-    url: "/vault/configs",
-    config: {
-      rateLimit: writeLimit
-    },
-    schema: {
-      body: z.object({
-        connectionId: z.string(),
-        namespace: z.string()
-      }),
-      response: {
-        200: z.object({
-          config: z.object({
-            id: z.string(),
-            orgId: z.string(),
-            namespace: z.string(),
-            connectionId: z.string().nullable().optional(),
-            createdAt: z.date(),
-            updatedAt: z.date()
-          })
-        })
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const config = await server.services.migration.createVaultExternalMigration({
-        ...req.body,
-        actor: req.permission
-      });
-
-      return { config };
-    }
-  });
-
-  server.route({
-    method: "PUT",
-    url: "/vault/configs/:id",
-    config: {
-      rateLimit: writeLimit
-    },
-    schema: {
-      params: z.object({
-        id: z.string()
-      }),
-      body: z.object({
-        connectionId: z.string(),
-        namespace: z.string()
-      }),
-      response: {
-        200: z.object({
-          config: z.object({
-            id: z.string(),
-            orgId: z.string(),
-            namespace: z.string(),
-            connectionId: z.string().nullable().optional(),
-            createdAt: z.date(),
-            updatedAt: z.date()
-          })
-        })
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const config = await server.services.migration.updateVaultExternalMigration({
-        id: req.params.id,
-        ...req.body,
-        actor: req.permission
-      });
-
-      return { config };
-    }
-  });
-
-  server.route({
-    method: "DELETE",
-    url: "/vault/configs/:id",
-    config: {
-      rateLimit: writeLimit
-    },
-    schema: {
-      params: z.object({
-        id: z.string()
-      }),
-      response: {
-        200: z.object({
-          config: z.object({
-            id: z.string(),
-            orgId: z.string(),
-            namespace: z.string(),
-            connectionId: z.string().nullable().optional(),
-            createdAt: z.date(),
-            updatedAt: z.date()
-          })
-        })
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const config = await server.services.migration.deleteVaultExternalMigration({
-        id: req.params.id,
-        actor: req.permission
-      });
-
-      return { config };
-    }
-  });
-
-  server.route({
-    method: "GET",
     url: "/vault/namespaces",
     config: {
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getVaultNamespacesV3",
+      querystring: z.object({
+        connectionId: z.string().uuid()
+      }),
       response: {
         200: z.object({
-          namespaces: z.array(z.object({ id: z.string(), name: z.string() }))
+          namespaces: z.array(z.object({ id: z.string().nullish(), name: z.string().nullish() }))
         })
       }
     },
     onRequest: verifyAuth([AuthMode.JWT]),
     handler: async (req) => {
       const namespaces = await server.services.migration.getVaultNamespaces({
-        actor: req.permission
+        actor: req.permission,
+        connectionId: req.query.connectionId
       });
 
       return { namespaces };
@@ -285,8 +176,10 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getVaultPoliciesV3",
       querystring: z.object({
-        namespace: z.string()
+        namespace: z.string(),
+        connectionId: z.string().uuid()
       }),
       response: {
         200: z.object({
@@ -298,7 +191,8 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
     handler: async (req) => {
       const policies = await server.services.migration.getVaultPolicies({
         actor: req.permission,
-        namespace: req.query.namespace
+        namespace: req.query.namespace,
+        connectionId: req.query.connectionId
       });
 
       return { policies };
@@ -312,8 +206,10 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getVaultMountsV3",
       querystring: z.object({
-        namespace: z.string()
+        namespace: z.string(),
+        connectionId: z.string().uuid()
       }),
       response: {
         200: z.object({
@@ -325,7 +221,8 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
     handler: async (req) => {
       const mounts = await server.services.migration.getVaultMounts({
         actor: req.permission,
-        namespace: req.query.namespace
+        namespace: req.query.namespace,
+        connectionId: req.query.connectionId
       });
 
       return { mounts };
@@ -339,9 +236,11 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getVaultAuthMountsV3",
       querystring: z.object({
         namespace: z.string(),
-        authType: z.string().optional()
+        authType: z.string().optional(),
+        connectionId: z.string().uuid()
       }),
       response: {
         200: z.object({
@@ -354,7 +253,8 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       const mounts = await server.services.migration.getVaultAuthMounts({
         actor: req.permission,
         namespace: req.query.namespace,
-        authType: req.query.authType
+        authType: req.query.authType,
+        connectionId: req.query.connectionId
       });
 
       return { mounts };
@@ -368,16 +268,18 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "importVaultSecretsV3",
       body: z.object({
         projectId: z.string(),
         environment: z.string(),
         secretPath: z.string(),
         vaultNamespace: z.string(),
-        vaultSecretPath: z.string()
+        vaultSecretPaths: z.array(z.string()).min(1),
+        connectionId: z.string().uuid()
       }),
       response: {
         200: z.object({
-          status: z.nativeEnum(VaultImportStatus)
+          status: z.nativeEnum(ExternalMigrationImportStatus)
         })
       }
     },
@@ -400,9 +302,11 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getVaultKubernetesRolesV3",
       querystring: z.object({
         namespace: z.string(),
-        mountPath: z.string()
+        mountPath: z.string(),
+        connectionId: z.string().uuid()
       }),
       response: {
         200: z.object({
@@ -436,7 +340,60 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       const roles = await server.services.migration.getVaultKubernetesRoles({
         actor: req.permission,
         namespace: req.query.namespace,
-        mountPath: req.query.mountPath
+        mountPath: req.query.mountPath,
+        connectionId: req.query.connectionId
+      });
+
+      return { roles };
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/vault/database-roles",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      operationId: "getVaultDatabaseRolesV3",
+      querystring: z.object({
+        namespace: z.string(),
+        mountPath: z.string(),
+        connectionId: z.string().uuid()
+      }),
+      response: {
+        200: z.object({
+          roles: z.array(
+            z.object({
+              name: z.string(),
+              mountPath: z.string(),
+              db_name: z.string(),
+              default_ttl: z.number().nullish(),
+              max_ttl: z.number().nullish(),
+              creation_statements: z.array(z.string()).nullish(),
+              revocation_statements: z.array(z.string()).nullish(),
+              renew_statements: z.array(z.string()).nullish(),
+              config: z.object({
+                connection_details: z.object({
+                  connection_url: z.string().nullish(),
+                  hosts: z.string().nullish(),
+                  tls_ca: z.string().nullish(),
+                  username: z.string().nullish()
+                }),
+                plugin_name: z.string()
+              })
+            })
+          )
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const roles = await server.services.migration.getVaultDatabaseRoles({
+        actor: req.permission,
+        namespace: req.query.namespace,
+        mountPath: req.query.mountPath,
+        connectionId: req.query.connectionId
       });
 
       return { roles };
@@ -450,25 +407,29 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getVaultSecretPathsV3",
       querystring: z.object({
         namespace: z.string(),
-        mountPath: z.string()
+        mountPath: z.string(),
+        connectionId: z.string().uuid()
       }),
       response: {
         200: z.object({
-          secretPaths: z.string().array()
+          secretPaths: z.string().array(),
+          skippedWildcardPaths: z.string().array()
         })
       }
     },
     onRequest: verifyAuth([AuthMode.JWT]),
     handler: async (req) => {
-      const secretPaths = await server.services.migration.getVaultSecretPaths({
+      const result = await server.services.migration.getVaultSecretPaths({
         actor: req.permission,
         namespace: req.query.namespace,
-        mountPath: req.query.mountPath
+        mountPath: req.query.mountPath,
+        connectionId: req.query.connectionId
       });
 
-      return { secretPaths };
+      return result;
     }
   });
 
@@ -479,9 +440,11 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       rateLimit: readLimit
     },
     schema: {
+      operationId: "getVaultKubernetesAuthRolesV3",
       querystring: z.object({
         namespace: z.string(),
-        mountPath: z.string()
+        mountPath: z.string(),
+        connectionId: z.string().uuid()
       }),
 
       response: {
@@ -520,10 +483,202 @@ export const registerExternalMigrationRouter = async (server: FastifyZodProvider
       const roles = await server.services.migration.getVaultKubernetesAuthRoles({
         actor: req.permission,
         namespace: req.query.namespace,
-        mountPath: req.query.mountPath
+        mountPath: req.query.mountPath,
+        connectionId: req.query.connectionId
       });
 
       return { roles };
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/vault/ldap-roles",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      operationId: "getVaultLdapRolesV3",
+      querystring: z.object({
+        namespace: z.string(),
+        mountPath: z.string(),
+        connectionId: z.string().uuid()
+      }),
+      response: {
+        200: z.object({
+          roles: z.array(
+            z.object({
+              name: z.string(),
+              mountPath: z.string(),
+              default_ttl: z.number().nullish(),
+              max_ttl: z.number().nullish(),
+              creation_ldif: z.string().nullish(),
+              deletion_ldif: z.string().nullish(),
+              rollback_ldif: z.string().nullish(),
+              username_template: z.string().nullish(),
+              config: z.object({
+                binddn: z.string(),
+                url: z.string(),
+                certificate: z.string().nullish()
+              })
+            })
+          )
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const roles = await server.services.migration.getVaultLdapRoles({
+        actor: req.permission,
+        namespace: req.query.namespace,
+        mountPath: req.query.mountPath,
+        connectionId: req.query.connectionId
+      });
+
+      return { roles };
+    }
+  });
+
+  // ─── Doppler In-Platform Migration Routes ────────────────────────────────────
+
+  server.route({
+    method: "GET",
+    url: "/doppler/projects",
+    config: { rateLimit: readLimit },
+    schema: {
+      operationId: "getDopplerProjectsV3",
+      querystring: z.object({
+        connectionId: z.string().uuid()
+      }),
+      response: {
+        200: z.object({
+          projects: z
+            .object({
+              id: z.string(),
+              slug: z.string(),
+              name: z.string(),
+              description: z.string().nullish()
+            })
+            .array()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const projects = await server.services.migration.getDopplerProjects({
+        connectionId: req.query.connectionId,
+        actor: req.permission
+      });
+      return { projects };
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/doppler/environments",
+    config: { rateLimit: readLimit },
+    schema: {
+      operationId: "getDopplerEnvironmentsV3",
+      querystring: z.object({
+        connectionId: z.string().uuid(),
+        projectSlug: z.string().min(1)
+      }),
+      response: {
+        200: z.object({
+          environments: z
+            .object({
+              id: z.string(),
+              slug: z.string(),
+              name: z.string(),
+              project: z.string(),
+              parentId: z.string().nullish()
+            })
+            .array()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const environments = await server.services.migration.getDopplerEnvironments({
+        connectionId: req.query.connectionId,
+        projectSlug: req.query.projectSlug,
+        actor: req.permission
+      });
+      return { environments };
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/doppler/doppler-configs",
+    config: { rateLimit: readLimit },
+    schema: {
+      operationId: "getDopplerConfigsV3",
+      querystring: z.object({
+        connectionId: z.string().uuid(),
+        projectSlug: z.string().min(1)
+      }),
+      response: {
+        200: z.object({
+          configs: z
+            .object({
+              name: z.string(),
+              root: z.boolean(),
+              locked: z.boolean(),
+              environment: z.string(),
+              project: z.string()
+            })
+            .array()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const configs = await server.services.migration.getDopplerConfigs({
+        connectionId: req.query.connectionId,
+        projectSlug: req.query.projectSlug,
+        actor: req.permission
+      });
+      return { configs };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/doppler/import-secrets",
+    config: { rateLimit: writeLimit },
+    schema: {
+      operationId: "importDopplerSecretsV3",
+      body: z.object({
+        connectionId: z.string().uuid(),
+        dopplerProject: z.string().min(1),
+        dopplerEnvironment: z.string().min(1),
+        targetProjectId: z.string().min(1),
+        targetEnvironment: z.string().min(1),
+        targetSecretPath: z.string().min(1).default("/")
+      }),
+      response: {
+        200: z.object({ status: z.string(), imported: z.number() })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const result = await server.services.migration.importDopplerSecrets({
+        ...req.body,
+        actor: req.permission,
+        auditLogInfo: req.auditLogInfo
+      });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.ExternalMigrationCreated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: { sourcePlatform: "doppler" }
+        })
+        .catch(() => {});
+
+      return result;
     }
   });
 };

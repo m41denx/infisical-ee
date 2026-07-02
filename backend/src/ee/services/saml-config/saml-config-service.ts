@@ -15,10 +15,13 @@ import {
   TUsers
 } from "@app/db/schemas";
 import { throwOnPlanSeatLimitReached } from "@app/ee/services/license/license-fns";
-import { getConfig } from "@app/lib/config/env";
-import { crypto } from "@app/lib/crypto";
 import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
-import { AuthTokenType } from "@app/services/auth/auth-type";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
+import { recordSsoConfigChangeMetric, SsoConfigAction, SsoProvider } from "@app/lib/telemetry/metrics";
+import { sanitizeEmail, validateEmail } from "@app/lib/validator/validate-email";
+import { TAuthLoginFactory } from "@app/services/auth/auth-login-service";
+import { AuthMethod } from "@app/services/auth/auth-type";
 import { TAuthTokenServiceFactory } from "@app/services/auth-token/auth-token-service";
 import { TokenType } from "@app/services/auth-token/auth-token-types";
 import { TIdentityMetadataDALFactory } from "@app/services/identity/identity-metadata-dal";
@@ -34,16 +37,20 @@ import { TProjectKeyDALFactory } from "@app/services/project-key/project-key-dal
 import { SmtpTemplates, TSmtpService } from "@app/services/smtp/smtp-service";
 import { getServerCfg } from "@app/services/super-admin/super-admin-service";
 import { LoginMethod } from "@app/services/super-admin/super-admin-types";
+import { TTelemetryServiceFactory } from "@app/services/telemetry/telemetry-service";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 import { TUserDALFactory } from "@app/services/user/user-dal";
-import { normalizeUsername } from "@app/services/user/user-fns";
 import { TUserAliasDALFactory } from "@app/services/user-alias/user-alias-dal";
+import { ensureSsoAccountVerified, isStaleSsoAlias } from "@app/services/user-alias/user-alias-fns";
 import { UserAliasType } from "@app/services/user-alias/user-alias-types";
 
+import { TEmailDomainDALFactory } from "../email-domain/email-domain-dal";
+import { findOrgIdByVerifiedDomain, verifyEmailDomainOwnership } from "../email-domain/email-domain-fns";
 import { TGroupDALFactory } from "../group/group-dal";
 import { addUsersToGroupByUserIds, removeUsersFromGroupByUserIds } from "../group/group-fns";
 import { TUserGroupMembershipDALFactory } from "../group/user-group-membership-dal";
 import { TLicenseServiceFactory } from "../license/license-service";
-import { OrgPermissionActions, OrgPermissionSubjects } from "../permission/org-permission";
+import { OrgPermissionSsoActions, OrgPermissionSubjects } from "../permission/org-permission";
 import { TPermissionServiceFactory } from "../permission/permission-service-types";
 import { TSamlConfigDALFactory } from "./saml-config-dal";
 import { SamlProviders, TSamlConfigServiceFactory } from "./saml-config-types";
@@ -64,7 +71,7 @@ type TSamlConfigServiceFactoryDep = {
     | "findUserEncKeyByUserId"
     | "findUserEncKeyByUserIdsBatch"
   >;
-  userAliasDAL: Pick<TUserAliasDALFactory, "create" | "findOne">;
+  userAliasDAL: Pick<TUserAliasDALFactory, "create" | "findOne" | "updateById">;
   orgDAL: Pick<
     TOrgDALFactory,
     "createMembership" | "updateMembershipById" | "findMembership" | "findOrgById" | "findOne" | "updateById"
@@ -85,6 +92,9 @@ type TSamlConfigServiceFactoryDep = {
   projectBotDAL: Pick<TProjectBotDALFactory, "findOne">;
   projectKeyDAL: Pick<TProjectKeyDALFactory, "find" | "delete" | "findLatestProjectKey" | "insertMany">;
   membershipGroupDAL: Pick<TMembershipGroupDALFactory, "find" | "create">;
+  loginService: Pick<TAuthLoginFactory, "processProviderCallback">;
+  emailDomainDAL: Pick<TEmailDomainDALFactory, "findOne">;
+  telemetryService: Pick<TTelemetryServiceFactory, "sendPostHogEvents">;
 };
 
 export const samlConfigServiceFactory = ({
@@ -104,7 +114,10 @@ export const samlConfigServiceFactory = ({
   identityMetadataDAL,
   kmsService,
   membershipRoleDAL,
-  membershipGroupDAL
+  membershipGroupDAL,
+  loginService,
+  emailDomainDAL,
+  telemetryService
 }: TSamlConfigServiceFactoryDep): TSamlConfigServiceFactory => {
   const parseSamlGroups = (groupsValue: string): string[] => {
     let samlGroups: string[] = [];
@@ -176,9 +189,7 @@ export const samlConfigServiceFactory = ({
             {
               name: groupName,
               slug: `${groupName.toLowerCase().replace(new RE2("[^a-z0-9]", "g"), "-")}-${Date.now()}`,
-              orgId,
-              role: OrgMembershipRole.NoAccess,
-              roleId: null
+              orgId
             },
             transaction
           );
@@ -276,7 +287,7 @@ export const samlConfigServiceFactory = ({
       actorAuthMethod,
       actorOrgId
     });
-    ForbiddenError.from(permission).throwUnlessCan(OrgPermissionActions.Create, OrgPermissionSubjects.Sso);
+    ForbiddenError.from(permission).throwUnlessCan(OrgPermissionSsoActions.Create, OrgPermissionSubjects.Sso);
 
     const plan = await licenseService.getPlan(orgId);
     if (!plan.samlSSO)
@@ -285,7 +296,7 @@ export const samlConfigServiceFactory = ({
           "Failed to create SAML SSO configuration due to plan restriction. Upgrade plan to create SSO configuration."
       });
 
-    const org = await orgDAL.findOrgById(orgId);
+    const org = await requestMemoize(requestMemoKeys.orgFindOrgById(orgId), () => orgDAL.findOrgById(orgId));
 
     if (!org) {
       throw new NotFoundError({ message: `Could not find organization with ID "${orgId}"` });
@@ -325,6 +336,8 @@ export const samlConfigServiceFactory = ({
       enableGroupSync: enableGroupSync || false
     });
 
+    recordSsoConfigChangeMetric({ provider: SsoProvider.Saml, action: SsoConfigAction.Create, orgId });
+
     return samlConfig;
   };
 
@@ -349,7 +362,7 @@ export const samlConfigServiceFactory = ({
       actorAuthMethod,
       actorOrgId
     });
-    ForbiddenError.from(permission).throwUnlessCan(OrgPermissionActions.Edit, OrgPermissionSubjects.Sso);
+    ForbiddenError.from(permission).throwUnlessCan(OrgPermissionSsoActions.Edit, OrgPermissionSubjects.Sso);
     const plan = await licenseService.getPlan(orgId);
     if (!plan.samlSSO)
       throw new BadRequestError({
@@ -357,7 +370,7 @@ export const samlConfigServiceFactory = ({
           "Failed to update SAML SSO configuration due to plan restriction. Upgrade plan to update SSO configuration."
       });
 
-    const org = await orgDAL.findOrgById(orgId);
+    const org = await requestMemoize(requestMemoKeys.orgFindOrgById(orgId), () => orgDAL.findOrgById(orgId));
 
     if (!org) {
       throw new NotFoundError({ message: `Could not find organization with ID "${orgId}"` });
@@ -411,6 +424,8 @@ export const samlConfigServiceFactory = ({
     const [ssoConfig] = await samlConfigDAL.update({ orgId }, updateQuery);
     await orgDAL.updateById(orgId, { authEnforced: false, scimEnabled: false });
 
+    recordSsoConfigChangeMetric({ provider: SsoProvider.Saml, action: SsoConfigAction.Update, orgId });
+
     return ssoConfig;
   };
 
@@ -423,14 +438,18 @@ export const samlConfigServiceFactory = ({
           message: `SAML configuration for organization with ID '${dto.orgId}' not found`
         });
       }
+    } else if (dto.type === "domain") {
+      const verifiedDomain = await findOrgIdByVerifiedDomain({ domain: dto.domain, emailDomainDAL });
+      if (!verifiedDomain) {
+        throw new NotFoundError({ message: `No verified domain found for '${dto.domain}'` });
+      }
+      samlConfig = await samlConfigDAL.findOne({ orgId: verifiedDomain.orgId, isActive: true });
     } else if (dto.type === "orgSlug") {
       const org = await orgDAL.findOne({ slug: dto.orgSlug, rootOrgId: null });
       if (!org) {
-        throw new NotFoundError({
-          message: `Organization with slug '${dto.orgSlug}' not found`
-        });
+        throw new NotFoundError({ message: `Organization with slug '${dto.orgSlug}' not found` });
       }
-      samlConfig = await samlConfigDAL.findOne({ orgId: org.id });
+      samlConfig = await samlConfigDAL.findOne({ orgId: org.id, isActive: true });
     } else if (dto.type === "ssoId") {
       // TODO:
       // We made this change because saml config ids were not moved over during the migration
@@ -463,7 +482,7 @@ export const samlConfigServiceFactory = ({
         actorAuthMethod: dto.actorAuthMethod,
         actorOrgId: dto.actorOrgId
       });
-      ForbiddenError.from(permission).throwUnlessCan(OrgPermissionActions.Read, OrgPermissionSubjects.Sso);
+      ForbiddenError.from(permission).throwUnlessCan(OrgPermissionSsoActions.Read, OrgPermissionSubjects.Sso);
     }
     const { decryptor } = await kmsService.createCipherPairWithDataKey({
       type: KmsDataKey.Organization,
@@ -506,10 +525,11 @@ export const samlConfigServiceFactory = ({
     lastName,
     authProvider,
     orgId,
-    relayState,
+    ip,
+    userAgent,
+    callbackPort,
     metadata
   }) => {
-    const appCfg = getConfig();
     const serverCfg = await getServerCfg();
 
     if (serverCfg.enabledLoginMethods && !serverCfg.enabledLoginMethods.includes(LoginMethod.SAML)) {
@@ -524,8 +544,17 @@ export const samlConfigServiceFactory = ({
       aliasType: UserAliasType.SAML
     });
 
-    const organization = await orgDAL.findOrgById(orgId);
+    await verifyEmailDomainOwnership({ email, orgId, emailDomainDAL });
+    const sanitizedEmail = sanitizeEmail(email);
+    validateEmail(sanitizedEmail);
+
+    const organization = await requestMemoize(requestMemoKeys.orgFindOrgById(orgId), () => orgDAL.findOrgById(orgId));
     if (!organization) throw new NotFoundError({ message: `Organization with ID '${orgId}' not found` });
+
+    // When the org enforces SSO, the verified domain + IdP are authoritative, so we skip the
+    // separate email-verification step (the email-domain ownership check above already proves the
+    // org owns this domain, and password signup is blocked for enforced domains).
+    const skipEmailVerification = Boolean(organization.authEnforced);
 
     const samlConfig = await samlConfigDAL.findOne({ orgId });
     const groupsMetadata = metadata?.find(({ key }) => key === "groups");
@@ -535,8 +564,23 @@ export const samlConfigServiceFactory = ({
 
     let user: TUsers;
     if (userAlias) {
+      const foundUser = await userDAL.findById(userAlias.userId);
+      // Verify the existing user's stored email domain + cross-org check
+      await verifyEmailDomainOwnership({
+        email: foundUser.username,
+        orgId,
+        emailDomainDAL
+      });
+      // A stale, still-unverified alias may point at another user's account. Don't mutate that
+      // account's org membership / identity metadata / group state until the IdP proves control of
+      // it (the email-verification fallback below issues no session). This guard must run before the
+      // mutations, not just before ensureSsoAccountVerified at the end.
+      const isStaleAlias = isStaleSsoAlias({ user: foundUser, userAlias, assertedEmail: sanitizedEmail });
       user = await userDAL.transaction(async (tx) => {
-        const foundUser = await userDAL.findById(userAlias.userId, tx);
+        if (isStaleAlias) {
+          return foundUser;
+        }
+
         const [orgMembership] = await orgDAL.findMembership(
           {
             [`${TableName.Membership}.actorUserId` as "actorUserId"]: userAlias.userId,
@@ -552,10 +596,10 @@ export const samlConfigServiceFactory = ({
           const membership = await orgDAL.createMembership(
             {
               actorUserId: userAlias.userId,
-              inviteEmail: email,
+              inviteEmail: sanitizedEmail,
               scopeOrgId: orgId,
               scope: AccessScope.Organization,
-              status: OrgMembershipStatus.Accepted,
+              status: OrgMembershipStatus.Invited,
               isActive: true
             },
             tx
@@ -568,15 +612,8 @@ export const samlConfigServiceFactory = ({
             },
             tx
           );
-          // Only update the membership to Accepted if the user account is already completed.
-        } else if (orgMembership.status === OrgMembershipStatus.Invited && foundUser.isAccepted) {
-          await orgDAL.updateMembershipById(
-            orgMembership.id,
-            {
-              status: OrgMembershipStatus.Accepted
-            },
-            tx
-          );
+        } else if (!orgMembership.isActive) {
+          throw new ForbiddenRequestError({ message: "User organization membership is inactive" });
         }
 
         if (metadata && foundUser.id) {
@@ -608,23 +645,19 @@ export const samlConfigServiceFactory = ({
         return foundUser;
       });
     } else {
+      let isNewUser = false;
       user = await userDAL.transaction(async (tx) => {
         let newUser: TUsers | undefined;
-        newUser = await userDAL.findOne(
-          {
-            email,
-            isEmailVerified: true
-          },
-          tx
-        );
+
+        newUser = await userDAL.findOne({ username: sanitizedEmail }, tx);
 
         if (!newUser) {
-          const uniqueUsername = await normalizeUsername(`${firstName ?? ""}-${lastName ?? ""}`, userDAL);
           newUser = await userDAL.create(
             {
-              username: serverCfg.trustSamlEmails ? email : uniqueUsername,
-              email,
-              isEmailVerified: serverCfg.trustSamlEmails,
+              username: sanitizedEmail,
+              email: sanitizedEmail,
+              isEmailVerified: skipEmailVerification,
+              isAccepted: skipEmailVerification,
               firstName,
               lastName,
               authMethods: [],
@@ -632,6 +665,9 @@ export const samlConfigServiceFactory = ({
             },
             tx
           );
+          isNewUser = true;
+        } else if (!newUser.firstName && firstName) {
+          newUser = await userDAL.updateById(newUser.id, { firstName, ...(lastName ? { lastName } : {}) }, tx);
         }
 
         userAlias = await userAliasDAL.create(
@@ -639,9 +675,9 @@ export const samlConfigServiceFactory = ({
             userId: newUser.id,
             aliasType: UserAliasType.SAML,
             externalId,
-            emails: email ? [email] : [],
+            emails: sanitizedEmail ? [sanitizedEmail] : [],
             orgId,
-            isEmailVerified: serverCfg.trustSamlEmails
+            isEmailVerified: skipEmailVerification
           },
           tx
         );
@@ -665,9 +701,9 @@ export const samlConfigServiceFactory = ({
               actorUserId: newUser.id,
               scopeOrgId: orgId,
               scope: AccessScope.Organization,
-              status: newUser.isAccepted ? OrgMembershipStatus.Accepted : OrgMembershipStatus.Invited, // if user is fully completed, then set status to accepted, otherwise set it to invited so we can update it later
+              status: OrgMembershipStatus.Invited,
               isActive: true,
-              inviteEmail: email.toLowerCase()
+              inviteEmail: sanitizedEmail
             },
             tx
           );
@@ -676,15 +712,6 @@ export const samlConfigServiceFactory = ({
               membershipId: membership.id,
               role,
               customRoleId: roleId
-            },
-            tx
-          );
-          // Only update the membership to Accepted if the user account is already completed.
-        } else if (orgMembership.status === OrgMembershipStatus.Invited && newUser.isAccepted) {
-          await orgDAL.updateMembershipById(
-            orgMembership.id,
-            {
-              status: OrgMembershipStatus.Accepted
             },
             tx
           );
@@ -718,41 +745,36 @@ export const samlConfigServiceFactory = ({
 
         return newUser;
       });
+
+      if (isNewUser) {
+        void telemetryService.sendPostHogEvents({
+          event: PostHogEventTypes.UserSignedUp,
+          distinctId: user.username ?? "",
+          organizationId: orgId,
+          properties: {
+            username: user.username,
+            email: user.email ?? "",
+            signupMethod: "saml"
+          }
+        });
+      }
     }
     await licenseService.updateSubscriptionOrgMemberCount(organization.id);
 
-    const isUserCompleted = Boolean(user.isAccepted && user.isEmailVerified && userAlias.isEmailVerified);
-    const providerAuthToken = crypto.jwt().sign(
-      {
-        authTokenType: AuthTokenType.PROVIDER_TOKEN,
-        userId: user.id,
-        username: user.username,
-        ...(user.email && { email: user.email, isEmailVerified: userAlias.isEmailVerified }),
-        firstName,
-        lastName,
-        organizationName: organization.name,
-        organizationId: organization.id,
-        organizationSlug: organization.slug,
-        authMethod: authProvider,
-        hasExchangedPrivateKey: true,
-        aliasId: userAlias.id,
-        authType: UserAliasType.SAML,
-        isUserCompleted,
-        ...(relayState
-          ? {
-              callbackPort: (JSON.parse(relayState) as { callbackPort: string }).callbackPort
-            }
-          : {})
-      },
-      appCfg.AUTH_SECRET,
-      {
-        expiresIn: appCfg.JWT_PROVIDER_AUTH_LIFETIME
-      }
-    );
-
     await samlConfigDAL.update({ orgId }, { lastUsed: new Date() });
 
-    if (user.email && !userAlias.isEmailVerified) {
+    // When SSO is enforced, mark the user + alias as verified/accepted before issuing a session.
+    if (skipEmailVerification) {
+      ({ user, userAlias } = await ensureSsoAccountVerified({
+        user,
+        userAlias,
+        assertedEmail: sanitizedEmail,
+        userDAL,
+        userAliasDAL
+      }));
+    }
+
+    if (user.email && (!userAlias.isEmailVerified || !user.isAccepted)) {
       const token = await tokenService.createTokenForUser({
         type: TokenType.TOKEN_EMAIL_VERIFICATION,
         userId: user.id,
@@ -761,7 +783,7 @@ export const samlConfigServiceFactory = ({
 
       await smtpService.sendMail({
         template: SmtpTemplates.EmailVerification,
-        subjectLine: "Infisical confirmation code",
+        subjectLine: `Infisical confirmation code: ${token}`,
         recipients: [user.email],
         substitutions: {
           code: token
@@ -769,7 +791,18 @@ export const samlConfigServiceFactory = ({
       });
     }
 
-    return { isUserCompleted, providerAuthToken, user, organization };
+    const callbackResult = await loginService.processProviderCallback({
+      user,
+      authMethod: authProvider as AuthMethod,
+      isEmailVerified: Boolean(userAlias.isEmailVerified),
+      aliasId: userAlias.id,
+      ip,
+      userAgent,
+      organizationId: organization.id,
+      callbackPort
+    });
+
+    return { ...callbackResult, userId: user.id, orgId: organization.id, orgName: organization.name };
   };
 
   return {

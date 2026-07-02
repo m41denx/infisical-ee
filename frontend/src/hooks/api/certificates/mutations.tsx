@@ -4,7 +4,9 @@ import { apiRequest } from "@app/config/request";
 
 import { pkiSubscriberKeys } from "../pkiSubscriber/queries";
 import { projectKeys } from "../projects";
+import { certKeys } from "./queries";
 import {
+  TCancelCertificateRequestResponse,
   TCertificate,
   TDeleteCertDTO,
   TDownloadPkcs12DTO,
@@ -13,6 +15,10 @@ import {
   TRenewCertificateDTO,
   TRenewCertificateResponse,
   TRevokeCertDTO,
+  TTriggerCertificateRequestValidationResponse,
+  TUnifiedCertificateIssuanceDTO,
+  TUnifiedCertificateIssuanceResponse,
+  TUpdateCertificateDTO,
   TUpdateRenewalConfigDTO
 } from "./types";
 
@@ -27,7 +33,10 @@ export const useDeleteCert = () => {
       );
       return certificate;
     },
-    onSuccess: (_, { projectId }) => {
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({
+        queryKey: certKeys.getCertificateById(id)
+      });
       queryClient.invalidateQueries({
         queryKey: ["certificate-profiles", "list"]
       });
@@ -38,7 +47,7 @@ export const useDeleteCert = () => {
         queryKey: projectKeys.allProjectCertificates()
       });
       queryClient.invalidateQueries({
-        queryKey: projectKeys.forProjectCertificates(projectId)
+        queryKey: ["cert-dashboard-stats"]
       });
     }
   });
@@ -58,7 +67,10 @@ export const useRevokeCert = () => {
       );
       return certificate;
     },
-    onSuccess: (_, { projectId }) => {
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({
+        queryKey: certKeys.getCertificateById(id)
+      });
       queryClient.invalidateQueries({
         queryKey: ["certificate-profiles", "list"]
       });
@@ -69,7 +81,7 @@ export const useRevokeCert = () => {
         queryKey: projectKeys.allProjectCertificates()
       });
       queryClient.invalidateQueries({
-        queryKey: projectKeys.forProjectCertificates(projectId)
+        queryKey: ["cert-dashboard-stats"]
       });
     }
   });
@@ -85,9 +97,12 @@ export const useImportCertificate = () => {
       );
       return data;
     },
-    onSuccess: (_, { projectSlug }) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: projectKeys.forProjectCertificates(projectSlug)
+        queryKey: projectKeys.allProjectCertificates()
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["cert-dashboard-stats"]
       });
     }
   });
@@ -103,7 +118,10 @@ export const useRenewCertificate = () => {
       );
       return data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, { certificateId }) => {
+      queryClient.invalidateQueries({
+        queryKey: certKeys.getCertificateById(certificateId)
+      });
       queryClient.invalidateQueries({
         queryKey: ["certificate-profiles", "list"]
       });
@@ -116,6 +134,9 @@ export const useRenewCertificate = () => {
       if (data.projectId) {
         queryClient.invalidateQueries({
           queryKey: projectKeys.forProjectCertificates(data.projectId)
+        });
+        queryClient.invalidateQueries({
+          queryKey: certKeys.getDashboardStats(data.projectId)
         });
       }
     }
@@ -136,9 +157,9 @@ export const useUpdateRenewalConfig = () => {
       );
       return data;
     },
-    onSuccess: (_, { projectSlug }) => {
+    onSuccess: (_, { certificateId }) => {
       queryClient.invalidateQueries({
-        queryKey: projectKeys.forProjectCertificates(projectSlug)
+        queryKey: certKeys.getCertificateById(certificateId)
       });
       queryClient.invalidateQueries({
         queryKey: projectKeys.allProjectCertificates()
@@ -149,7 +170,7 @@ export const useUpdateRenewalConfig = () => {
 
 export const useDownloadCertPkcs12 = () => {
   return useMutation<void, object, TDownloadPkcs12DTO>({
-    mutationFn: async ({ certificateId, projectSlug, password, alias }) => {
+    mutationFn: async ({ certificateId, password, alias }) => {
       try {
         const response = await apiRequest.post(
           `/api/v1/cert-manager/certificates/${certificateId}/pkcs12`,
@@ -158,7 +179,6 @@ export const useDownloadCertPkcs12 = () => {
             alias
           },
           {
-            params: { projectSlug },
             responseType: "arraybuffer"
           }
         );
@@ -182,6 +202,114 @@ export const useDownloadCertPkcs12 = () => {
         }
         throw error;
       }
+    }
+  });
+};
+
+export const useUpdateCertificate = () => {
+  const queryClient = useQueryClient();
+  return useMutation<
+    { metadata: Array<{ key: string; value: string }> },
+    object,
+    TUpdateCertificateDTO
+  >({
+    mutationFn: async ({ certificateId, metadata }) => {
+      const { data } = await apiRequest.patch<{
+        metadata: Array<{ key: string; value: string }>;
+      }>(`/api/v1/cert-manager/certificates/${certificateId}`, { metadata });
+      return data;
+    },
+    onSuccess: (_, { certificateId }) => {
+      queryClient.invalidateQueries({
+        queryKey: certKeys.getCertificateById(certificateId)
+      });
+      queryClient.invalidateQueries({
+        queryKey: projectKeys.allProjectCertificates()
+      });
+    }
+  });
+};
+
+export const useUnifiedCertificateIssuance = () => {
+  const queryClient = useQueryClient();
+  return useMutation<TUnifiedCertificateIssuanceResponse, object, TUnifiedCertificateIssuanceDTO>({
+    mutationFn: async (body) => {
+      const { data } = await apiRequest.post<TUnifiedCertificateIssuanceResponse>(
+        "/api/v1/cert-manager/certificates",
+        body
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["certificate-profiles", "list"]
+      });
+      queryClient.invalidateQueries({
+        queryKey: pkiSubscriberKeys.allPkiSubscriberCertificates()
+      });
+      queryClient.invalidateQueries({
+        queryKey: projectKeys.allProjectCertificates()
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["certificateRequests", "list"]
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["cert-dashboard-stats"]
+      });
+      queryClient.invalidateQueries({ queryKey: ["approval-requests"] });
+    }
+  });
+};
+
+export const useAssignCertificateToApplication = () => {
+  const queryClient = useQueryClient();
+  return useMutation<TCertificate, object, { certificateId: string; applicationId: string }>({
+    mutationFn: async ({ certificateId, applicationId }) => {
+      const {
+        data: { certificate }
+      } = await apiRequest.post<{ certificate: TCertificate }>(
+        `/api/v1/cert-manager/certificates/${certificateId}/application`,
+        { applicationId }
+      );
+      return certificate;
+    },
+    onSuccess: (_, { certificateId }) => {
+      queryClient.invalidateQueries({
+        queryKey: certKeys.getCertificateById(certificateId)
+      });
+      queryClient.invalidateQueries({
+        queryKey: projectKeys.allProjectCertificates()
+      });
+    }
+  });
+};
+
+export const useTriggerCertificateRequestValidation = () => {
+  const queryClient = useQueryClient();
+  return useMutation<TTriggerCertificateRequestValidationResponse, object, { requestId: string }>({
+    mutationFn: async ({ requestId }) => {
+      const { data } = await apiRequest.post<TTriggerCertificateRequestValidationResponse>(
+        `/api/v1/cert-manager/certificates/certificate-requests/${requestId}/trigger-validation`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["certificateRequests", "list"] });
+    }
+  });
+};
+
+export const useCancelCertificateRequest = () => {
+  const queryClient = useQueryClient();
+  return useMutation<TCancelCertificateRequestResponse, object, { requestId: string }>({
+    mutationFn: async ({ requestId }) => {
+      const { data } = await apiRequest.post<TCancelCertificateRequestResponse>(
+        `/api/v1/cert-manager/certificates/certificate-requests/${requestId}/cancel`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["certificateRequests", "list"] });
     }
   });
 };

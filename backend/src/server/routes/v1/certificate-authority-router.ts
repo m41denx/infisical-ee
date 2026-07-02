@@ -33,6 +33,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "createCertificateAuthorityV1",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Create CA",
       body: z
@@ -69,6 +70,18 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
           {
             message:
               "At least one of the fields commonName, organization, ou, country, province, or locality must be non-empty",
+            path: []
+          }
+        )
+        .refine(
+          (data) => {
+            if (data.notBefore !== undefined && data.notAfter === undefined) {
+              return false;
+            }
+            return true;
+          },
+          {
+            message: "NotBefore is set but notAfter date is missing",
             path: []
           }
         ),
@@ -116,6 +129,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getCertificateAuthorityV1",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Get CA",
       params: z.object({
@@ -165,6 +179,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "getCertificateAuthorityDerCertificate",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Get DER-encoded certificate of CA",
       params: z.object({
@@ -193,6 +208,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "updateCertificateAuthorityV1",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Update CA",
       params: z.object({
@@ -251,6 +267,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "deleteCertificateAuthorityV1",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Delete CA",
       params: z.object({
@@ -299,6 +316,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getCertificateAuthorityCsr",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Get CA CSR",
       params: z.object({
@@ -346,6 +364,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "renewCertificateAuthority",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Perform CA certificate renewal",
       params: z.object({
@@ -403,6 +422,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "listCertificateAuthorityCertificates",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Get list of past and current CA certificates for a CA",
       params: z.object({
@@ -453,6 +473,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getCertificateAuthorityCertificate",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Get current CA cert and cert chain of a CA",
       params: z.object({
@@ -505,6 +526,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "signIntermediateCertificateAuthority",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Create intermediate CA certificate from parent CA",
       params: z.object({
@@ -570,6 +592,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "importCertificateAuthorityCertificate",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Import certificate and chain to CA",
       params: z.object({
@@ -624,6 +647,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
+      operationId: "issueCertificateFromAuthority",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Issue certificate from CA",
       params: z.object({
@@ -718,6 +742,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
+      operationId: "signCertificateFromAuthority",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Sign certificate from CA",
       params: z.object({
@@ -812,6 +837,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
+      operationId: "listCertificateAuthorityTemplates",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Get list of certificate templates for the CA",
       params: z.object({
@@ -861,6 +887,7 @@ export const registerCaRouter = async (server: FastifyZodProvider) => {
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
+      operationId: "listCertificateAuthorityCrls",
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       description: "Get list of CRLs of the CA",
       params: z.object({

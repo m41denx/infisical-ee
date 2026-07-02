@@ -1,29 +1,30 @@
-import { useMemo } from "react";
-import {
-  faArrowDown,
-  faArrowUp,
-  faFolder,
-  faMagnifyingGlass,
-  faSearch
-} from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useState } from "react";
+import { ChevronDownIcon, FilterIcon, HardDriveIcon, PlusIcon, UserIcon } from "lucide-react";
+import { twMerge } from "tailwind-merge";
 
 import { OrgPermissionCan } from "@app/components/permissions";
+import { Lottie } from "@app/components/v2";
 import {
   Button,
-  EmptyState,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
   IconButton,
   Input,
   Pagination,
   Table,
-  TableContainer,
-  TableSkeleton,
-  TBody,
-  Th,
-  THead,
-  Tooltip,
-  Tr
-} from "@app/components/v2";
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@app/components/v3";
 import { OrgPermissionGroupActions, OrgPermissionSubjects, useOrganization } from "@app/context";
 import {
   getUserTablePreference,
@@ -31,12 +32,17 @@ import {
   setUserTablePreference
 } from "@app/helpers/userTablePreferences";
 import { usePagination, useResetPageHelper } from "@app/hooks";
-import { useListGroupUsers, useOidcManageGroupMembershipsEnabled } from "@app/hooks/api";
 import { OrderByDirection } from "@app/hooks/api/generic/types";
-import { EFilterReturnedUsers } from "@app/hooks/api/groups/types";
+import { useListGroupMembers } from "@app/hooks/api/groups/queries";
+import {
+  FilterMemberType,
+  GroupMembersOrderBy,
+  GroupMemberType
+} from "@app/hooks/api/groups/types";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
-import { GroupMembershipRow } from "./GroupMembershipRow";
+import { GroupMembershipIdentityRow } from "./GroupMembershipIdentityRow";
+import { GroupMembershipUserRow } from "./GroupMembershipUserRow";
 
 type Props = {
   groupId: string;
@@ -45,13 +51,15 @@ type Props = {
     popUpName: keyof UsePopUpState<["removeMemberFromGroup", "addGroupMembers"]>,
     data?: object
   ) => void;
+  isLinkedGroup?: boolean;
 };
 
-enum GroupMembersOrderBy {
-  Name = "name"
-}
-
-export const GroupMembersTable = ({ groupId, groupSlug, handlePopUpOpen }: Props) => {
+export const GroupMembersTable = ({
+  groupId,
+  groupSlug,
+  handlePopUpOpen,
+  isLinkedGroup = false
+}: Props) => {
   const {
     search,
     setSearch,
@@ -61,164 +69,192 @@ export const GroupMembersTable = ({ groupId, groupSlug, handlePopUpOpen }: Props
     setPerPage,
     offset,
     orderDirection,
-    toggleOrderDirection
+    toggleOrderDirection,
+    orderBy
   } = usePagination(GroupMembersOrderBy.Name, {
     initPerPage: getUserTablePreference("groupMembersTable", PreferenceKey.PerPage, 20)
   });
+
+  const [memberTypeFilter, setMemberTypeFilter] = useState<FilterMemberType[]>([]);
 
   const handlePerPageChange = (newPerPage: number) => {
     setPerPage(newPerPage);
     setUserTablePreference("groupMembersTable", PreferenceKey.PerPage, newPerPage);
   };
 
-  const { currentOrg } = useOrganization();
+  const { isSubOrganization } = useOrganization();
 
-  const { data: isOidcManageGroupMembershipsEnabled = false } =
-    useOidcManageGroupMembershipsEnabled(currentOrg.id);
-
-  const { data: groupMemberships, isPending } = useListGroupUsers({
+  const { data: groupMemberships, isPending } = useListGroupMembers({
     id: groupId,
     groupSlug,
     offset,
     limit: perPage,
     search,
-    filter: EFilterReturnedUsers.EXISTING_MEMBERS
+    orderBy,
+    orderDirection,
+    memberTypeFilter: memberTypeFilter.length > 0 ? memberTypeFilter : undefined
   });
 
-  const filteredGroupMemberships = useMemo(() => {
-    return groupMemberships && groupMemberships?.users
-      ? groupMemberships?.users
-          ?.filter((membership) => {
-            const userSearchString = `${membership.firstName && membership.firstName} ${
-              membership.lastName && membership.lastName
-            } ${membership.email && membership.email} ${
-              membership.username && membership.username
-            }`;
-            return userSearchString.toLowerCase().includes(search.trim().toLowerCase());
-          })
-          .sort((a, b) => {
-            const [membershipOne, membershipTwo] =
-              orderDirection === OrderByDirection.ASC ? [a, b] : [b, a];
-
-            const membershipOneComparisonString = membershipOne.firstName
-              ? membershipOne.firstName
-              : membershipOne.email;
-
-            const membershipTwoComparisonString = membershipTwo.firstName
-              ? membershipTwo.firstName
-              : membershipTwo.email;
-
-            const comparison = membershipOneComparisonString
-              .toLowerCase()
-              .localeCompare(membershipTwoComparisonString.toLowerCase());
-
-            return comparison;
-          })
-      : [];
-  }, [groupMemberships, orderDirection, search]);
+  const { members = [], totalCount = 0 } = groupMemberships ?? {};
 
   useResetPageHelper({
-    totalCount: filteredGroupMemberships?.length,
+    totalCount,
     offset,
     setPage
   });
 
+  const filterOptions = [
+    {
+      icon: <UserIcon size={16} />,
+      label: "Users",
+      value: FilterMemberType.USERS
+    },
+    {
+      icon: <HardDriveIcon size={16} />,
+      label: "Machine Identities",
+      value: FilterMemberType.MACHINE_IDENTITIES
+    }
+  ];
+
+  if (isPending) {
+    return (
+      <div className="flex h-40 w-full items-center justify-center">
+        <Lottie icon="infisical_loading_white" isAutoPlay className="w-16" />
+      </div>
+    );
+  }
+
+  const isFiltered = search || memberTypeFilter.length;
+
   return (
-    <div>
-      <Input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        leftIcon={<FontAwesomeIcon icon={faMagnifyingGlass} />}
-        placeholder="Search users..."
-      />
-      <TableContainer className="mt-4">
-        <Table>
-          <THead>
-            <Tr>
-              <Th className="w-1/3">
-                <div className="flex items-center">
-                  Name
-                  <IconButton
-                    variant="plain"
-                    className="ml-2"
-                    ariaLabel="sort"
-                    onClick={toggleOrderDirection}
-                  >
-                    <FontAwesomeIcon
-                      icon={orderDirection === OrderByDirection.DESC ? faArrowUp : faArrowDown}
-                    />
-                  </IconButton>
-                </div>
-              </Th>
-              <Th>Email</Th>
-              <Th>Added On</Th>
-              <Th className="w-5" />
-            </Tr>
-          </THead>
-          <TBody>
-            {isPending && <TableSkeleton columns={4} innerKey="group-user-memberships" />}
-            {!isPending &&
-              filteredGroupMemberships.slice(offset, perPage * page).map((userGroupMembership) => {
-                return (
-                  <GroupMembershipRow
-                    key={`user-group-membership-${userGroupMembership.id}`}
-                    user={userGroupMembership}
-                    handlePopUpOpen={handlePopUpOpen}
-                  />
-                );
-              })}
-          </TBody>
-        </Table>
-        {Boolean(filteredGroupMemberships.length) && (
-          <Pagination
-            count={filteredGroupMemberships.length}
-            page={page}
-            perPage={perPage}
-            onChangePage={setPage}
-            onChangePerPage={handlePerPageChange}
-          />
-        )}
-        {!isPending && !filteredGroupMemberships?.length && (
-          <EmptyState
-            title={
-              groupMemberships?.users.length
-                ? "No users match this search..."
-                : "This group does not have any members yet"
-            }
-            icon={groupMemberships?.users.length ? faSearch : faFolder}
-          />
-        )}
-        {!groupMemberships?.users.length && (
-          <OrgPermissionCan I={OrgPermissionGroupActions.Edit} a={OrgPermissionSubjects.Groups}>
-            {(isAllowed) => (
-              <Tooltip
-                className="text-center"
-                content={
-                  isOidcManageGroupMembershipsEnabled
-                    ? "OIDC Group Membership Mapping Enabled. Assign users to this group in your OIDC provider."
-                    : undefined
-                }
+    <>
+      <div className="mb-4 flex gap-2">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search members..."
+          className="flex-1"
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton
+              variant={
+                // eslint-disable-next-line no-nested-ternary
+                memberTypeFilter.length ? (isSubOrganization ? "sub-org" : "org") : "outline"
+              }
+            >
+              <FilterIcon />
+            </IconButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Filter by Member Type</DropdownMenuLabel>
+            {filterOptions.map((option) => (
+              <DropdownMenuCheckboxItem
+                key={option.value}
+                checked={memberTypeFilter.includes(option.value)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  setMemberTypeFilter((prev) => {
+                    if (prev.includes(option.value)) {
+                      return prev.filter((f) => f !== option.value);
+                    }
+                    return [...prev, option.value];
+                  });
+                  setPage(1);
+                }}
               >
-                <div className="mb-4 flex items-center justify-center">
-                  <Button
-                    variant="solid"
-                    colorSchema="secondary"
-                    isDisabled={isOidcManageGroupMembershipsEnabled || !isAllowed}
-                    onClick={() => {
-                      handlePopUpOpen("addGroupMembers", {
-                        groupId,
-                        slug: groupSlug
-                      });
-                    }}
-                  >
-                    Add members
-                  </Button>
-                </div>
-              </Tooltip>
+                {option.label}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {members.length ? (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-5" />
+              <TableHead onClick={toggleOrderDirection} className="w-2/3">
+                Name
+                <ChevronDownIcon
+                  className={twMerge(
+                    orderDirection === OrderByDirection.DESC && "rotate-180",
+                    "transition-transform"
+                  )}
+                />
+              </TableHead>
+              <TableHead>Added On</TableHead>
+              <TableHead className="w-5" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {members.map((userGroupMembership) =>
+              userGroupMembership.type === GroupMemberType.USER ? (
+                <GroupMembershipUserRow
+                  key={`user-group-membership-${userGroupMembership.id}`}
+                  user={userGroupMembership}
+                  handlePopUpOpen={handlePopUpOpen}
+                  isLinkedGroup={isLinkedGroup}
+                />
+              ) : (
+                <GroupMembershipIdentityRow
+                  key={`identity-group-membership-${userGroupMembership.id}`}
+                  identity={userGroupMembership}
+                  handlePopUpOpen={handlePopUpOpen}
+                  isLinkedGroup={isLinkedGroup}
+                />
+              )
             )}
-          </OrgPermissionCan>
-        )}
-      </TableContainer>
-    </div>
+          </TableBody>
+        </Table>
+      ) : (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyTitle>
+              {isFiltered ? "No members match this search" : "This group does not have any members"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {isFiltered
+                ? "Adjust search filters to view members."
+                : "Add users or machine identities to this group."}
+            </EmptyDescription>
+            {!isFiltered && !isLinkedGroup && (
+              <EmptyContent>
+                <OrgPermissionCan
+                  I={OrgPermissionGroupActions.Edit}
+                  a={OrgPermissionSubjects.Groups}
+                >
+                  {(isAllowed) => (
+                    <Button
+                      variant={isSubOrganization ? "sub-org" : "org"}
+                      size="xs"
+                      isDisabled={!isAllowed}
+                      onClick={() =>
+                        handlePopUpOpen("addGroupMembers", {
+                          groupId,
+                          slug: groupSlug
+                        })
+                      }
+                    >
+                      <PlusIcon />
+                      Add Member
+                    </Button>
+                  )}
+                </OrgPermissionCan>
+              </EmptyContent>
+            )}
+          </EmptyHeader>
+        </Empty>
+      )}
+      {Boolean(members.length) && (
+        <Pagination
+          count={totalCount}
+          page={page}
+          perPage={perPage}
+          onChangePage={setPage}
+          onChangePerPage={handlePerPageChange}
+        />
+      )}
+    </>
   );
 };

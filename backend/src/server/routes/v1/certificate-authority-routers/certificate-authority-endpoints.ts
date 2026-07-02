@@ -3,6 +3,8 @@ import { z } from "zod";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags } from "@app/lib/api-docs";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { openApiHidden } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
 import { CaStatus, CaType } from "@app/services/certificate-authority/certificate-authority-enums";
@@ -10,6 +12,7 @@ import {
   TCertificateAuthority,
   TCertificateAuthorityInput
 } from "@app/services/certificate-authority/certificate-authority-types";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 export const registerCertificateAuthorityEndpoints = <
   T extends TCertificateAuthority,
@@ -25,7 +28,7 @@ export const registerCertificateAuthorityEndpoints = <
   server: FastifyZodProvider;
   createSchema: z.ZodType<{
     name: string;
-    projectId: string;
+    projectId?: string;
     status: CaStatus;
     configuration: I["configuration"];
   }>;
@@ -35,6 +38,10 @@ export const registerCertificateAuthorityEndpoints = <
   }>;
   responseSchema: z.ZodTypeAny;
 }) => {
+  const caTypeNameForOpId = caType
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join("");
   server.route({
     method: "GET",
     url: `/`,
@@ -43,9 +50,10 @@ export const registerCertificateAuthorityEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `list${caTypeNameForOpId}CertificateAuthoritiesV1`,
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       querystring: z.object({
-        projectId: z.string().trim().min(1, "Project ID required")
+        projectId: z.string().uuid().optional().describe(openApiHidden())
       }),
       response: {
         200: responseSchema.array()
@@ -53,9 +61,7 @@ export const registerCertificateAuthorityEndpoints = <
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const {
-        query: { projectId }
-      } = req;
+      const projectId = req.query.projectId ?? req.internalCertManagerProjectId;
 
       const certificateAuthorities = (await server.services.certificateAuthority.listCertificateAuthoritiesByProjectId(
         { projectId, type: caType },
@@ -85,6 +91,7 @@ export const registerCertificateAuthorityEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `get${caTypeNameForOpId}CertificateAuthorityV1`,
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       params: z.object({
         id: z.string()
@@ -126,6 +133,7 @@ export const registerCertificateAuthorityEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `create${caTypeNameForOpId}CertificateAuthorityV1`,
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       body: createSchema,
       response: {
@@ -134,8 +142,9 @@ export const registerCertificateAuthorityEndpoints = <
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
+      const body = req.body as { projectId?: string };
       const certificateAuthority = (await server.services.certificateAuthority.createCertificateAuthority(
-        { ...req.body, type: caType },
+        { ...req.body, projectId: body.projectId ?? req.internalCertManagerProjectId, type: caType },
         req.permission
       )) as T;
 
@@ -151,6 +160,16 @@ export const registerCertificateAuthorityEndpoints = <
         }
       });
 
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CaCreated,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          caType,
+          orgId: req.permission.orgId
+        }
+      });
+
       return certificateAuthority;
     }
   });
@@ -163,6 +182,7 @@ export const registerCertificateAuthorityEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `update${caTypeNameForOpId}CertificateAuthorityV1`,
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       params: z.object({
         id: z.string()
@@ -210,6 +230,7 @@ export const registerCertificateAuthorityEndpoints = <
     },
     schema: {
       hide: false,
+      operationId: `delete${caTypeNameForOpId}CertificateAuthorityV1`,
       tags: [ApiDocsTags.PkiCertificateAuthorities],
       params: z.object({
         id: z.string()
@@ -236,6 +257,16 @@ export const registerCertificateAuthorityEndpoints = <
             name: certificateAuthority.name,
             caId: certificateAuthority.id
           }
+        }
+      });
+
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.CaDeleted,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          caType,
+          orgId: req.permission.orgId
         }
       });
 

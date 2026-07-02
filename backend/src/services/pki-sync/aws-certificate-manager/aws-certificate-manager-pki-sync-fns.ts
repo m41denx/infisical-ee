@@ -1,5 +1,20 @@
 /* eslint-disable no-await-in-loop */
-import AWS from "aws-sdk";
+import {
+  ACMClient,
+  AddTagsToCertificateCommand,
+  type CertificateSummary,
+  DeleteCertificateCommand,
+  DescribeCertificateCommand,
+  GetCertificateCommand,
+  type GetCertificateCommandOutput,
+  ImportCertificateCommand,
+  type ImportCertificateCommandInput,
+  type KeyAlgorithm,
+  ListCertificatesCommand,
+  type ListCertificatesCommandInput,
+  ListTagsForCertificateCommand,
+  type Tag
+} from "@aws-sdk/client-acm";
 import RE2 from "re2";
 import { z } from "zod";
 
@@ -10,7 +25,7 @@ import { TAppConnectionDALFactory } from "@app/services/app-connection/app-conne
 import { AppConnection, AWSRegion } from "@app/services/app-connection/app-connection-enums";
 import { decryptAppConnectionCredentials } from "@app/services/app-connection/app-connection-fns";
 import { AwsConnectionMethod } from "@app/services/app-connection/aws/aws-connection-enums";
-import { getAwsConnectionConfig } from "@app/services/app-connection/aws/aws-connection-fns";
+import { buildAwsConnectionConfig, getAwsConnectionConfig } from "@app/services/app-connection/aws/aws-connection-fns";
 import {
   AwsConnectionAccessTokenCredentialsSchema,
   AwsConnectionAssumeRoleCredentialsSchema
@@ -85,11 +100,11 @@ const validateCertificateContent = (cert: string, privateKey: string): void => {
   }
 };
 
-const isAwsIssuedCertificate = (certificate: AWS.ACM.CertificateSummary): boolean => {
+const isAwsIssuedCertificate = (certificate: CertificateSummary): boolean => {
   return certificate.Type === "AMAZON_ISSUED";
 };
 
-const shouldSkipCertificateExport = (certificate: AWS.ACM.CertificateSummary): boolean => {
+const shouldSkipCertificateExport = (certificate: CertificateSummary): boolean => {
   return isAwsIssuedCertificate(certificate);
 };
 
@@ -125,10 +140,7 @@ const generateCertificateName = (certificateName: string, pkiSync: TPkiSyncWithC
       throw new Error(`Certificate ID cannot be empty after processing certificate name: ${certificateName}`);
     }
 
-    const environment = "global";
-    const generatedName = certificateNameSchema
-      .replace(new RE2("\\{\\{certificateId\\}\\}", "g"), certificateId)
-      .replace(new RE2("\\{\\{environment\\}\\}", "g"), environment);
+    const generatedName = certificateNameSchema.replace(new RE2("\\{\\{certificateId\\}\\}", "g"), certificateId);
 
     if (generatedName.length > 256 || generatedName.length < 1) {
       throw new Error(
@@ -166,7 +178,7 @@ const getAwsAcmClient = async (
   region: AWSRegion,
   appConnectionDAL: Pick<TAppConnectionDALFactory, "findById" | "updateById">,
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">
-): Promise<AWS.ACM> => {
+): Promise<ACMClient> => {
   const appConnection = await appConnectionDAL.findById(connectionId);
 
   if (!appConnection) {
@@ -189,20 +201,10 @@ const getAwsAcmClient = async (
   let awsConnectionConfig: TAwsConnectionConfig;
   switch (appConnection.method) {
     case AwsConnectionMethod.AssumeRole:
-      awsConnectionConfig = {
-        app: AppConnection.AWS,
-        method: AwsConnectionMethod.AssumeRole,
-        credentials: decryptedCredentials as TAwsAssumeRoleCredentials,
-        orgId: appConnection.orgId
-      };
+      awsConnectionConfig = buildAwsConnectionConfig(appConnection, decryptedCredentials as TAwsAssumeRoleCredentials);
       break;
     case AwsConnectionMethod.AccessKey:
-      awsConnectionConfig = {
-        app: AppConnection.AWS,
-        method: AwsConnectionMethod.AccessKey,
-        credentials: decryptedCredentials as TAwsAccessKeyCredentials,
-        orgId: appConnection.orgId
-      };
+      awsConnectionConfig = buildAwsConnectionConfig(appConnection, decryptedCredentials as TAwsAccessKeyCredentials);
       break;
     default:
       throw new BadRequestError({
@@ -212,7 +214,7 @@ const getAwsAcmClient = async (
 
   const awsConfig = await getAwsConnectionConfig(awsConnectionConfig, region);
 
-  return new AWS.ACM(awsConfig);
+  return new ACMClient(awsConfig);
 };
 
 export const awsCertificateManagerPkiSyncFactory = ({
@@ -222,14 +224,14 @@ export const awsCertificateManagerPkiSyncFactory = ({
   certificateDAL
 }: TAwsCertificateManagerPkiSyncFactoryDeps) => {
   const deleteCertificateFromAcm = async (
-    acm: AWS.ACM,
+    acm: ACMClient,
     certificateArn: string,
     operation: string,
     syncId: string,
     throwOnError = false
   ): Promise<{ arn: string; success: boolean; error?: Error }> => {
     try {
-      await withRateLimitRetry(() => acm.deleteCertificate({ CertificateArn: certificateArn }).promise(), {
+      await withRateLimitRetry(() => acm.send(new DeleteCertificateCommand({ CertificateArn: certificateArn })), {
         operation,
         syncId
       });
@@ -256,26 +258,40 @@ export const awsCertificateManagerPkiSyncFactory = ({
     }
   };
   const $getAwsAcmCertificates = async (
-    acm: AWS.ACM,
+    acm: ACMClient,
     syncId = "unknown"
   ): Promise<{
     acmCertificates: Record<
       string,
-      { cert: string; privateKey: string; certificateChain?: string; arn?: string; Tags?: AWS.ACM.TagList }
+      { cert: string; privateKey: string; certificateChain?: string; arn?: string; Tags?: Tag[] }
     >;
   }> => {
     const paginateAwsAcmCertificates = async () => {
-      const certificates: AWS.ACM.CertificateSummary[] = [];
+      const certificates: CertificateSummary[] = [];
       let nextToken: string | undefined;
 
       do {
-        const listParams: AWS.ACM.ListCertificatesRequest = {
+        // By default, listCertificates only returns RSA_1024 and RSA_2048 certificates.
+        const keyTypes: KeyAlgorithm[] = [
+          "RSA_1024",
+          "RSA_2048",
+          "RSA_3072",
+          "RSA_4096",
+          "EC_prime256v1",
+          "EC_secp384r1",
+          "EC_secp521r1"
+        ];
+        const listParams: ListCertificatesCommandInput = {
           CertificateStatuses: ["ISSUED"],
           NextToken: nextToken,
-          MaxItems: 100
+          MaxItems: 100,
+          // We must explicitly include all key types to get all certificates.
+          Includes: {
+            keyTypes
+          }
         };
 
-        const response = await withRateLimitRetry(() => acm.listCertificates(listParams).promise(), {
+        const response = await withRateLimitRetry(() => acm.send(new ListCertificatesCommand(listParams)), {
           operation: "list-certificates",
           syncId
         });
@@ -299,14 +315,16 @@ export const awsCertificateManagerPkiSyncFactory = ({
         }
 
         const [certificateDetails, tagsResponse] = await Promise.all([
-          acm.describeCertificate({ CertificateArn: certSummary.CertificateArn }).promise(),
-          acm.listTagsForCertificate({ CertificateArn: certSummary.CertificateArn }).promise()
+          acm.send(new DescribeCertificateCommand({ CertificateArn: certSummary.CertificateArn })),
+          acm.send(new ListTagsForCertificateCommand({ CertificateArn: certSummary.CertificateArn }))
         ]);
 
-        let certificateContent: AWS.ACM.GetCertificateResponse | undefined;
+        let certificateContent: GetCertificateCommandOutput | undefined;
         if (!shouldSkipCertificateExport(certSummary)) {
           try {
-            certificateContent = await acm.getCertificate({ CertificateArn: certSummary.CertificateArn }).promise();
+            certificateContent = await acm.send(
+              new GetCertificateCommand({ CertificateArn: certSummary.CertificateArn })
+            );
           } catch (error) {
             // Certificate content cannot be imported
           }
@@ -346,7 +364,7 @@ export const awsCertificateManagerPkiSyncFactory = ({
 
     const res: Record<
       string,
-      { cert: string; privateKey: string; certificateChain?: string; arn?: string; Tags?: AWS.ACM.TagList }
+      { cert: string; privateKey: string; certificateChain?: string; arn?: string; Tags?: Tag[] }
     > = successfulCertificates.reduce(
       (obj, certificate) => ({
         ...obj,
@@ -358,10 +376,7 @@ export const awsCertificateManagerPkiSyncFactory = ({
           Tags: certificate.Tags
         }
       }),
-      {} as Record<
-        string,
-        { cert: string; privateKey: string; certificateChain?: string; arn?: string; Tags?: AWS.ACM.TagList }
-      >
+      {} as Record<string, { cert: string; privateKey: string; certificateChain?: string; arn?: string; Tags?: Tag[] }>
     );
 
     return {
@@ -386,7 +401,7 @@ export const awsCertificateManagerPkiSyncFactory = ({
     }: {
       acmCertificates: Record<
         string,
-        { cert: string; privateKey: string; certificateChain?: string; arn?: string; Tags?: AWS.ACM.TagList }
+        { cert: string; privateKey: string; certificateChain?: string; arn?: string; Tags?: Tag[] }
       >;
     } = await $getAwsAcmCertificates(acm, pkiSync.id);
 
@@ -563,9 +578,9 @@ export const awsCertificateManagerPkiSyncFactory = ({
       setCertificates,
       async ({ key, name, cert, privateKey, certificateChain, existingArn, certificateId }) => {
         try {
-          const importParams: AWS.ACM.ImportCertificateRequest = {
-            Certificate: cert,
-            PrivateKey: privateKey
+          const importParams: ImportCertificateCommandInput = {
+            Certificate: Buffer.from(cert),
+            PrivateKey: Buffer.from(privateKey)
           };
 
           if (!existingArn) {
@@ -578,13 +593,13 @@ export const awsCertificateManagerPkiSyncFactory = ({
           }
 
           if (certificateChain && certificateChain.trim().length > 0) {
-            importParams.CertificateChain = certificateChain;
+            importParams.CertificateChain = Buffer.from(certificateChain);
           }
           if (existingArn) {
             importParams.CertificateArn = existingArn;
           }
 
-          const response = await withRateLimitRetry(() => acm.importCertificate(importParams).promise(), {
+          const response = await withRateLimitRetry(() => acm.send(new ImportCertificateCommand(importParams)), {
             operation: "import-certificate",
             syncId: pkiSync.id
           });
@@ -598,8 +613,8 @@ export const awsCertificateManagerPkiSyncFactory = ({
 
               await withRateLimitRetry(
                 () =>
-                  acm
-                    .addTagsToCertificate({
+                  acm.send(
+                    new AddTagsToCertificateCommand({
                       CertificateArn: response.CertificateArn!,
                       Tags: [
                         {
@@ -608,7 +623,7 @@ export const awsCertificateManagerPkiSyncFactory = ({
                         }
                       ]
                     })
-                    .promise(),
+                  ),
                 {
                   operation: "add-tags-to-certificate",
                   syncId: pkiSync.id

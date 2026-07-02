@@ -17,10 +17,14 @@ import {
   NotFoundError,
   OidcAuthError,
   PermissionBoundaryError,
+  PolicyViolationError,
   RateLimitError,
   ScimRequestError,
   UnauthorizedError
 } from "@app/lib/errors";
+import { classifyError } from "@app/lib/errors/classify";
+import { RequestContextKey } from "@app/lib/request-context/request-context-keys";
+import { coreHttpErrorCounter, rateLimitExceededCounter } from "@app/lib/telemetry/metrics";
 
 enum JWTErrors {
   JwtExpired = "jwt expired",
@@ -55,11 +59,44 @@ export const fastifyErrHandler = fastifyPlugin(async (server: FastifyZodProvider
     unit: "{error}"
   });
 
-  server.setErrorHandler((error, req, res) => {
-    req.log.error(error);
+  server.setErrorHandler((error: Error, req, res) => {
+    // Expected client errors don't need stack traces. Log them without the Error object to
+    // avoid stack serialization; keep full-stack logging for unexpected / server errors.
+    const isExpectedClientError =
+      error instanceof BadRequestError ||
+      error instanceof NotFoundError ||
+      error instanceof UnauthorizedError ||
+      error instanceof ForbiddenError ||
+      error instanceof ForbiddenRequestError ||
+      error instanceof PermissionBoundaryError ||
+      error instanceof ZodError ||
+      error instanceof RateLimitError ||
+      error instanceof PolicyViolationError ||
+      (error instanceof ScimRequestError && error.status < 500) ||
+      (error instanceof AcmeError && error.status < 500) ||
+      error instanceof jwt.JsonWebTokenError;
+
+    if (isExpectedClientError) {
+      // Log structured fields (NOT the Error instance) so these stay searchable by name/route
+      // without serializing a stack
+      req.log.warn(
+        {
+          reqId: req.id,
+          errorName: error.name,
+          errorMessage: error.message,
+          route: req.routeOptions?.url,
+          method: req.method,
+          details: (error as { details?: unknown }).details
+        },
+        `client error: ${error.name}`
+      );
+    } else {
+      req.log.error(error);
+    }
+
     if (appCfg.OTEL_TELEMETRY_COLLECTION_ENABLED) {
       const { method } = req;
-      const route = req.routerPath;
+      const route = req.routeOptions.url;
       const errorType =
         error instanceof jwt.JsonWebTokenError ? "TokenError" : error.constructor.name || "UnknownError";
 
@@ -70,15 +107,15 @@ export const fastifyErrHandler = fastifyPlugin(async (server: FastifyZodProvider
         name: error.name
       });
 
-      const orgId = requestContext.get("orgId");
-      const orgName = requestContext.get("orgName");
-      const userAuthInfo = requestContext.get("userAuthInfo");
-      const identityAuthInfo = requestContext.get("identityAuthInfo");
-      const projectDetails = requestContext.get("projectDetails");
+      const orgId = requestContext.get(RequestContextKey.OrgId);
+      const orgName = requestContext.get(RequestContextKey.OrgName);
+      const userAuthInfo = requestContext.get(RequestContextKey.UserAuthInfo);
+      const identityAuthInfo = requestContext.get(RequestContextKey.IdentityAuthInfo);
+      const projectDetails = requestContext.get(RequestContextKey.ProjectDetails);
 
       const attributes: Record<string, string | number> = {
         "http.request.method": method,
-        "http.route": route,
+        "http.route": route ?? "",
         "error.type": errorType,
         "error.name": error.name
       };
@@ -130,12 +167,24 @@ export const fastifyErrHandler = fastifyPlugin(async (server: FastifyZodProvider
       }
 
       errorCounter.add(1, attributes);
+
+      const coreAttrs: Record<string, string | number> = {
+        "http.request.method": method,
+        "http.route": route ?? "unknown",
+        "error.type": classifyError(error)
+      };
+      if (orgId) coreAttrs["infisical.organization.id"] = orgId;
+      coreHttpErrorCounter.add(1, coreAttrs);
     }
 
     if (error instanceof BadRequestError) {
-      void res
-        .status(HttpStatusCodes.BadRequest)
-        .send({ reqId: req.id, statusCode: HttpStatusCodes.BadRequest, message: error.message, error: error.name });
+      void res.status(HttpStatusCodes.BadRequest).send({
+        reqId: req.id,
+        statusCode: HttpStatusCodes.BadRequest,
+        message: error.message,
+        error: error.name,
+        details: error.details
+      });
     } else if (error instanceof NotFoundError) {
       void res
         .status(HttpStatusCodes.NotFound)
@@ -197,6 +246,10 @@ export const fastifyErrHandler = fastifyPlugin(async (server: FastifyZodProvider
         details: error?.details
       });
     } else if (error instanceof RateLimitError) {
+      rateLimitExceededCounter.add(1, {
+        "http.route": req.routeOptions.url ?? "unknown",
+        "http.request.method": req.method
+      });
       void res.status(HttpStatusCodes.TooManyRequests).send({
         reqId: req.id,
         statusCode: HttpStatusCodes.TooManyRequests,
@@ -208,7 +261,8 @@ export const fastifyErrHandler = fastifyPlugin(async (server: FastifyZodProvider
         reqId: req.id,
         schemas: error.schemas,
         status: error.status,
-        detail: error.detail
+        detail: error.detail,
+        mutability: error.mutability
       });
     } else if (error instanceof OidcAuthError) {
       void res.status(HttpStatusCodes.InternalServerError).send({
@@ -253,8 +307,28 @@ export const fastifyErrHandler = fastifyPlugin(async (server: FastifyZodProvider
           status: error.status,
           type: `urn:ietf:params:acme:error:${error.type}`,
           detail: error.message
-          // TODO: add subproblems if they exist
         });
+    } else if (error instanceof PolicyViolationError) {
+      void res.status(HttpStatusCodes.Forbidden).send({
+        reqId: req.id,
+        statusCode: HttpStatusCodes.Forbidden,
+        error: "PolicyViolationError",
+        message: error.message,
+        details: error.details
+      });
+    } else if (
+      error instanceof SyntaxError &&
+      req.method === "POST" &&
+      (req.url === "/api/v1/cert-manager/certificates" || req.url === "/api/v1/cert-manager/certificates/")
+    ) {
+      // JSON parsing error on certificate endpoint - likely malformed CSR with literal newlines
+      void res.status(HttpStatusCodes.BadRequest).send({
+        reqId: req.id,
+        statusCode: HttpStatusCodes.BadRequest,
+        message:
+          "Invalid JSON in request body. If you are sending a Certificate Signing Request (CSR), ensure newlines are escaped as \\n characters, not literal line breaks.",
+        error: "BadRequestError"
+      });
     } else {
       void res.status(HttpStatusCodes.InternalServerError).send({
         reqId: req.id,

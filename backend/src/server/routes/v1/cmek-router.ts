@@ -9,10 +9,12 @@ import { AsymmetricKeyAlgorithm, SigningAlgorithm } from "@app/lib/crypto/sign";
 import { OrderByDirection } from "@app/lib/types";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { slugSchema } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
 import { CmekOrderBy, TCmekKeyEncryptionAlgorithm } from "@app/services/cmek/cmek-types";
 import { KmsKeyUsage } from "@app/services/kms/kms-types";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 const keyNameSchema = slugSchema({ min: 1, max: 32, field: "Name" });
 const keyDescriptionSchema = z.string().trim().max(500).optional();
@@ -21,21 +23,35 @@ const CmekSchema = KmsKeysSchema.merge(InternalKmsSchema.pick({ version: true, e
   isReserved: true
 });
 
-const base64Schema = z.string().superRefine((val, ctx) => {
-  if (!isBase64(val)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "plaintext must be base64 encoded"
-    });
-  }
+const MAX_KMS_PAYLOAD_BYTES = 1024 * 1024;
+// AES-GCM ciphertext carries a 12-byte IV, 16-byte auth tag, and 3-byte version blob on top of the plaintext,
+// so the decrypt limit must exceed the encrypt limit or a max-size encrypt's output can't be decrypted.
+const MAX_KMS_CIPHERTEXT_BYTES = MAX_KMS_PAYLOAD_BYTES + 1024;
+const MAX_KMS_SIGNATURE_BYTES = 8192;
+// A 1MB payload is ~1.37MB once base64 encoded, plus the JSON envelope, so the raw request body exceeds
+// Fastify's 1MB default bodyLimit. Override per-route so the body isn't rejected before schema validation runs.
+const KMS_PAYLOAD_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
 
-  if (getBase64SizeInBytes(val) > 4096) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "data cannot exceed 4096 bytes"
-    });
-  }
-});
+const createBase64Schema = (field: string, maxBytes: number) =>
+  z.string().superRefine((val, ctx) => {
+    if (!isBase64(val)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${field} must be base64 encoded`
+      });
+    }
+
+    if (getBase64SizeInBytes(val) > maxBytes) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${field} cannot exceed ${maxBytes} bytes`
+      });
+    }
+  });
+
+const base64Schema = createBase64Schema("data", MAX_KMS_PAYLOAD_BYTES);
+const ciphertextBase64Schema = createBase64Schema("ciphertext", MAX_KMS_CIPHERTEXT_BYTES);
+const signatureBase64Schema = createBase64Schema("signature", MAX_KMS_SIGNATURE_BYTES);
 
 export const registerCmekRouter = async (server: FastifyZodProvider) => {
   // create encryption key
@@ -47,6 +63,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "createKmsKey",
       tags: [ApiDocsTags.KmsKeys],
       description: "Create KMS key",
       body: z
@@ -63,7 +80,8 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
             .enum(AllowedEncryptionKeyAlgorithms)
             .optional()
             .default(SymmetricKeyAlgorithm.AES_GCM_256)
-            .describe(KMS.CREATE_KEY.encryptionAlgorithm)
+            .describe(KMS.CREATE_KEY.encryptionAlgorithm),
+          isExportable: z.boolean().optional().default(true).describe(KMS.CREATE_KEY.isExportable)
         })
         .superRefine((data, ctx) => {
           if (
@@ -98,7 +116,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
       const {
-        body: { projectId, name, description, encryptionAlgorithm, keyUsage },
+        body: { projectId, name, description, encryptionAlgorithm, keyUsage, isExportable },
         permission
       } = req;
 
@@ -109,7 +127,8 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
           name,
           description,
           encryptionAlgorithm: encryptionAlgorithm as TCmekKeyEncryptionAlgorithm,
-          keyUsage
+          keyUsage,
+          isExportable
         },
         permission
       );
@@ -123,10 +142,25 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
             keyId: cmek.id,
             name,
             description,
-            encryptionAlgorithm: encryptionAlgorithm as TCmekKeyEncryptionAlgorithm
+            encryptionAlgorithm: encryptionAlgorithm as TCmekKeyEncryptionAlgorithm,
+            isExportable
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.CmekCreated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: permission.orgId,
+          properties: {
+            keyId: cmek.id,
+            projectId,
+            encryptionAlgorithm,
+            keyUsage
+          }
+        })
+        .catch(() => {});
 
       return { key: cmek };
     }
@@ -141,6 +175,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "updateKmsKey",
       tags: [ApiDocsTags.KmsKeys],
       description: "Update KMS key",
       params: z.object({
@@ -183,6 +218,52 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     }
   });
 
+  server.route({
+    method: "POST",
+    url: "/keys/:keyId/rotate",
+    config: {
+      rateLimit: writeLimit
+    },
+    schema: {
+      hide: false,
+      operationId: "rotateKmsKey",
+      tags: [ApiDocsTags.KmsKeys],
+      description:
+        "Rotate KMS key. Generates new key material for the key and increments its version. Previous key material is retained so existing ciphertexts remain decryptable; new encrypt operations use the new material. Only supported for encrypt-decrypt keys.",
+      params: z.object({
+        keyId: z.string().uuid().describe(KMS.ROTATE_KEY.keyId)
+      }),
+      response: {
+        200: z.object({
+          key: CmekSchema
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const {
+        params: { keyId },
+        permission
+      } = req;
+
+      const cmek = await server.services.cmek.rotateCmekById(keyId, permission);
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: cmek.projectId!,
+        event: {
+          type: EventType.ROTATE_CMEK,
+          metadata: {
+            keyId,
+            version: cmek.version
+          }
+        }
+      });
+
+      return { key: cmek };
+    }
+  });
+
   // delete KMS key
   server.route({
     method: "DELETE",
@@ -192,6 +273,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "deleteKmsKey",
       tags: [ApiDocsTags.KmsKeys],
       description: "Delete KMS key",
       params: z.object({
@@ -236,6 +318,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "listKmsKeys",
       tags: [ApiDocsTags.KmsKeys],
       description: "List KMS keys",
       querystring: z.object({
@@ -289,6 +372,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "getKmsKeyById",
       tags: [ApiDocsTags.KmsKeys],
       description: "Get KMS key by ID",
       params: z.object({
@@ -332,6 +416,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "getKmsKeyByName",
       tags: [ApiDocsTags.KmsKeys],
       description: "Get KMS key by name",
       params: z.object({
@@ -374,12 +459,14 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
   // encrypt data
   server.route({
     method: "POST",
+    bodyLimit: KMS_PAYLOAD_BODY_LIMIT_BYTES,
     url: "/keys/:keyId/encrypt",
     config: {
       rateLimit: writeLimit
     },
     schema: {
       hide: false,
+      operationId: "encryptWithKmsKey",
       tags: [ApiDocsTags.KmsEncryption],
       description: "Encrypt data with KMS key",
       params: z.object({
@@ -415,6 +502,15 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.CmekEncrypt,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: permission.orgId,
+          properties: { keyId, projectId }
+        })
+        .catch(() => {});
+
       return { ciphertext };
     }
   });
@@ -427,6 +523,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "getKmsKeyPublicKey",
       tags: [ApiDocsTags.KmsSigning],
       description:
         "Get the public key for a KMS key that is used for signing and verifying data. This endpoint is only available for asymmetric keys.",
@@ -446,7 +543,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
         permission
       } = req;
 
-      const { publicKey, projectId } = await server.services.cmek.getPublicKey({ keyId }, permission);
+      const { publicKey, projectId, keyName } = await server.services.cmek.getPublicKey({ keyId }, permission);
 
       await server.services.auditLog.createAuditLog({
         ...req.auditLogInfo,
@@ -454,12 +551,210 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
         event: {
           type: EventType.CMEK_GET_PUBLIC_KEY,
           metadata: {
-            keyId
+            keyId,
+            keyName
           }
         }
       });
 
       return { publicKey };
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/keys/:keyId/private-key",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      hide: false,
+      operationId: "getKmsKeyPrivateKey",
+      tags: [ApiDocsTags.KmsKeys],
+      description:
+        "Export the private key (or key material) for a KMS key. For asymmetric keys (sign/verify), the private key is returned. For symmetric keys (encrypt/decrypt), the key material is returned.",
+      params: z.object({
+        keyId: z.string().uuid().describe(KMS.GET_PRIVATE_KEY.keyId)
+      }),
+      response: {
+        200: z.object({
+          privateKey: z.string()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const {
+        params: { keyId },
+        permission
+      } = req;
+
+      const { privateKey, projectId, keyName } = await server.services.cmek.getPrivateKey({ keyId }, permission);
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.CMEK_GET_PRIVATE_KEY,
+          metadata: {
+            keyId,
+            keyName
+          }
+        }
+      });
+
+      return { privateKey };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/keys/bulk-import",
+    config: { rateLimit: writeLimit },
+    schema: {
+      hide: false,
+      operationId: "bulkImportKmsKeys",
+      tags: [ApiDocsTags.KmsKeys],
+      description: "Bulk import KMS keys with provided key material into a project.",
+      body: z.object({
+        projectId: z.string().uuid(),
+        keys: z
+          .array(
+            z
+              .object({
+                name: keyNameSchema,
+                keyUsage: z.nativeEnum(KmsKeyUsage),
+                encryptionAlgorithm: z.enum(AllowedEncryptionKeyAlgorithms),
+                keyMaterial: z.string().min(1),
+                isExportable: z.boolean().optional().default(true).describe(KMS.CREATE_KEY.isExportable)
+              })
+              .superRefine((data, ctx) => {
+                if (
+                  data.keyUsage === KmsKeyUsage.ENCRYPT_DECRYPT &&
+                  !Object.values(SymmetricKeyAlgorithm).includes(data.encryptionAlgorithm as SymmetricKeyAlgorithm)
+                ) {
+                  ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: `encryptionAlgorithm must be a symmetric algorithm for encrypt-decrypt keys`
+                  });
+                }
+                if (
+                  data.keyUsage === KmsKeyUsage.SIGN_VERIFY &&
+                  !Object.values(AsymmetricKeyAlgorithm).includes(data.encryptionAlgorithm as AsymmetricKeyAlgorithm)
+                ) {
+                  ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: `encryptionAlgorithm must be an asymmetric algorithm for sign-verify keys`
+                  });
+                }
+                if (!isBase64(data.keyMaterial)) {
+                  ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: ["keyMaterial"],
+                    message: "keyMaterial must be base64 encoded"
+                  });
+                }
+              })
+          )
+          .min(1)
+          .max(100)
+      }),
+      response: {
+        200: z.object({
+          keys: z.array(z.object({ id: z.string(), name: z.string() })),
+          errors: z.array(z.object({ name: z.string(), message: z.string() }))
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const {
+        body: { projectId, keys },
+        permission
+      } = req;
+
+      const { keys: importedKeys, errors } = await server.services.cmek.bulkImportKeys(
+        {
+          projectId,
+          keys: keys.map((k) => ({
+            name: k.name,
+            algorithm: k.encryptionAlgorithm as TCmekKeyEncryptionAlgorithm,
+            keyUsage: k.keyUsage,
+            keyMaterial: k.keyMaterial,
+            isExportable: k.isExportable
+          }))
+        },
+        permission
+      );
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.CMEK_BULK_IMPORT_KEYS,
+          metadata: {
+            keyNames: importedKeys.map((k) => k.name),
+            failedKeyNames: errors.map((e) => e.name),
+            projectId
+          }
+        }
+      });
+
+      return { keys: importedKeys, errors };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/keys/bulk-export-private-keys",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      hide: false,
+      operationId: "bulkExportKmsKeyPrivateKeys",
+      tags: [ApiDocsTags.KmsKeys],
+      description:
+        "Bulk export multiple KMS keys. For asymmetric keys (sign/verify), both private and public keys are returned. For symmetric keys (encrypt/decrypt), the key material is returned.",
+      body: z.object({
+        keyIds: z.array(z.string().uuid().describe(KMS.BULK_EXPORT_PRIVATE_KEYS.keyIds)).min(1).max(100)
+      }),
+      response: {
+        200: z.object({
+          keys: z.array(
+            z.object({
+              keyId: z.string(),
+              name: z.string(),
+              keyUsage: z.string(),
+              algorithm: z.string(),
+              privateKey: z.string(),
+              publicKey: z.string().optional()
+            })
+          )
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const {
+        body: { keyIds },
+        permission
+      } = req;
+
+      const { keys, projectId } = await server.services.cmek.bulkGetPrivateKeys({ keyIds }, permission);
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.CMEK_BULK_EXPORT_PRIVATE_KEYS,
+          metadata: {
+            keys: keys.map((k) => ({ keyId: k.keyId, name: k.name }))
+          }
+        }
+      });
+
+      return { keys };
     }
   });
 
@@ -471,6 +766,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
     },
     schema: {
       hide: false,
+      operationId: "listKmsKeySigningAlgorithms",
       tags: [ApiDocsTags.KmsSigning],
       description: "List all available signing algorithms for a KMS key",
       params: z.object({
@@ -508,12 +804,14 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
 
   server.route({
     method: "POST",
+    bodyLimit: KMS_PAYLOAD_BODY_LIMIT_BYTES,
     url: "/keys/:keyId/sign",
     config: {
       rateLimit: writeLimit
     },
     schema: {
       hide: false,
+      operationId: "signWithKmsKey",
       tags: [ApiDocsTags.KmsSigning],
       description: "Sign data with a KMS key.",
       params: z.object({
@@ -563,12 +861,14 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
 
   server.route({
     method: "POST",
+    bodyLimit: KMS_PAYLOAD_BODY_LIMIT_BYTES,
     url: "/keys/:keyId/verify",
     config: {
       rateLimit: writeLimit
     },
     schema: {
       hide: false,
+      operationId: "verifyWithKmsKey",
       tags: [ApiDocsTags.KmsSigning],
       description: "Verify data signatures with a KMS key.",
       params: z.object({
@@ -577,7 +877,7 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
       body: z.object({
         isDigest: z.boolean().optional().default(false).describe(KMS.VERIFY.isDigest),
         data: base64Schema.describe(KMS.VERIFY.data),
-        signature: base64Schema.describe(KMS.VERIFY.signature),
+        signature: signatureBase64Schema.describe(KMS.VERIFY.signature),
         signingAlgorithm: z.nativeEnum(SigningAlgorithm)
       }),
       response: {
@@ -621,19 +921,21 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
 
   server.route({
     method: "POST",
+    bodyLimit: KMS_PAYLOAD_BODY_LIMIT_BYTES,
     url: "/keys/:keyId/decrypt",
     config: {
       rateLimit: writeLimit
     },
     schema: {
       hide: false,
+      operationId: "decryptWithKmsKey",
       tags: [ApiDocsTags.KmsEncryption],
       description: "Decrypt data with KMS key",
       params: z.object({
         keyId: z.string().uuid().describe(KMS.DECRYPT.keyId)
       }),
       body: z.object({
-        ciphertext: base64Schema.describe(KMS.DECRYPT.ciphertext)
+        ciphertext: ciphertextBase64Schema.describe(KMS.DECRYPT.ciphertext)
       }),
       response: {
         200: z.object({
@@ -661,6 +963,15 @@ export const registerCmekRouter = async (server: FastifyZodProvider) => {
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.CmekDecrypt,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: permission.orgId,
+          properties: { keyId, projectId }
+        })
+        .catch(() => {});
 
       return { plaintext };
     }

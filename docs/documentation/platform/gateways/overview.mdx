@@ -61,9 +61,14 @@ The Gateway system uses SSH reverse tunnels for secure, firewall-friendly connec
 
 ## Health Check
 
-To monitor their operational status, both gateways and relays transmit hourly heartbeats. A component is considered unhealthy if a heartbeat is not received for over an hour.
+To monitor their operational status, gateways transmit heartbeats every 3 minutes. Each heartbeat includes a TTL (time-to-live) indicating how long the gateway should be considered healthy. If no successful heartbeat is received before the TTL expires, the gateway is marked as unhealthy. Relays continue to transmit hourly heartbeats and are considered unhealthy if a heartbeat is not received within one hour.
 
 Infisical automatically notifies all organization admins of unhealthy gateway or relay statuses through email and in-app notifications.
+
+## High Availability
+
+1. **Relay failover**: Gateways configured with automatic relay selection will switch to a different healthy relay if the current one becomes unreachable, providing built-in resilience without additional configuration.
+2. **Gateway Pools**: For production workloads, you can group multiple gateways into a Gateway Pool to provide automatic failover at the gateway level. When a gateway in a pool goes down, the platform routes through a healthy member automatically. See [Gateway Pools](/documentation/platform/gateways/gateway-pools) for details.
 
 ## Getting Started
 
@@ -73,11 +78,14 @@ Ready to set up your gateway? Follow the guides below.
   <Card title="Gateway Deployment" href="/documentation/platform/gateways/gateway-deployment">
     Deploy and configure your gateway within your network infrastructure.
   </Card>
+  <Card title="Gateway Pools" href="/documentation/platform/gateways/gateway-pools">
+    Set up high availability with gateway pools for automatic failover.
+  </Card>
+</Columns>
+<Columns cols={2}>
   <Card title="Relay Deployment" href="/documentation/platform/gateways/relay-deployment">
     Set up relay servers if using self-deployed infrastructure.
   </Card>
-</Columns>
-<Columns cols={1}>
   <Card title="Security Architecture" href="/documentation/platform/gateways/security">
     Learn about the security model and implementation best practices.
   </Card>

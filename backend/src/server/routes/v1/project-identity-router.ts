@@ -1,8 +1,9 @@
 import { z } from "zod";
 
-import { AccessScope, IdentitiesSchema } from "@app/db/schemas";
+import { AccessScope, IdentitiesSchema, TemporaryPermissionMode } from "@app/db/schemas";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags, IDENTITIES } from "@app/lib/api-docs";
+import { ms } from "@app/lib/ms";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
@@ -43,6 +44,7 @@ export const registerProjectIdentityRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "createProjectMachineIdentity",
       tags: [ApiDocsTags.Identities],
       description: "Create an identity in a project",
       security: [
@@ -56,7 +58,24 @@ export const registerProjectIdentityRouter = async (server: FastifyZodProvider) 
       body: z.object({
         name: z.string().trim().min(1).describe(IDENTITIES.CREATE.name),
         hasDeleteProtection: z.boolean().default(false).describe(IDENTITIES.CREATE.hasDeleteProtection),
-        metadata: z.array(metadataSchema).optional().describe(IDENTITIES.CREATE.metadata)
+        metadata: z.array(metadataSchema).optional().describe(IDENTITIES.CREATE.metadata),
+        roles: z
+          .array(
+            z.union([
+              z.object({
+                role: z.string().min(1),
+                isTemporary: z.literal(false).default(false)
+              }),
+              z.object({
+                role: z.string().min(1),
+                isTemporary: z.literal(true),
+                temporaryMode: z.nativeEnum(TemporaryPermissionMode),
+                temporaryRange: z.string().refine((val) => ms(val) > 0, "Temporary range must be a positive number"),
+                temporaryAccessStartTime: z.string().datetime()
+              })
+            ])
+          )
+          .optional()
       }),
       response: {
         200: z.object({
@@ -75,7 +94,8 @@ export const registerProjectIdentityRouter = async (server: FastifyZodProvider) 
         data: {
           name: req.body.name,
           hasDeleteProtection: req.body.hasDeleteProtection,
-          metadata: req.body.metadata
+          metadata: req.body.metadata,
+          roles: req.body.roles
         }
       });
 
@@ -88,7 +108,18 @@ export const registerProjectIdentityRouter = async (server: FastifyZodProvider) 
             identityId: identity.id,
             name: req.body.name,
             hasDeleteProtection: req.body.hasDeleteProtection,
-            metadata: req.body.metadata
+            metadata: req.body.metadata,
+            roles: req.body.roles?.map((r) =>
+              r.isTemporary
+                ? {
+                    role: r.role,
+                    isTemporary: r.isTemporary,
+                    temporaryMode: r.temporaryMode,
+                    temporaryRange: r.temporaryRange,
+                    temporaryAccessStartTime: r.temporaryAccessStartTime
+                  }
+                : { role: r.role, isTemporary: r.isTemporary }
+            )
           }
         }
       });
@@ -106,6 +137,7 @@ export const registerProjectIdentityRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "updateProjectMachineIdentity",
       tags: [ApiDocsTags.Identities],
       description: "Update an identity in a project",
       security: [
@@ -173,6 +205,7 @@ export const registerProjectIdentityRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "deleteProjectMachineIdentity",
       tags: [ApiDocsTags.Identities],
       description: "Delete an identity from a project",
       security: [
@@ -227,6 +260,7 @@ export const registerProjectIdentityRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getProjectMachineIdentityById",
       tags: [ApiDocsTags.Identities],
       description: "Get an identity by ID in a project",
       security: [
@@ -270,6 +304,7 @@ export const registerProjectIdentityRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "listProjectMachineIdentities",
       tags: [ApiDocsTags.Identities],
       description: "List identities in a project",
       security: [

@@ -4,11 +4,25 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
+import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
-import { Button, FormControl, Input, Modal, ModalContent } from "@app/components/v2";
-import { useOrganization } from "@app/context";
+import {
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  Input
+} from "@app/components/v3";
+import { useOrganization, useSubscription } from "@app/context";
 import { useCreateOrgRole, useGetOrgRole, useUpdateOrgRole } from "@app/hooks/api";
-import { UsePopUpState } from "@app/hooks/usePopUp";
+import { usePopUp, UsePopUpState } from "@app/hooks/usePopUp";
 import { slugSchema } from "@app/lib/schemas";
 
 const schema = z
@@ -30,6 +44,12 @@ export const RoleModal = ({ popUp, handlePopUpToggle }: Props) => {
   const navigate = useNavigate();
   const { currentOrg } = useOrganization();
   const orgId = currentOrg?.id || "";
+  const { subscription } = useSubscription();
+  const {
+    popUp: upgradePlanPopUp,
+    handlePopUpOpen: handleUpgradePlanPopUpOpen,
+    handlePopUpToggle: handleUpgradePlanPopUpToggle
+  } = usePopUp(["upgradePlan"] as const);
 
   const popupData = popUp?.role?.data as {
     roleId: string;
@@ -71,6 +91,11 @@ export const RoleModal = ({ popUp, handlePopUpToggle }: Props) => {
 
   const onFormSubmit = async ({ name, description, slug }: FormData) => {
     if (!orgId) return;
+
+    if (subscription && !subscription?.rbac) {
+      handleUpgradePlanPopUpOpen("upgradePlan");
+      return;
+    }
 
     if (role) {
       // update
@@ -114,75 +139,91 @@ export const RoleModal = ({ popUp, handlePopUpToggle }: Props) => {
   };
 
   return (
-    <Modal
-      isOpen={popUp?.role?.isOpen}
-      onOpenChange={(isOpen) => {
-        handlePopUpToggle("role", isOpen);
-        reset();
-      }}
-    >
-      <ModalContent title={`${popUp?.role?.data ? "Update" : "Create"} Role`}>
-        <form onSubmit={handleSubmit(onFormSubmit)}>
-          <Controller
-            control={control}
-            defaultValue=""
-            name="name"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Name"
-                isError={Boolean(error)}
-                errorText={error?.message}
-                isRequired
+    <>
+      <Dialog
+        open={popUp?.role?.isOpen}
+        onOpenChange={(isOpen) => {
+          handlePopUpToggle("role", isOpen);
+          reset();
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{popUp?.role?.data ? "Update" : "Create"} Role</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit(onFormSubmit)}>
+            <FieldGroup>
+              <Controller
+                control={control}
+                defaultValue=""
+                name="name"
+                render={({ field, fieldState: { error } }) => (
+                  <Field>
+                    <FieldLabel htmlFor="name">Name</FieldLabel>
+                    <Input
+                      id="name"
+                      placeholder="Billing Team"
+                      isError={Boolean(error)}
+                      {...field}
+                    />
+                    <FieldError>{error?.message}</FieldError>
+                  </Field>
+                )}
+              />
+              <Controller
+                control={control}
+                defaultValue=""
+                name="slug"
+                render={({ field, fieldState: { error } }) => (
+                  <Field>
+                    <FieldLabel htmlFor="slug">Slug</FieldLabel>
+                    <Input id="slug" placeholder="billing" isError={Boolean(error)} {...field} />
+                    <FieldError>{error?.message}</FieldError>
+                  </Field>
+                )}
+              />
+              <Controller
+                control={control}
+                defaultValue=""
+                name="description"
+                render={({ field, fieldState: { error } }) => (
+                  <Field>
+                    <FieldLabel htmlFor="description">Description (optional)</FieldLabel>
+                    <Input
+                      id="description"
+                      placeholder="To manage billing"
+                      isError={Boolean(error)}
+                      {...field}
+                    />
+                    <FieldError>{error?.message}</FieldError>
+                  </Field>
+                )}
+              />
+            </FieldGroup>
+            <DialogFooter className="mt-6">
+              <DialogClose asChild>
+                <Button type="button" variant="ghost">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button
+                type="submit"
+                variant="org"
+                isPending={isSubmitting}
+                isDisabled={isSubmitting}
               >
-                <Input {...field} placeholder="Billing Team" />
-              </FormControl>
-            )}
-          />
-          <Controller
-            control={control}
-            defaultValue=""
-            name="slug"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Slug"
-                isError={Boolean(error)}
-                errorText={error?.message}
-                isRequired
-              >
-                <Input {...field} placeholder="billing" />
-              </FormControl>
-            )}
-          />
-          <Controller
-            control={control}
-            defaultValue=""
-            name="description"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl label="Description" isError={Boolean(error)} errorText={error?.message}>
-                <Input {...field} placeholder="To manage billing" />
-              </FormControl>
-            )}
-          />
-          <div className="flex items-center">
-            <Button
-              className="mr-4"
-              size="sm"
-              type="submit"
-              isLoading={isSubmitting}
-              isDisabled={isSubmitting}
-            >
-              {popUp?.role?.data ? "Update" : "Create"}
-            </Button>
-            <Button
-              colorSchema="secondary"
-              variant="plain"
-              onClick={() => handlePopUpToggle("role", false)}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      </ModalContent>
-    </Modal>
+                {popUp?.role?.data ? "Update" : "Create"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <UpgradePlanModal
+        isOpen={upgradePlanPopUp.upgradePlan.isOpen}
+        onOpenChange={(isOpen) => handleUpgradePlanPopUpToggle("upgradePlan", isOpen)}
+        text="Your current plan does not include custom roles. To unlock this feature, please upgrade to Infisical Enterprise plan."
+        isEnterpriseFeature
+      />
+    </>
   );
 };

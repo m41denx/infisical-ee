@@ -8,125 +8,295 @@ import { GcpSyncScope } from "@app/hooks/api/secretSyncs/types/gcp-sync";
 import { HumanitecSyncScope } from "@app/hooks/api/secretSyncs/types/humanitec-sync";
 import { RenderSyncScope } from "@app/hooks/api/secretSyncs/types/render-sync";
 
-export const SECRET_SYNC_MAP: Record<SecretSync, { name: string; image: string }> = {
-  [SecretSync.AWSParameterStore]: { name: "AWS Parameter Store", image: "Amazon Web Services.png" },
-  [SecretSync.AWSSecretsManager]: { name: "AWS Secrets Manager", image: "Amazon Web Services.png" },
-  [SecretSync.GitHub]: { name: "GitHub", image: "GitHub.png" },
-  [SecretSync.GCPSecretManager]: { name: "GCP Secret Manager", image: "Google Cloud Platform.png" },
-  [SecretSync.AzureKeyVault]: { name: "Azure Key Vault", image: "Microsoft Azure.png" },
+export const SECRET_SYNC_MAP: Record<
+  SecretSync,
+  {
+    name: string;
+    image: string;
+    category: string;
+    description: string;
+    aliases?: string[];
+  }
+> = {
+  [SecretSync.AWSParameterStore]: {
+    name: "AWS Parameter Store",
+    image: "Amazon Web Services.png",
+    category: "AWS",
+    description: "Hierarchical parameter store on AWS Systems Manager."
+  },
+  [SecretSync.AWSSecretsManager]: {
+    name: "AWS Secrets Manager",
+    image: "Amazon Web Services.png",
+    category: "AWS",
+    description: "Managed secret rotation and audit on AWS."
+  },
+  [SecretSync.GitHub]: {
+    name: "GitHub",
+    image: "GitHub.png",
+    category: "CI/CD",
+    description: "Repository or organization-level secrets."
+  },
+  [SecretSync.GCPSecretManager]: {
+    name: "GCP Secret Manager",
+    image: "Google Cloud Platform.png",
+    category: "GOOGLE CLOUD",
+    description: "Versioned secret storage on Google Cloud."
+  },
+  [SecretSync.AzureKeyVault]: {
+    name: "Azure Key Vault",
+    image: "Microsoft Azure.png",
+    category: "AZURE",
+    description: "Cloud-managed keys, secrets, and certificates."
+  },
   [SecretSync.AzureAppConfiguration]: {
     name: "Azure App Configuration",
-    image: "Microsoft Azure.png"
+    image: "Microsoft Azure.png",
+    category: "AZURE",
+    description: "Centralized app settings on Microsoft Azure."
   },
   [SecretSync.AzureDevOps]: {
     name: "Azure DevOps",
-    image: "Microsoft Azure.png"
+    image: "Microsoft Azure.png",
+    category: "AZURE",
+    description: "Pipeline variables for Azure DevOps projects."
   },
   [SecretSync.Databricks]: {
     name: "Databricks",
-    image: "Databricks.png"
+    image: "Databricks.png",
+    category: "DATA",
+    description: "Workspace secret scopes for jobs and notebooks."
   },
   [SecretSync.Humanitec]: {
     name: "Humanitec",
-    image: "Humanitec.png"
+    image: "Humanitec.png",
+    category: "PLATFORM",
+    description: "Application or environment-level shared values."
   },
   [SecretSync.TerraformCloud]: {
     name: "Terraform Cloud",
-    image: "Terraform Cloud.png"
+    image: "Terraform Cloud.png",
+    category: "INFRASTRUCTURE",
+    description: "Variables for Terraform Cloud workspaces."
   },
   [SecretSync.Camunda]: {
     name: "Camunda",
-    image: "Camunda.png"
+    image: "Camunda.png",
+    category: "PLATFORM",
+    description: "Cluster secrets for Camunda Platform 8."
   },
   [SecretSync.Vercel]: {
     name: "Vercel",
-    image: "Vercel.png"
+    image: "Vercel.png",
+    category: "HOSTING",
+    description: "Push environment variables to Vercel projects."
   },
   [SecretSync.Windmill]: {
     name: "Windmill",
-    image: "Windmill.png"
+    image: "Windmill.png",
+    category: "PLATFORM",
+    description: "Workspace variables for Windmill scripts and flows."
   },
   [SecretSync.HCVault]: {
     name: "Hashicorp Vault",
-    image: "Vault.png"
+    image: "Vault.png",
+    category: "SELF-HOSTED",
+    description: "KV v1 or v2 engine on a Vault instance you manage."
   },
   [SecretSync.TeamCity]: {
     name: "TeamCity",
-    image: "TeamCity.png"
+    image: "TeamCity.png",
+    category: "CI/CD",
+    description: "Project parameters in JetBrains TeamCity."
   },
   [SecretSync.OCIVault]: {
     name: "OCI Vault",
-    image: "Oracle.png"
+    image: "Oracle.png",
+    category: "ORACLE",
+    description: "Secret vault on Oracle Cloud Infrastructure."
   },
   [SecretSync.OnePass]: {
     name: "1Password",
-    image: "1Password.png"
+    image: "1Password.png",
+    category: "PASSWORD MANAGER",
+    description: "Items in a 1Password vault."
   },
   [SecretSync.Heroku]: {
     name: "Heroku",
-    image: "Heroku.png"
+    image: "Heroku.png",
+    category: "HOSTING",
+    description: "Config vars for Heroku applications."
   },
   [SecretSync.Render]: {
     name: "Render",
-    image: "Render.png"
+    image: "Render.png",
+    category: "HOSTING",
+    description: "Environment variables for Render services."
   },
   [SecretSync.Flyio]: {
     name: "Fly.io",
-    image: "Flyio.svg"
+    image: "Flyio.svg",
+    category: "HOSTING",
+    description: "Secrets for Fly.io apps."
   },
   [SecretSync.GitLab]: {
     name: "GitLab",
-    image: "GitLab.png"
+    image: "GitLab.png",
+    category: "CI/CD",
+    description: "Project or group-level CI/CD variables."
   },
   [SecretSync.CloudflarePages]: {
     name: "Cloudflare Pages",
-    image: "Cloudflare.png"
+    image: "Cloudflare.png",
+    category: "HOSTING",
+    description: "Environment variables for Cloudflare Pages."
   },
   [SecretSync.CloudflareWorkers]: {
     name: "Cloudflare Workers",
-    image: "Cloudflare.png"
+    image: "Cloudflare.png",
+    category: "HOSTING",
+    description: "Secrets bound to Cloudflare Workers."
   },
   [SecretSync.Zabbix]: {
     name: "Zabbix",
-    image: "Zabbix.png"
+    image: "Zabbix.png",
+    category: "MONITORING",
+    description: "Macros for Zabbix monitoring templates."
   },
   [SecretSync.Railway]: {
     name: "Railway",
-    image: "Railway.png"
+    image: "Railway.png",
+    category: "HOSTING",
+    description: "Service variables on Railway."
   },
   [SecretSync.Checkly]: {
     name: "Checkly",
-    image: "Checkly.png"
+    image: "Checkly.png",
+    category: "MONITORING",
+    description: "Environment variables for Checkly monitors."
   },
   [SecretSync.Supabase]: {
     name: "Supabase",
-    image: "Supabase.png"
+    image: "Supabase.png",
+    category: "DATA",
+    description: "Project secrets for Supabase."
   },
   [SecretSync.DigitalOceanAppPlatform]: {
     name: "Digital Ocean App Platform",
-    image: "Digital Ocean.png"
+    image: "Digital Ocean.png",
+    category: "HOSTING",
+    description: "App-level environment variables on DigitalOcean."
   },
   [SecretSync.Netlify]: {
     name: "Netlify",
-    image: "Netlify.png"
+    image: "Netlify.png",
+    category: "HOSTING",
+    description: "Site-level environment variables."
   },
   [SecretSync.Bitbucket]: {
     name: "Bitbucket",
-    image: "Bitbucket.png"
+    image: "Bitbucket.png",
+    category: "CI/CD",
+    description: "Repository and deployment variables on Bitbucket."
   },
   [SecretSync.Northflank]: {
     name: "Northflank",
-    image: "Northflank.png"
+    image: "Northflank.png",
+    category: "HOSTING",
+    description: "Secret groups for Northflank projects."
   },
   [SecretSync.LaravelForge]: {
     name: "Laravel Forge",
-    image: "Laravel Forge.png"
+    image: "Laravel Forge.png",
+    category: "HOSTING",
+    description: "Environment file values on Laravel Forge."
   },
   [SecretSync.Chef]: {
     name: "Chef",
-    image: "Chef.png"
+    image: "Chef.png",
+    category: "INFRASTRUCTURE",
+    description: "Data bags for Chef Infra."
+  },
+  [SecretSync.OctopusDeploy]: {
+    name: "Octopus Deploy",
+    image: "Octopus Deploy.png",
+    category: "CI/CD",
+    description: "Project variables in Octopus Deploy."
+  },
+  [SecretSync.CircleCI]: {
+    name: "CircleCI",
+    image: "CircleCI.png",
+    category: "CI/CD",
+    description: "Project or context environment variables."
+  },
+  [SecretSync.AzureEntraIdScim]: {
+    name: "Azure Entra ID SCIM",
+    image: "Microsoft Azure.png",
+    category: "AZURE",
+    description: "SCIM provisioning tokens for Azure Entra ID Enterprise Applications."
+  },
+  [SecretSync.ExternalInfisical]: {
+    name: "Infisical",
+    image: "Infisical.png",
+    category: "SECRETS",
+    description: "Secrets in another Infisical instance."
+  },
+  [SecretSync.OVH]: {
+    name: "OVH Cloud",
+    image: "OVH.png",
+    category: "CLOUD",
+    description: "Secret vault on OVHcloud."
+  },
+  [SecretSync.Devin]: {
+    name: "Devin",
+    image: "Devin.png",
+    category: "AI",
+    description: "Organization secrets for Devin agents."
+  },
+  [SecretSync.Ona]: {
+    name: "Ona",
+    image: "Ona.png",
+    category: "AI",
+    description: "Project-level environment variables on Ona.",
+    aliases: ["gitpod"]
+  },
+  [SecretSync.TravisCI]: {
+    name: "Travis CI",
+    image: "Travis CI.png",
+    category: "CI/CD",
+    description: "Repository environment variables on Travis CI."
+  },
+  [SecretSync.Snowflake]: {
+    name: "Snowflake",
+    image: "Snowflake.png",
+    category: "DATA",
+    description: "Secret objects in a Snowflake account."
+  },
+  [SecretSync.TriggerDev]: {
+    name: "Trigger.dev",
+    image: "TriggerDev.png",
+    category: "HOSTING",
+    description: "Environment variables for Trigger.dev projects."
+  },
+  [SecretSync.Qovery]: {
+    name: "Qovery",
+    image: "Qovery.png",
+    category: "HOSTING",
+    description: "Environment secrets and variables for Qovery projects."
+  },
+  [SecretSync.Cloud66]: {
+    name: "Cloud 66",
+    image: "Cloud 66.png",
+    category: "HOSTING",
+    description: "Environment variables for Cloud 66 stacks."
   }
 };
+
+export const POPULAR_SECRET_SYNCS: SecretSync[] = [
+  SecretSync.AWSParameterStore,
+  SecretSync.GCPSecretManager,
+  SecretSync.Vercel,
+  SecretSync.GitHub
+];
 
 export const SECRET_SYNC_CONNECTION_MAP: Record<SecretSync, AppConnection> = {
   [SecretSync.AWSParameterStore]: AppConnection.AWS,
@@ -161,7 +331,19 @@ export const SECRET_SYNC_CONNECTION_MAP: Record<SecretSync, AppConnection> = {
   [SecretSync.Northflank]: AppConnection.Northflank,
   [SecretSync.Bitbucket]: AppConnection.Bitbucket,
   [SecretSync.LaravelForge]: AppConnection.LaravelForge,
-  [SecretSync.Chef]: AppConnection.Chef
+  [SecretSync.Chef]: AppConnection.Chef,
+  [SecretSync.OctopusDeploy]: AppConnection.OctopusDeploy,
+  [SecretSync.CircleCI]: AppConnection.CircleCI,
+  [SecretSync.AzureEntraIdScim]: AppConnection.AzureEntraId,
+  [SecretSync.ExternalInfisical]: AppConnection.ExternalInfisical,
+  [SecretSync.OVH]: AppConnection.OVH,
+  [SecretSync.Devin]: AppConnection.Devin,
+  [SecretSync.Ona]: AppConnection.Ona,
+  [SecretSync.TravisCI]: AppConnection.TravisCI,
+  [SecretSync.Snowflake]: AppConnection.Snowflake,
+  [SecretSync.TriggerDev]: AppConnection.TriggerDev,
+  [SecretSync.Qovery]: AppConnection.Qovery,
+  [SecretSync.Cloud66]: AppConnection.Cloud66
 };
 
 export const SECRET_SYNC_INITIAL_SYNC_BEHAVIOR_MAP: Record<
@@ -173,11 +355,17 @@ export const SECRET_SYNC_INITIAL_SYNC_BEHAVIOR_MAP: Record<
     description: `Infisical will overwrite any secrets located in the ${destinationName} destination, removing any secrets that are not present within Infiscal. `
   }),
   [SecretSyncInitialSyncBehavior.ImportPrioritizeSource]: (destinationName: string) => ({
-    name: "Import Destination Secrets - Prioritize Infisical Values",
+    name:
+      destinationName === "Infisical"
+        ? "Import Destination Secrets - Prioritize Source (This Instance) Values"
+        : "Import Destination Secrets - Prioritize Infisical Values",
     description: `Infisical will import any secrets present in the ${destinationName} destination prior to syncing, prioritizing values from Infisical over ${destinationName} when keys conflict.`
   }),
   [SecretSyncInitialSyncBehavior.ImportPrioritizeDestination]: (destinationName: string) => ({
-    name: `Import Destination Secrets - Prioritize ${destinationName} Values`,
+    name:
+      destinationName === "Infisical"
+        ? "Import Destination Secrets - Prioritize Destination (Remote Instance) Values"
+        : `Import Destination Secrets - Prioritize ${destinationName} Values`,
     description: `Infisical will import any secrets present in the ${destinationName} destination prior to syncing, prioritizing values from ${destinationName} over Infisical when keys conflict.`
   })
 };
@@ -187,11 +375,17 @@ export const SECRET_SYNC_IMPORT_BEHAVIOR_MAP: Record<
   (destinationName: string) => { name: string; description: string }
 > = {
   [SecretSyncImportBehavior.PrioritizeSource]: (destinationName: string) => ({
-    name: "Prioritize Infisical Values",
+    name:
+      destinationName === "Infisical"
+        ? "Prioritize Source (This Instance) Values"
+        : "Prioritize Infisical Values",
     description: `Infisical will import any secrets present in the ${destinationName} destination, prioritizing values from Infisical over ${destinationName} when keys conflict.`
   }),
   [SecretSyncImportBehavior.PrioritizeDestination]: (destinationName: string) => ({
-    name: `Prioritize ${destinationName} Values`,
+    name:
+      destinationName === "Infisical"
+        ? "Prioritize Destination (Remote Instance) Values"
+        : `Prioritize ${destinationName} Values`,
     description: `Infisical will import any secrets present in the ${destinationName} destination, prioritizing values from ${destinationName} over Infisical when keys conflict.`
   })
 };

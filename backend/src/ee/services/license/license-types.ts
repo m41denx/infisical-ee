@@ -4,6 +4,8 @@ export enum InstanceType {
   OnPrem = "self-hosted",
   EnterpriseOnPrem = "enterprise-self-hosted",
   EnterpriseOnPremOffline = "enterprise-self-hosted-offline",
+  // Self-hosted instance whose license is resolved from License Server v2 (new "infisical_lk_" key).
+  EnterpriseOnPremV2 = "enterprise-self-hosted-v2",
   Cloud = "cloud"
 }
 
@@ -42,6 +44,7 @@ export type TFeatureSet = {
   membersUsed: number;
   identityLimit: null;
   identitiesUsed: number;
+  enforceIdentityLimit?: boolean;
   subOrganization: false;
   environmentLimit: null;
   environmentsUsed: 0;
@@ -78,11 +81,15 @@ export type TFeatureSet = {
     secretsLimit: number;
   };
   pkiEst: boolean;
-  pkiAcme: false;
-  enforceMfa: boolean;
+  pkiAcme: true;
+  pkiScep: false;
+  pkiPqc: false;
+  kmsPqc: false;
+  enforceMfa: false;
   projectTemplates: false;
   kmip: false;
   gateway: false;
+  gatewayPool: false;
   sshHostGroups: false;
   secretScanning: false;
   enterpriseSecretSyncs: false;
@@ -92,7 +99,9 @@ export type TFeatureSet = {
   pkiLegacyTemplates: false;
   fips: false;
   eventSubscriptions: false;
-  pam: false;
+  secretShareExternalBranding: false;
+  honeyTokens: false;
+  honeyTokenLimit: 0;
 };
 
 export type TOrgPlansTableDTO = {
@@ -102,6 +111,7 @@ export type TOrgPlansTableDTO = {
 export type TOrgPlanDTO = {
   projectId?: string;
   refreshCache?: boolean;
+  rootOrgId: string;
 } & TOrgPermission;
 
 export type TStartOrgTrialDTO = {
@@ -139,7 +149,9 @@ export type TOrgLicensesDTO = TOrgPermission;
 
 export enum LicenseType {
   Offline = "offline",
-  Online = "online"
+  Online = "online",
+  // New self-hosted key (prefix "infisical_lk_") that resolves entitlements from License Server v2.
+  OnlineV2 = "online-v2"
 }
 
 export type TLicenseKeyConfig =

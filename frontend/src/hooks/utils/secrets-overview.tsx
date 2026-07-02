@@ -69,7 +69,25 @@ export const useDynamicSecretOverview = (
     [dynamicSecrets]
   );
 
-  return { dynamicSecretNames, isDynamicSecretPresentInEnv };
+  const getDynamicSecretByName = useCallback(
+    (env: string, name: string) => {
+      return dynamicSecrets?.find((ds) => ds.environment === env && ds.name === name);
+    },
+    [dynamicSecrets]
+  );
+
+  const getDynamicSecretStatusesByName = useCallback(
+    (name: string) =>
+      dynamicSecrets?.filter((ds) => ds.name === name).map((ds) => ds.status ?? null),
+    [dynamicSecrets]
+  );
+
+  return {
+    dynamicSecretNames,
+    isDynamicSecretPresentInEnv,
+    getDynamicSecretByName,
+    getDynamicSecretStatusesByName
+  };
 };
 
 export const useSecretRotationOverview = (
@@ -121,6 +139,73 @@ export const useSecretRotationOverview = (
   };
 };
 
+export const useSecretImportOverview = (imports: DashboardProjectSecretsOverview["imports"]) => {
+  const secretImportNames = useMemo(() => {
+    const keys = new Map<
+      string,
+      { importEnvSlug: string; importEnvName: string; importPath: string }
+    >();
+    imports?.forEach((imp) => {
+      if (imp.isReserved) return;
+      const key = `${imp.importEnv.slug}:${imp.importPath}`;
+      if (!keys.has(key)) {
+        keys.set(key, {
+          importEnvSlug: imp.importEnv.slug,
+          importEnvName: imp.importEnv.name,
+          importPath: imp.importPath
+        });
+      }
+    });
+    return Array.from(keys.values());
+  }, [imports]);
+
+  const isSecretImportInEnv = useCallback(
+    (importEnvSlug: string, importPath: string, targetEnv: string) => {
+      return Boolean(
+        imports?.find(
+          (imp) =>
+            !imp.isReserved &&
+            imp.importEnv.slug === importEnvSlug &&
+            imp.importPath === importPath &&
+            imp.environment === targetEnv
+        )
+      );
+    },
+    [imports]
+  );
+
+  const getSecretImportByEnv = useCallback(
+    (importEnvSlug: string, importPath: string, targetEnv: string) => {
+      return imports?.find(
+        (imp) =>
+          !imp.isReserved &&
+          imp.importEnv.slug === importEnvSlug &&
+          imp.importPath === importPath &&
+          imp.environment === targetEnv
+      );
+    },
+    [imports]
+  );
+
+  const getSecretImportsForEnv = useCallback(
+    (targetEnv: string) => {
+      return (
+        imports
+          ?.filter((imp) => !imp.isReserved && imp.environment === targetEnv)
+          .sort((a, b) => Number(a.position) - Number(b.position)) ?? []
+      );
+    },
+    [imports]
+  );
+
+  return {
+    secretImportNames,
+    isSecretImportInEnv,
+    getSecretImportByEnv,
+    getSecretImportsForEnv
+  };
+};
+
 export const useSecretOverview = (secrets: DashboardProjectSecretsOverview["secrets"]) => {
   const secKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -140,4 +225,36 @@ export const useSecretOverview = (secrets: DashboardProjectSecretsOverview["secr
   );
 
   return { secKeys, getEnvSecretKeyCount };
+};
+
+export const useHoneyTokenOverview = (
+  honeyTokens: DashboardProjectSecretsOverview["honeyTokens"]
+) => {
+  const honeyTokenNames = useMemo(() => {
+    const names = new Set<string>();
+    honeyTokens?.forEach((ht) => {
+      names.add(ht.name);
+    });
+    return [...names];
+  }, [honeyTokens]);
+
+  const isHoneyTokenPresentInEnv = useCallback(
+    (name: string, env: string) => {
+      return Boolean(honeyTokens?.find((ht) => ht.name === name && ht.environment.slug === env));
+    },
+    [honeyTokens]
+  );
+
+  const getHoneyTokenByName = useCallback(
+    (env: string, name: string) => {
+      return honeyTokens?.find((ht) => ht.environment.slug === env && ht.name === name);
+    },
+    [honeyTokens]
+  );
+
+  return {
+    honeyTokenNames,
+    isHoneyTokenPresentInEnv,
+    getHoneyTokenByName
+  };
 };

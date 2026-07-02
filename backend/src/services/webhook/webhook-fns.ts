@@ -1,12 +1,13 @@
-import { AxiosError } from "axios";
 import picomatch from "picomatch";
 
 import { TWebhooks } from "@app/db/schemas";
 import { EventType, TAuditLogServiceFactory, WebhookTriggeredEvent } from "@app/ee/services/audit-log/audit-log-types";
-import { request } from "@app/lib/config/request";
 import { crypto } from "@app/lib/crypto/cryptography";
 import { NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
+import { safeRequest } from "@app/lib/validator";
 import { ActorType } from "@app/services/auth/auth-type";
 
 import { TProjectDALFactory } from "../project/project-dal";
@@ -48,7 +49,7 @@ export const triggerWebhookRequest = async (
     headers["x-infisical-signature"] = `t=${payload.timestamp};${webhookSign}`;
   }
 
-  const req = await request.post(url, payload, {
+  const req = await safeRequest.post(url, payload, {
     headers,
     timeout: WEBHOOK_TRIGGER_TIMEOUT,
     signal: AbortSignal.timeout(WEBHOOK_TRIGGER_TIMEOUT)
@@ -59,7 +60,8 @@ export const triggerWebhookRequest = async (
 
 export const getWebhookPayload = (event: TWebhookPayloads) => {
   if (event.type === WebhookEvents.SecretModified) {
-    const { projectName, projectId, environment, secretPath, type } = event.payload;
+    const { projectName, projectId, environment, environmentName, secretPath, type, changedBy, changedByActorType } =
+      event.payload;
 
     switch (type) {
       case WebhookType.SLACK:
@@ -80,11 +82,61 @@ export const getWebhookPayload = (event: TWebhookPayloads) => {
                   short: false
                 },
                 {
+                  title: "Environment Name",
+                  value: environmentName,
+                  short: false
+                },
+                {
                   title: "Secret Path",
                   value: secretPath,
                   short: false
+                },
+                {
+                  title: "Modified By",
+                  value: changedBy,
+                  short: false
+                },
+                {
+                  title: "Modified By Actor Type",
+                  value: changedByActorType?.toString() || "Unknown Actor Type",
+                  short: false
                 }
               ]
+            }
+          ]
+        };
+      case WebhookType.MICROSOFT_TEAMS:
+        return {
+          type: "message",
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: {
+                type: "AdaptiveCard",
+                version: "1.2",
+                body: [
+                  {
+                    type: "TextBlock",
+                    size: "Medium",
+                    weight: "Bolder",
+                    text: "A secret value has been added or modified."
+                  },
+                  {
+                    type: "FactSet",
+                    facts: [
+                      { title: "Project", value: projectName || "" },
+                      { title: "Environment", value: environment },
+                      { title: "Environment Name", value: environmentName || "" },
+                      { title: "Secret Path", value: secretPath || "" },
+                      { title: "Modified By", value: changedBy || "" },
+                      {
+                        title: "Actor Type",
+                        value: changedByActorType?.toString() || "Unknown Actor Type"
+                      }
+                    ]
+                  }
+                ]
+              }
             }
           ]
         };
@@ -97,66 +149,265 @@ export const getWebhookPayload = (event: TWebhookPayloads) => {
             projectId,
             projectName,
             environment,
-            secretPath
+            environmentName,
+            secretPath,
+            changedBy,
+            changedByActorType
           }
         };
     }
   }
 
-  const { projectName, projectId, environment, secretPath, type, reminderNote, secretName } = event.payload;
+  if (event.type === WebhookEvents.SecretRotationFailed) {
+    const {
+      projectName,
+      projectId,
+      environment,
+      environmentName,
+      secretPath,
+      type,
+      rotationName,
+      errorMessage,
+      triggeredManually
+    } = event.payload;
 
-  switch (type) {
-    case WebhookType.SLACK:
-      return {
-        text: "You have a secret reminder",
-        attachments: [
-          {
-            color: "#E7F256",
-            fields: [
-              {
-                title: "Project",
-                value: projectName,
-                short: false
-              },
-              {
-                title: "Environment",
-                value: environment,
-                short: false
-              },
-              {
-                title: "Secret Path",
-                value: secretPath,
-                short: false
-              },
-              {
-                title: "Secret Name",
-                value: secretName,
-                short: false
-              },
-              {
-                title: "Reminder Note",
-                value: reminderNote,
-                short: false
+    switch (type) {
+      case WebhookType.SLACK:
+        return {
+          text: "A secret rotation has failed.",
+          attachments: [
+            {
+              color: "#E7F256",
+              fields: [
+                {
+                  title: "Rotation Name",
+                  value: rotationName,
+                  short: false
+                },
+                {
+                  title: "Project",
+                  value: projectName,
+                  short: false
+                },
+                {
+                  title: "Environment",
+                  value: environment,
+                  short: false
+                },
+                {
+                  title: "Environment Name",
+                  value: environmentName,
+                  short: false
+                },
+                {
+                  title: "Secret Path",
+                  value: secretPath,
+                  short: false
+                },
+                {
+                  title: "Error Message",
+                  value: errorMessage,
+                  short: false
+                },
+                {
+                  title: "Triggered Manually",
+                  value: triggeredManually ? "Yes" : "No",
+                  short: false
+                }
+              ]
+            }
+          ]
+        };
+      case WebhookType.MICROSOFT_TEAMS:
+        return {
+          type: "message",
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              contentUrl: null,
+              content: {
+                type: "AdaptiveCard",
+                version: "1.2",
+                body: [
+                  {
+                    type: "TextBlock",
+                    size: "Medium",
+                    weight: "Bolder",
+                    text: "A secret rotation has failed."
+                  },
+                  {
+                    type: "FactSet",
+                    facts: [
+                      { title: "Rotation Name", value: rotationName || "" },
+                      { title: "Project", value: projectName || "" },
+                      { title: "Environment", value: environment },
+                      { title: "Environment Name", value: environmentName || "" },
+                      { title: "Secret Path", value: secretPath || "" },
+                      { title: "Error Message", value: errorMessage || "" },
+                      { title: "Triggered Manually", value: triggeredManually ? "Yes" : "No" }
+                    ]
+                  }
+                ]
               }
-            ]
+            }
+          ]
+        };
+      case WebhookType.GENERAL:
+      default:
+        return {
+          event: event.type,
+          project: {
+            projectId,
+            projectName,
+            environment,
+            environmentName,
+            secretPath,
+            rotationName,
+            errorMessage,
+            triggeredManually
           }
-        ]
-      };
-    case WebhookType.GENERAL:
-    default:
-      return {
-        event: event.type,
-        project: {
-          workspaceId: projectId,
-          projectId,
-          projectName,
-          environment,
-          secretPath,
-          secretName,
-          reminderNote
-        }
-      };
+        };
+    }
   }
+
+  if (event.type === WebhookEvents.HoneyTokenTriggered) {
+    const {
+      honeyTokenName,
+      projectName,
+      projectId,
+      environment,
+      environmentName,
+      secretPath,
+      type,
+      eventName,
+      sourceIp,
+      awsRegion
+    } = event.payload;
+
+    switch (type) {
+      case WebhookType.SLACK:
+        return {
+          text: "A honey token has been triggered!",
+          attachments: [
+            {
+              color: "#FF0000",
+              fields: [
+                {
+                  title: "Honey Token",
+                  value: honeyTokenName,
+                  short: false
+                },
+                {
+                  title: "Project",
+                  value: projectName,
+                  short: false
+                },
+                {
+                  title: "Environment",
+                  value: environment,
+                  short: false
+                },
+                {
+                  title: "Environment Name",
+                  value: environmentName,
+                  short: false
+                },
+                {
+                  title: "Secret Path",
+                  value: secretPath,
+                  short: false
+                },
+                {
+                  title: "AWS Event",
+                  value: eventName,
+                  short: false
+                },
+                {
+                  title: "Source IP",
+                  value: sourceIp || "Unknown",
+                  short: false
+                },
+                {
+                  title: "AWS Region",
+                  value: awsRegion,
+                  short: false
+                }
+              ]
+            }
+          ]
+        };
+      case WebhookType.MICROSOFT_TEAMS:
+        return {
+          type: "message",
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: {
+                type: "AdaptiveCard",
+                version: "1.2",
+                body: [
+                  {
+                    type: "TextBlock",
+                    size: "Medium",
+                    weight: "Bolder",
+                    text: "A honey token has been triggered!"
+                  },
+                  {
+                    type: "FactSet",
+                    facts: [
+                      { title: "Honey Token", value: honeyTokenName || "" },
+                      { title: "Project", value: projectName || "" },
+                      { title: "Environment", value: environment },
+                      { title: "Environment Name", value: environmentName || "" },
+                      { title: "Secret Path", value: secretPath || "" },
+                      { title: "AWS Event", value: eventName || "" },
+                      { title: "Source IP", value: sourceIp || "Unknown" },
+                      { title: "AWS Region", value: awsRegion || "" }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        };
+      case WebhookType.GENERAL:
+      default:
+        return {
+          event: event.type,
+          project: {
+            projectId,
+            projectName,
+            environment,
+            environmentName,
+            secretPath
+          },
+          honeyToken: {
+            name: honeyTokenName,
+            eventName,
+            sourceIp: sourceIp || "Unknown",
+            awsRegion
+          }
+        };
+    }
+  }
+
+  if (event.type === WebhookEvents.TestEvent) {
+    const { projectName, projectId, environment, environmentName, secretPath } = event.payload;
+    return {
+      event: event.type,
+      project: {
+        workspaceId: projectId,
+        projectId,
+        projectName,
+        environment,
+        environmentName,
+        secretPath
+      }
+    };
+  }
+
+  logger.warn({ event }, "Unhandled webhook event");
+  return null;
 };
 
 export type TFnTriggerWebhookDTO = {
@@ -185,65 +436,65 @@ export const fnTriggerWebhook = async ({
   auditLogService
 }: TFnTriggerWebhookDTO) => {
   const webhooks = await webhookDAL.findAllWebhooks(projectId, environment);
-  const toBeTriggeredHooks = webhooks.filter(
-    ({ secretPath: hookSecretPath, isDisabled }) =>
-      !isDisabled && picomatch.isMatch(secretPath, hookSecretPath, { strictSlashes: false })
-  );
+  const toBeTriggeredHooks = webhooks.filter(({ secretPath: hookSecretPath, isDisabled, filteredEvents }) => {
+    const isEventSubscribed = !filteredEvents || filteredEvents.length === 0 || filteredEvents.includes(event.type);
+
+    return !isDisabled && picomatch.isMatch(secretPath, hookSecretPath, { strictSlashes: false }) && isEventSubscribed;
+  });
   if (!toBeTriggeredHooks.length) return;
   logger.info({ environment, secretPath, projectId }, "Secret webhook job started");
   let { projectName } = event.payload;
   if (!projectName) {
-    const project = await projectDAL.findById(event.payload.projectId);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(event.payload.projectId), () =>
+      projectDAL.findById(event.payload.projectId)
+    );
     projectName = project.name;
   }
+  const { environmentName } = event.payload;
 
   const webhooksTriggered = await Promise.allSettled(
     toBeTriggeredHooks.map((hook) => {
       const formattedEvent = {
         type: event.type,
-        payload: { ...event.payload, type: hook.type, projectName }
+        payload: { ...event.payload, type: hook.type, projectName, environmentName }
       } as TWebhookPayloads;
-      return triggerWebhookRequest(hook, secretManagerDecryptor, getWebhookPayload(formattedEvent));
+      const payload = getWebhookPayload(formattedEvent);
+      if (!payload) return;
+      return triggerWebhookRequest(hook, secretManagerDecryptor, payload);
     })
   );
 
   const eventPayloads: WebhookTriggeredEvent["metadata"][] = [];
-  // filter hooks by status
-  const successWebhooks = webhooksTriggered
-    .filter(({ status }) => status === "fulfilled")
-    .map((_, i) => {
-      eventPayloads.push({
-        webhookId: toBeTriggeredHooks[i].id,
-        type: event.type,
-        payload: {
-          type: toBeTriggeredHooks[i].type!,
-          ...event.payload,
-          projectName
-        },
-        status: "success"
-      } as WebhookTriggeredEvent["metadata"]);
+  const successWebhooks: string[] = [];
+  const failedWebhooks: { id: string; error: string }[] = [];
 
-      return toBeTriggeredHooks[i].id;
-    });
-  const failedWebhooks = webhooksTriggered
-    .filter(({ status }) => status === "rejected")
-    .map((data, i) => {
-      eventPayloads.push({
-        webhookId: toBeTriggeredHooks[i].id,
-        type: event.type,
-        payload: {
-          type: toBeTriggeredHooks[i].type!,
-          ...event.payload,
-          projectName
-        },
-        status: "failed"
-      } as WebhookTriggeredEvent["metadata"]);
+  webhooksTriggered.forEach((result, i) => {
+    const hook = toBeTriggeredHooks[i];
+    const eventMetadata = {
+      webhookId: hook.id,
+      type: event.type,
+      payload: {
+        type: hook.type!,
+        ...event.payload,
+        projectName
+      }
+    };
 
-      return {
-        id: toBeTriggeredHooks[i].id,
-        error: data.status === "rejected" ? (data.reason as AxiosError).message : ""
-      };
-    });
+    if (result.status === "rejected") {
+      const reason = result.reason as unknown;
+      const error = reason instanceof Error ? reason.message : String(reason ?? "Unknown webhook error");
+      logger.warn(
+        { webhookId: hook.id, projectId, environment, secretPath, err: reason },
+        `Webhook delivery failed [webhookId=${hook.id}] [projectId=${projectId}] [environment=${environment}] [secretPath=${secretPath}] [error=${error}]`
+      );
+      failedWebhooks.push({ id: hook.id, error });
+      eventPayloads.push({ ...eventMetadata, status: "failed" } as WebhookTriggeredEvent["metadata"]);
+      return;
+    }
+
+    successWebhooks.push(hook.id);
+    eventPayloads.push({ ...eventMetadata, status: "success" } as WebhookTriggeredEvent["metadata"]);
+  });
 
   await webhookDAL.transaction(async (tx) => {
     const env = await projectEnvDAL.findOne({ projectId, slug: environment }, tx);

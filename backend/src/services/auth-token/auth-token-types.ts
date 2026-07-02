@@ -1,14 +1,16 @@
 import { ProjectMembershipRole } from "@app/db/schemas";
 
 export enum TokenType {
-  TOKEN_EMAIL_CONFIRMATION = "emailConfirmation",
   TOKEN_EMAIL_VERIFICATION = "emailVerification", // unverified -> verified
   TOKEN_EMAIL_CHANGE_OTP = "emailChangeOtp",
+  TOKEN_EMAIL_CHANGE_CURRENT_OTP = "emailChangeCurrentOtp",
   TOKEN_EMAIL_MFA = "emailMfa",
   TOKEN_EMAIL_ORG_INVITATION = "organizationInvitation",
   TOKEN_EMAIL_PASSWORD_RESET = "passwordReset",
   TOKEN_EMAIL_PASSWORD_SETUP = "passwordSetup",
-  TOKEN_USER_UNLOCK = "userUnlock"
+  TOKEN_USER_UNLOCK = "userUnlock",
+  TOKEN_WEBAUTHN_SESSION = "webauthnSession",
+  TOKEN_PAM_WS_TICKET = "pamWsTicket"
 }
 
 export type TCreateTokenForUserDTO = {
@@ -18,6 +20,12 @@ export type TCreateTokenForUserDTO = {
   aliasId?: string;
   payload?: string;
 };
+
+export type TCreateTokensForUsersResult = {
+  userId: string;
+  orgId: string;
+  token: string;
+}[];
 
 export type TCreateOrgInviteTokenDTO = {
   userId: string;
@@ -70,4 +78,10 @@ export type TTokenInviteToProjectsMetadataPayload = {
 export type TTokenMetadata = {
   type: TokenMetadataType.InviteToProjects;
   payload: TTokenInviteToProjectsMetadataPayload;
+};
+
+export type TEmailSignupOtpPayload = {
+  tokenHash: string;
+  triesLeft: number;
+  expiresAt: number;
 };

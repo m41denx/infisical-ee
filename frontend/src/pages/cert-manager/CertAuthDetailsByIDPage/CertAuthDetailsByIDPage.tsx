@@ -1,40 +1,45 @@
 import { Helmet } from "react-helmet";
+import { subject } from "@casl/ability";
 import { faChevronLeft } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { twMerge } from "tailwind-merge";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { EllipsisIcon } from "lucide-react";
 
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
+import { AccessRestrictedBanner, DeleteActionModal, PageHeader } from "@app/components/v2";
 import {
   Button,
-  DeleteActionModal,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger,
-  PageHeader,
-  Tooltip
-} from "@app/components/v2";
+  DropdownMenuTrigger
+} from "@app/components/v3";
 import { ROUTE_PATHS } from "@app/const/routes";
 import {
-  ProjectPermissionActions,
+  ProjectPermissionCertificateAuthorityActions,
   ProjectPermissionSub,
   useOrganization,
   useProject
 } from "@app/context";
 import { CaType, useDeleteCa, useGetCa } from "@app/hooks/api";
 import { TInternalCertificateAuthority } from "@app/hooks/api/ca/types";
+import { useGetCertificateProfileById } from "@app/hooks/api/certificateProfiles";
 import { ProjectType } from "@app/hooks/api/projects/types";
 import { usePopUp } from "@app/hooks/usePopUp";
 
 import { CaInstallCertModal } from "../CertificateAuthoritiesPage/components/CaInstallCertModal";
 import { CaModal } from "../CertificateAuthoritiesPage/components/CaModal";
 import {
+  CaCertDetailsSection,
   CaCertificatesSection,
   CaCrlsSection,
   CaDetailsSection,
-  CaRenewalModal
+  CaDistributionPointsSection,
+  CaGenerateRootCertModal,
+  CaIssuerUrlSection,
+  CaRenewalModal,
+  CaSigningConfigSection
 } from "./components";
 
 const Page = () => {
@@ -45,6 +50,14 @@ const Page = () => {
     from: ROUTE_PATHS.CertManager.CertAuthDetailsByIDPage.id
   });
   const { caId } = params as { caId: string };
+  const search = useSearch({
+    from: ROUTE_PATHS.CertManager.CertAuthDetailsByIDPage.id
+  }) as {
+    from?: "settings" | "profile";
+    profileId?: string;
+    profileFrom?: "settings" | "application";
+    profileApplicationName?: string;
+  };
   const { data } = useGetCa({
     caId,
     type: CaType.INTERNAL
@@ -52,13 +65,20 @@ const Page = () => {
 
   const projectId = currentProject?.id || "";
 
+  const cameFromProfile = search.from === "profile" && Boolean(search.profileId);
+
+  const { data: sourceProfile } = useGetCertificateProfileById({
+    profileId: cameFromProfile && search.profileId ? search.profileId : ""
+  });
+
   const { mutateAsync: deleteCa } = useDeleteCa();
 
   const { popUp, handlePopUpOpen, handlePopUpClose, handlePopUpToggle } = usePopUp([
     "ca",
     "deleteCa",
     "installCaCert",
-    "renewCa"
+    "renewCa",
+    "generateRootCaCert"
   ] as const);
 
   const onRemoveCaSubmit = async () => {
@@ -66,7 +86,6 @@ const Page = () => {
 
     await deleteCa({
       id: data.id,
-      projectId: currentProject.id,
       type: CaType.INTERNAL
     });
 
@@ -77,7 +96,7 @@ const Page = () => {
 
     handlePopUpClose("deleteCa");
     navigate({
-      to: "/organizations/$orgId/projects/cert-management/$projectId/certificate-authorities",
+      to: "/organizations/$orgId/projects/cert-manager/$projectId/certificate-authorities",
       params: {
         orgId: currentOrg.id,
         projectId
@@ -88,72 +107,112 @@ const Page = () => {
   return (
     <div className="mx-auto flex flex-col justify-between bg-bunker-800 text-white">
       {data && (
-        <div className="mx-auto mb-6 w-full max-w-8xl">
-          <Link
-            to="/organizations/$orgId/projects/cert-management/$projectId/certificate-authorities"
-            params={{
-              orgId: currentOrg.id,
-              projectId
-            }}
-            className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
-          >
-            <FontAwesomeIcon icon={faChevronLeft} />
-            Certificate Authorities
-          </Link>
-          <PageHeader
-            scope={ProjectType.CertificateManager}
-            description="Manage certificate authority"
-            title={data.name}
-          >
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild className="rounded-lg">
-                <div className="hover:text-primary-400 data-[state=open]:text-primary-400">
-                  <Tooltip content="More options">
-                    <Button variant="outline_bg">More</Button>
-                  </Tooltip>
-                </div>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="p-1">
-                <ProjectPermissionCan
-                  I={ProjectPermissionActions.Delete}
-                  a={ProjectPermissionSub.CertificateAuthorities}
+        <ProjectPermissionCan
+          I={ProjectPermissionCertificateAuthorityActions.Read}
+          a={subject(ProjectPermissionSub.CertificateAuthorities, {
+            name: data.name
+          })}
+        >
+          {(isAllowed) =>
+            isAllowed ? (
+              <div className="mx-auto mb-6 w-full max-w-8xl">
+                {cameFromProfile && search.profileId ? (
+                  <Link
+                    to="/organizations/$orgId/projects/cert-manager/$projectId/certificate-profiles/$profileId"
+                    params={{
+                      orgId: currentOrg.id,
+                      projectId,
+                      profileId: search.profileId
+                    }}
+                    search={{
+                      from: search.profileFrom,
+                      applicationName: search.profileApplicationName
+                    }}
+                    className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+                  >
+                    <FontAwesomeIcon icon={faChevronLeft} />
+                    {sourceProfile?.slug || "Certificate Profile"}
+                  </Link>
+                ) : (
+                  <Link
+                    to="/organizations/$orgId/projects/cert-manager/$projectId/certificate-authorities"
+                    params={{
+                      orgId: currentOrg.id,
+                      projectId
+                    }}
+                    className="mb-4 flex items-center gap-x-2 text-sm text-mineshaft-400"
+                  >
+                    <FontAwesomeIcon icon={faChevronLeft} />
+                    Certificate Authorities
+                  </Link>
+                )}
+                <PageHeader
+                  scope={ProjectType.CertificateManager}
+                  description="Manage certificate authority"
+                  title={data.name}
                 >
-                  {(isAllowed) => (
-                    <DropdownMenuItem
-                      className={twMerge(
-                        isAllowed
-                          ? "hover:bg-red-500! hover:text-white!"
-                          : "pointer-events-none cursor-not-allowed opacity-50"
-                      )}
-                      onClick={() => handlePopUpOpen("deleteCa")}
-                      disabled={!isAllowed}
-                    >
-                      Delete CA
-                    </DropdownMenuItem>
-                  )}
-                </ProjectPermissionCan>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </PageHeader>
-          <div className="flex">
-            <div className="mr-4 w-96">
-              <CaDetailsSection caId={data.id} handlePopUpOpen={handlePopUpOpen} />
-            </div>
-            <div className="w-full">
-              <CaCertificatesSection caId={data.id} />
-              <CaCrlsSection caId={data.id} />
-            </div>
-          </div>
-        </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline">
+                        Options
+                        <EllipsisIcon />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <ProjectPermissionCan
+                        I={ProjectPermissionCertificateAuthorityActions.Delete}
+                        a={subject(ProjectPermissionSub.CertificateAuthorities, {
+                          name: data.name
+                        })}
+                      >
+                        {(canDelete) => (
+                          <DropdownMenuItem
+                            variant="danger"
+                            isDisabled={!canDelete}
+                            onClick={() => handlePopUpOpen("deleteCa")}
+                          >
+                            Delete CA
+                          </DropdownMenuItem>
+                        )}
+                      </ProjectPermissionCan>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </PageHeader>
+                <div className="flex flex-col gap-5 lg:flex-row">
+                  <div className="w-full lg:max-w-[24rem]">
+                    <CaDetailsSection caId={data.id} />
+                    <CaSigningConfigSection caId={data.id} />
+                    <CaCertDetailsSection caId={data.id} />
+                  </div>
+                  <div className="flex flex-1 flex-col gap-y-5">
+                    <CaCertificatesSection
+                      caId={data.id}
+                      caName={data.name}
+                      handlePopUpOpen={handlePopUpOpen}
+                    />
+                    <CaIssuerUrlSection caId={data.id} />
+                    <CaCrlsSection caId={data.id} />
+                    <CaDistributionPointsSection caId={data.id} />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="container mx-auto flex h-full items-center justify-center">
+                <AccessRestrictedBanner />
+              </div>
+            )
+          }
+        </ProjectPermissionCan>
       )}
       <CaModal popUp={popUp} handlePopUpToggle={handlePopUpToggle} />
       <CaRenewalModal popUp={popUp} handlePopUpToggle={handlePopUpToggle} />
       <CaInstallCertModal popUp={popUp} handlePopUpToggle={handlePopUpToggle} />
+      <CaGenerateRootCertModal popUp={popUp} handlePopUpToggle={handlePopUpToggle} />
       <DeleteActionModal
         isOpen={popUp.deleteCa.isOpen}
         title={`Are you sure you want to remove the CA ${
           (popUp?.deleteCa?.data as { dn: string })?.dn || ""
-        } from the project?`}
+        }?`}
         subTitle="This action will delete other CAs and certificates below it in your CA hierarchy."
         onChange={(isOpen) => handlePopUpToggle("deleteCa", isOpen)}
         deleteKey="confirm"

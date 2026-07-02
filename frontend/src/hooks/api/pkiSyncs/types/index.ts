@@ -1,9 +1,13 @@
 import { PkiSync } from "@app/hooks/api/pkiSyncs";
 
 import { TAwsCertificateManagerPkiSync } from "./aws-certificate-manager-sync";
+import { TAwsElasticLoadBalancerPkiSync } from "./aws-elastic-load-balancer-sync";
 import { TAwsSecretsManagerPkiSync } from "./aws-secrets-manager-sync";
 import { TAzureKeyVaultPkiSync } from "./azure-key-vault-sync";
 import { TChefPkiSync } from "./chef-sync";
+import { TCloudflareCustomCertificatePkiSync } from "./cloudflare-custom-certificate-sync";
+import { TF5BigIpPkiSync } from "./f5-big-ip-sync";
+import { TNetScalerPkiSync } from "./netscaler-sync";
 
 export type TPkiSyncOption = {
   name: string;
@@ -22,7 +26,11 @@ export type TPkiSync =
   | TAzureKeyVaultPkiSync
   | TAwsCertificateManagerPkiSync
   | TAwsSecretsManagerPkiSync
-  | TChefPkiSync;
+  | TAwsElasticLoadBalancerPkiSync
+  | TChefPkiSync
+  | TCloudflareCustomCertificatePkiSync
+  | TNetScalerPkiSync
+  | TF5BigIpPkiSync;
 
 export type TListPkiSyncs = { pkiSyncs: TPkiSync[] };
 
@@ -53,6 +61,7 @@ type TCreatePkiSyncDTOBase = {
   subscriberId?: string | null;
   certificateIds?: string[];
   projectId: string;
+  applicationId?: string;
 };
 
 export type TCreatePkiSyncDTO = TCreatePkiSyncDTOBase & {
@@ -61,6 +70,19 @@ export type TCreatePkiSyncDTO = TCreatePkiSyncDTOBase & {
     vaultBaseUrl?: string;
     region?: string;
     dataBagName?: string;
+    loadBalancerArn?: string;
+    listeners?: Array<{
+      listenerArn: string;
+      port?: number;
+      protocol?: string;
+    }>;
+    zoneId?: string;
+    vserverName?: string;
+    partition?: string;
+    profileType?: string;
+    profileName?: string;
+    createProfileIfMissing?: boolean;
+    parentProfile?: string;
   };
 };
 
@@ -94,7 +116,11 @@ export type TTriggerPkiSyncRemoveCertificatesDTO = {
 };
 
 export * from "./aws-certificate-manager-sync";
+export * from "./aws-elastic-load-balancer-sync";
 export * from "./aws-secrets-manager-sync";
 export * from "./azure-key-vault-sync";
 export * from "./chef-sync";
+export * from "./cloudflare-custom-certificate-sync";
 export * from "./common";
+export * from "./f5-big-ip-sync";
+export * from "./netscaler-sync";

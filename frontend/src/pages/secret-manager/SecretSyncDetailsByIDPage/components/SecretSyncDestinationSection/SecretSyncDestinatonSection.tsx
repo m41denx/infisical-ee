@@ -1,13 +1,6 @@
 import { ReactNode } from "react";
-import { subject } from "@casl/ability";
-import { faEdit } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
-import { ProjectPermissionCan } from "@app/components/permissions";
-import { GenericFieldLabel } from "@app/components/secret-syncs";
-import { IconButton } from "@app/components/v2";
-import { ProjectPermissionSub } from "@app/context";
-import { ProjectPermissionSecretSyncActions } from "@app/context/ProjectPermissionContext/types";
+import { Detail, DetailGroupHeader, DetailLabel, DetailValue } from "@app/components/v3";
 import { APP_CONNECTION_MAP } from "@app/helpers/appConnections";
 import { SecretSync, TSecretSync } from "@app/hooks/api/secretSyncs";
 
@@ -16,15 +9,20 @@ import { AwsParameterStoreSyncDestinationSection } from "./AwsParameterStoreSync
 import { AwsSecretsManagerSyncDestinationSection } from "./AwsSecretsManagerSyncDestinationSection";
 import { AzureAppConfigurationSyncDestinationSection } from "./AzureAppConfigurationSyncDestinationSection";
 import { AzureDevOpsSyncDestinationSection } from "./AzureDevOpsSyncDestinationSection";
+import { AzureEntraIdScimSyncDestinationSection } from "./AzureEntraIdScimSyncDestinationSection";
 import { AzureKeyVaultSyncDestinationSection } from "./AzureKeyVaultSyncDestinationSection";
 import { BitbucketSyncDestinationSection } from "./BitbucketSyncDestinationSection";
 import { CamundaSyncDestinationSection } from "./CamundaSyncDestinationSection";
 import { ChecklySyncDestinationSection } from "./ChecklySyncDestinationSection";
 import { ChefSyncDestinationSection } from "./ChefSyncDestinationSection";
+import { CircleCISyncDestinationSection } from "./CircleCISyncDestinationSection";
+import { Cloud66SyncDestinationSection } from "./Cloud66SyncDestinationSection";
 import { CloudflarePagesSyncDestinationSection } from "./CloudflarePagesSyncDestinationSection";
 import { CloudflareWorkersSyncDestinationSection } from "./CloudflareWorkersSyncDestinationSection";
 import { DatabricksSyncDestinationSection } from "./DatabricksSyncDestinationSection";
+import { DevinSyncDestinationSection } from "./DevinSyncDestinationSection";
 import { DigitalOceanAppPlatformSyncDestinationSection } from "./DigitalOceanAppPlatformSyncDestinationSection";
+import { ExternalInfisicalSyncDestinationSection } from "./ExternalInfisicalSyncDestinationSection";
 import { FlyioSyncDestinationSection } from "./FlyioSyncDestinationSection";
 import { GcpSyncDestinationSection } from "./GcpSyncDestinationSection";
 import { GitHubSyncDestinationSection } from "./GitHubSyncDestinationSection";
@@ -36,22 +34,28 @@ import { LaravelForgeSyncDestinationSection } from "./LaravelForgeSyncDestinatio
 import { NetlifySyncDestinationSection } from "./NetlifySyncDestinationSection";
 import { NorthflankSyncDestinationSection } from "./NorthflankSyncDestinationSection";
 import { OCIVaultSyncDestinationSection } from "./OCIVaultSyncDestinationSection";
+import { OctopusDeploySyncDestinationSection } from "./OctopusDeploySyncDestinationSection";
+import { OnaSyncDestinationSection } from "./OnaSyncDestinationSection";
+import { OvhSyncDestinationSection } from "./OvhSyncDestinationSection";
+import { QoverySyncDestinationSection } from "./QoverySyncDestinationSection";
 import { RailwaySyncDestinationSection } from "./RailwaySyncDestinationSection";
 import { RenderSyncDestinationSection } from "./RenderSyncDestinationSection";
+import { SnowflakeSyncDestinationSection } from "./SnowflakeSyncDestinationSection";
 import { SupabaseSyncDestinationSection } from "./SupabaseSyncDestinationSection";
 import { TeamCitySyncDestinationSection } from "./TeamCitySyncDestinationSection";
 import { TerraformCloudSyncDestinationSection } from "./TerraformCloudSyncDestinationSection";
+import { TravisCISyncDestinationSection } from "./TravisCISyncDestinationSection";
+import { TriggerDevSyncDestinationSection } from "./TriggerDevSyncDestinationSection";
 import { VercelSyncDestinationSection } from "./VercelSyncDestinationSection";
 import { WindmillSyncDestinationSection } from "./WindmillSyncDestinationSection";
 import { ZabbixSyncDestinationSection } from "./ZabbixSyncDestinationSection";
 
 type Props = {
   secretSync: TSecretSync;
-  onEditDestination: VoidFunction;
 };
 
-export const SecretSyncDestinationSection = ({ secretSync, onEditDestination }: Props) => {
-  const { destination, connection, folder, environment } = secretSync;
+export const SecretSyncDestinationSection = ({ secretSync }: Props) => {
+  const { destination, connection } = secretSync;
 
   const app = APP_CONNECTION_MAP[connection.app].name;
 
@@ -160,40 +164,54 @@ export const SecretSyncDestinationSection = ({ secretSync, onEditDestination }: 
     case SecretSync.Chef:
       DestinationComponents = <ChefSyncDestinationSection secretSync={secretSync} />;
       break;
+    case SecretSync.OctopusDeploy:
+      DestinationComponents = <OctopusDeploySyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.CircleCI:
+      DestinationComponents = <CircleCISyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.AzureEntraIdScim:
+      DestinationComponents = <AzureEntraIdScimSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.ExternalInfisical:
+      DestinationComponents = <ExternalInfisicalSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.OVH:
+      DestinationComponents = <OvhSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.Devin:
+      DestinationComponents = <DevinSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.Ona:
+      DestinationComponents = <OnaSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.TravisCI:
+      DestinationComponents = <TravisCISyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.Snowflake:
+      DestinationComponents = <SnowflakeSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.TriggerDev:
+      DestinationComponents = <TriggerDevSyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.Qovery:
+      DestinationComponents = <QoverySyncDestinationSection secretSync={secretSync} />;
+      break;
+    case SecretSync.Cloud66:
+      DestinationComponents = <Cloud66SyncDestinationSection secretSync={secretSync} />;
+      break;
     default:
       throw new Error(`Unhandled Destination Section components: ${destination}`);
   }
 
-  const permissionSubject =
-    environment && folder
-      ? subject(ProjectPermissionSub.SecretSyncs, {
-          environment: environment.slug,
-          secretPath: folder.path
-        })
-      : ProjectPermissionSub.SecretSyncs;
-
   return (
-    <div className="flex w-full flex-col gap-3 rounded-lg border border-mineshaft-600 bg-mineshaft-900 px-4 py-3">
-      <div className="flex items-center justify-between border-b border-mineshaft-400 pb-2">
-        <h3 className="font-medium text-mineshaft-100">Destination Configuration</h3>
-        <ProjectPermissionCan I={ProjectPermissionSecretSyncActions.Edit} a={permissionSubject}>
-          {(isAllowed) => (
-            <IconButton
-              variant="plain"
-              colorSchema="secondary"
-              isDisabled={!isAllowed}
-              ariaLabel="Edit sync destination"
-              onClick={onEditDestination}
-            >
-              <FontAwesomeIcon icon={faEdit} />
-            </IconButton>
-          )}
-        </ProjectPermissionCan>
-      </div>
-      <div className="flex w-full flex-wrap gap-8">
-        <GenericFieldLabel label={`${app} Connection`}>{connection.name}</GenericFieldLabel>
-        {DestinationComponents}
-      </div>
-    </div>
+    <>
+      <DetailGroupHeader>Destination Configuration</DetailGroupHeader>
+      <Detail>
+        <DetailLabel>{`${app} Connection`}</DetailLabel>
+        <DetailValue>{connection.name}</DetailValue>
+      </Detail>
+      {DestinationComponents}
+    </>
   );
 };

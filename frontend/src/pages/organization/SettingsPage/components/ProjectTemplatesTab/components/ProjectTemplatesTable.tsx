@@ -25,6 +25,7 @@ import {
 import { OrgPermissionActions, OrgPermissionSubjects, useSubscription } from "@app/context";
 import { getProjectTitle } from "@app/helpers/project";
 import { usePopUp } from "@app/hooks";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { TProjectTemplate, useListProjectTemplates } from "@app/hooks/api/projectTemplates";
 
 import { DeleteProjectTemplateModal } from "./DeleteProjectTemplateModal";
@@ -46,13 +47,15 @@ export const ProjectTemplatesTable = ({ onEdit }: Props) => {
 
   const filteredTemplates = useMemo(
     () =>
-      projectTemplates?.filter((template) =>
-        template.name.toLowerCase().includes(search.toLowerCase().trim())
+      projectTemplates?.filter(
+        (template) =>
+          template.type !== ProjectType.SecretManager &&
+          template.name.toLowerCase().includes(search.toLowerCase().trim())
       ) ?? [],
     [search, projectTemplates]
   );
 
-  const colSpan = 4;
+  const colSpan = 7;
 
   return (
     <div>
@@ -69,6 +72,9 @@ export const ProjectTemplatesTable = ({ onEdit }: Props) => {
               <Th>Name</Th>
               <Th>Type</Th>
               <Th>Roles</Th>
+              <Th>Users</Th>
+              <Th>Groups</Th>
+              <Th>Machine Identities</Th>
               <Th />
             </Tr>
           </THead>
@@ -81,7 +87,21 @@ export const ProjectTemplatesTable = ({ onEdit }: Props) => {
               />
             )}
             {filteredTemplates.map((template) => {
-              const { id, name, roles, description, type } = template;
+              const {
+                id,
+                name,
+                roles,
+                description,
+                type,
+                users,
+                groups,
+                identities,
+                projectManagedIdentities
+              } = template;
+
+              const totalIdentities =
+                (identities?.length || 0) + (projectManagedIdentities?.length || 0);
+
               return (
                 <Tr
                   onClick={() => onEdit(template)}
@@ -110,6 +130,72 @@ export const ProjectTemplatesTable = ({ onEdit }: Props) => {
                             {roles.map((role) => (
                               <li key={role.name}>{role.name}</li>
                             ))}
+                          </ul>
+                        }
+                      >
+                        <FontAwesomeIcon
+                          size="sm"
+                          className="ml-2 text-mineshaft-400"
+                          icon={faCircleInfo}
+                        />
+                      </Tooltip>
+                    )}
+                  </Td>
+                  <Td className="pl-8">
+                    {users?.length || 0}
+                    {users && Boolean(users.length) && (
+                      <Tooltip
+                        content={
+                          <ul className="ml-2 list-disc">
+                            {users.map((user) => (
+                              <li key={user.username}>{user.username}</li>
+                            ))}
+                          </ul>
+                        }
+                      >
+                        <FontAwesomeIcon
+                          size="sm"
+                          className="ml-2 text-mineshaft-400"
+                          icon={faCircleInfo}
+                        />
+                      </Tooltip>
+                    )}
+                  </Td>
+                  <Td className="pl-8">
+                    {groups?.length || 0}
+                    {groups && Boolean(groups.length) && (
+                      <Tooltip
+                        content={
+                          <ul className="ml-2 list-disc">
+                            {groups.map((group) => (
+                              <li key={group.groupSlug}>{group.groupSlug}</li>
+                            ))}
+                          </ul>
+                        }
+                      >
+                        <FontAwesomeIcon
+                          size="sm"
+                          className="ml-2 text-mineshaft-400"
+                          icon={faCircleInfo}
+                        />
+                      </Tooltip>
+                    )}
+                  </Td>
+                  <Td className="pl-8">
+                    {totalIdentities}
+                    {Boolean(totalIdentities) && (
+                      <Tooltip
+                        content={
+                          <ul className="ml-2 list-disc">
+                            {(projectManagedIdentities || []).map((identity) => (
+                              <li key={identity.name}>{identity.name}</li>
+                            ))}
+                            {identities && Boolean(identities?.length) && (
+                              <li key="org">
+                                {identities.length} Organization Identit
+                                {identities.length === 1 ? "y" : "ies"}
+                              </li>
+                            )}
                           </ul>
                         }
                       >

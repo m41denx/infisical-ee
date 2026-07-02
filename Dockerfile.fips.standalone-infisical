@@ -3,7 +3,7 @@ ARG POSTHOG_API_KEY=posthog-api-key
 ARG INTERCOM_ID=intercom-id
 ARG CAPTCHA_SITE_KEY=captcha-site-key
 
-FROM node:20.19.5-trixie-slim AS base
+FROM node:22.22.0-trixie-slim AS base
 
 # Fixes NPM vulnerability: https://security.snyk.io/vuln/SNYK-JS-CROSSSPAWN-8303230
 RUN npm install -g npm@10.9.0
@@ -14,7 +14,7 @@ WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json  ./
 
 # Install dependencies
-RUN npm ci --only-production --ignore-scripts
+RUN npm ci --ignore-scripts
 
 # Rebuild the source code only when needed
 FROM base AS frontend-builder
@@ -55,6 +55,35 @@ USER non-root-user
 ##
 ## BACKEND
 ##
+
+# Go sidecar build (parallel stage)
+FROM golang:1.26-trixie AS go-builder
+WORKDIR /app
+COPY backend-go/go.mod backend-go/go.sum ./
+RUN go mod download
+COPY backend-go/ .
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /go-sidecar ./cmd/infisical/main.go
+
+# Oracle Instant Client (parallel stage — downloads while other stages build)
+FROM debian:trixie-slim AS oracle
+RUN apt-get update && apt-get install -y unzip wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        ORACLE_ZIP="instantclient-basic-linux.x64-23.26.0.0.0.zip" && \
+        EXPECTED_SHA="d6c79cbcf0ff209363e779855c690d4fc730aed847e9198a2c439bcf34760af5"; \
+    elif [ "$ARCH" = "arm64" ]; then \
+        ORACLE_ZIP="instantclient-basic-linux.arm64-23.26.0.0.0.zip" && \
+        EXPECTED_SHA="9c9a32051e97f087016fb334b7ad5c0aea8511ca8363afd8e0dc6ec4fc515c32"; \
+    fi && \
+    ORACLE_URL="https://download.oracle.com/otn_software/linux/instantclient/2326000/${ORACLE_ZIP}" && \
+    wget -q "$ORACLE_URL" && \
+    echo "$EXPECTED_SHA  $ORACLE_ZIP" | sha256sum -c - && \
+    mkdir -p /opt/oracle && \
+    unzip "$ORACLE_ZIP" -d /opt/oracle && \
+    rm "$ORACLE_ZIP"
+
 FROM base AS backend-build
 
 ENV ChrystokiConfigurationPath=/usr/safenet/lunaclient/
@@ -79,12 +108,25 @@ RUN apt-get update && apt-get install -y \
 RUN printf "[FreeTDS]\nDescription = FreeTDS Driver\nDriver = /usr/lib/x86_64-linux-gnu/odbc/libtdsodbc.so\nSetup = /usr/lib/x86_64-linux-gnu/odbc/libtdsS.so\nFileUsage = 1\n" > /etc/odbcinst.ini
 
 COPY backend/package*.json ./
-RUN npm ci --only-production
+RUN npm ci
 
 COPY /backend .
 COPY --chown=non-root-user:nodejs standalone-entrypoint.sh standalone-entrypoint.sh
-RUN npm i -D tsconfig-paths
+RUN npm i -g tsconfig-paths
 RUN npm run build
+
+# Bake in-app announcements + their images at build time so self-hosted / air-gapped
+# instances don't make any outbound calls to Contentful at runtime. No-ops silently
+# if Contentful secrets are not supplied (cloud / dev builds). Secrets are passed
+# via BuildKit --mount=type=secret so they never enter any image layer or SLSA
+# provenance attestation.
+RUN --mount=type=secret,id=contentful_space_id,required=false \
+    --mount=type=secret,id=contentful_delivery_token,required=false \
+    --mount=type=secret,id=contentful_environment,required=false \
+    CONTENTFUL_SPACE_ID="$(cat /run/secrets/contentful_space_id 2>/dev/null || true)" \
+    CONTENTFUL_DELIVERY_TOKEN="$(cat /run/secrets/contentful_delivery_token 2>/dev/null || true)" \
+    CONTENTFUL_ENVIRONMENT="$(cat /run/secrets/contentful_environment 2>/dev/null || true)" \
+    npm run bake:announcements
 
 # Production stage
 FROM base AS backend-runner
@@ -108,23 +150,23 @@ RUN apt-get update && apt-get install -y \
 # Configure ODBC
 RUN printf "[FreeTDS]\nDescription = FreeTDS Driver\nDriver = /usr/lib/x86_64-linux-gnu/odbc/libtdsodbc.so\nSetup = /usr/lib/x86_64-linux-gnu/odbc/libtdsS.so\nFileUsage = 1\n" > /etc/odbcinst.ini
 
-COPY backend/package*.json ./
-RUN npm ci --only-production
-
 COPY --from=backend-build /app .
+RUN rm -rf ./node_modules ./bdd ./e2e-test
+RUN npm ci --omit=dev
 
 RUN mkdir frontend-build
 
 # Production stage
 FROM base AS production
 
-# Install necessary packages including ODBC
+# Install all required runtime packages
 RUN apt-get update && apt-get install -y \
     build-essential \
     autoconf \
     automake \
     libtool \
     wget \
+    perl \
     libssl-dev \
     ca-certificates \
     curl \
@@ -137,12 +179,37 @@ RUN apt-get update && apt-get install -y \
     freetds-dev \
     freetds-bin \
     tdsodbc \
+    libaio1t64 \
+    smbclient \
     openssh-client \
+    && curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | bash \
+    && apt-get update && apt-get install -y infisical=0.43.90 \
+    # Patch CVEs in base image packages (pinned versions for reproducibility)
+    && apt-get install -y --only-upgrade \
+    libgnutls30t64=3.8.9-3+deb13u4 \
+    libc6=2.41-12+deb13u3 \
+    libc-bin=2.41-12+deb13u3 \
+    libssl3t64=3.5.6-1~deb13u1 \
+    dpkg=1.22.22 \
+    libcap2 \
+    libnghttp2-14=1.64.0-1.1+deb13u1 \
+    libngtcp2-16=1.11.0-1+deb13u1 \
+    libngtcp2-crypto-gnutls8=1.11.0-1+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy Oracle Instant Client from parallel stage
+COPY --from=oracle /opt/oracle /opt/oracle
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        ln -sf /lib/x86_64-linux-gnu/libaio.so.1t64 /lib/x86_64-linux-gnu/libaio.so.1; \
+    elif [ "$ARCH" = "arm64" ]; then \
+        ln -sf /lib/aarch64-linux-gnu/libaio.so.1t64 /lib/aarch64-linux-gnu/libaio.so.1; \
+    fi && \
+    echo /opt/oracle/instantclient_23_26 > /etc/ld.so.conf.d/oracle-instantclient.conf && \
+    ldconfig
 
 # Configure ODBC in production
 RUN printf "[FreeTDS]\nDescription = FreeTDS Driver\nDriver = /usr/lib/x86_64-linux-gnu/odbc/libtdsodbc.so\nSetup = /usr/lib/x86_64-linux-gnu/odbc/libtdsS.so\nFileUsage = 1\n" > /etc/odbcinst.ini
-
 
 WORKDIR /openssl-build
 RUN wget https://www.openssl.org/source/openssl-3.1.2.tar.gz \
@@ -156,10 +223,18 @@ RUN wget https://www.openssl.org/source/openssl-3.1.2.tar.gz \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Install Infisical CLI
-RUN curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | bash \
-    && apt-get update && apt-get install -y infisical=0.43.14 \
-    && rm -rf /var/lib/apt/lists/*
+# Build OpenSSL 3.5.6 for PQC (ML-DSA / SLH-DSA) certificate support.
+# Installed to /opt/openssl-pqc so it does not conflict with the FIPS OpenSSL above.
+WORKDIR /tmp/openssl-pqc-build
+RUN wget -q https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz \
+    && echo "deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736  openssl-3.5.6.tar.gz" | sha256sum -c - \
+    && tar -xf openssl-3.5.6.tar.gz \
+    && cd openssl-3.5.6 \
+    && ./Configure --prefix=/opt/openssl-pqc --openssldir=/opt/openssl-pqc/ssl no-docs \
+    && make -j"$(nproc)" \
+    && make install_sw \
+    && cd / \
+    && rm -rf /tmp/openssl-pqc-build
 
 RUN groupadd -r -g 1001 nodejs && useradd -r -u 1001 -g nodejs non-root-user
 
@@ -182,8 +257,11 @@ ENV CAPTCHA_SITE_KEY=$CAPTCHA_SITE_KEY
 WORKDIR /
 
 COPY --from=backend-runner /app /backend
-
 COPY --from=frontend-runner /app ./backend/frontend-build
+COPY --from=go-builder /go-sidecar /backend/go-sidecar
+
+# Make export-assets script executable for CDN asset extraction
+RUN chmod +x /backend/scripts/export-assets.sh
 
 ARG INFISICAL_PLATFORM_VERSION
 ENV INFISICAL_PLATFORM_VERSION $INFISICAL_PLATFORM_VERSION
@@ -201,7 +279,7 @@ ENV NODE_OPTIONS="--max-old-space-size=8192 --force-fips"
 ENV OPENSSL_CONF=/backend/nodejs.fips.cnf
 ENV OPENSSL_MODULES=/usr/local/lib/ossl-modules
 ENV FIPS_ENABLED=true
-  
+
 
 WORKDIR /backend
 

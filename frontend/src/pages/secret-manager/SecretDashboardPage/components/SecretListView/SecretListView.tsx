@@ -52,6 +52,7 @@ type Props = {
     }[];
   }[];
   colWidth: number;
+  excludePendingCreates?: boolean;
 };
 
 export const SecretListView = ({
@@ -64,7 +65,8 @@ export const SecretListView = ({
   isProtectedBranch = false,
   usedBySecretSyncs,
   importedBy,
-  colWidth
+  colWidth,
+  excludePendingCreates = false
 }: Props) => {
   const queryClient = useQueryClient();
   const { popUp, handlePopUpToggle, handlePopUpOpen, handlePopUpClose } = usePopUp([
@@ -121,7 +123,8 @@ export const SecretListView = ({
       newKey,
       secretId,
       secretMetadata,
-      isRotatedSecret
+      isRotatedSecret,
+      isHoneyTokenSecret
     }: Partial<{
       secretValueHidden: boolean;
       value: string;
@@ -130,11 +133,12 @@ export const SecretListView = ({
       reminderNote: string | null;
       reminderRecipients?: string[] | null;
       tags: string[];
-      skipMultilineEncoding: boolean;
+      skipMultilineEncoding: boolean | null;
       newKey: string;
       secretId: string;
       secretMetadata?: { key: string; value: string }[];
       isRotatedSecret?: boolean;
+      isHoneyTokenSecret?: boolean;
     }> = {}
   ) => {
     if (operation === "delete") {
@@ -164,7 +168,7 @@ export const SecretListView = ({
         projectId,
         secretPath,
         secretKey: key,
-        ...(!isRotatedSecret && {
+        ...(!(isRotatedSecret || isHoneyTokenSecret) && {
           newSecretName: newKey,
           secretValue: secretValueHidden ? secretValue : secretValue || ""
         }),
@@ -393,6 +397,7 @@ export const SecretListView = ({
           skipMultilineEncoding: modSecret.skipMultilineEncoding,
           secretMetadata,
           isRotatedSecret: orgSecret.isRotatedSecret,
+          isHoneyTokenSecret: orgSecret.isHoneyTokenSecret,
           secretValueHidden
         });
         if (cb) cb();
@@ -432,6 +437,9 @@ export const SecretListView = ({
       });
       queryClient.invalidateQueries({
         queryKey: secretApprovalRequestKeys.count({ projectId })
+      });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
       });
       if (!isReminderEvent) {
         handlePopUpClose("secretDetail");
@@ -478,17 +486,27 @@ export const SecretListView = ({
       key,
       id: secretId,
       value,
-      secretValueHidden
+      secretValueHidden,
+      tags,
+      secretMetadata,
+      skipMultilineEncoding,
+      comment
     } = popUp.deleteSecret?.data as SecretV3RawSanitized;
     if (isBatchMode) {
+      const secretValueForDelete = value !== undefined ? value : HIDDEN_SECRET_VALUE_API_MASK;
+
       const deleteChange: PendingSecretDelete = {
         id: `${secretId}`,
         type: PendingAction.Delete,
         secretKey: key,
-        secretValue: value || "",
+        secretValue: secretValueForDelete,
         timestamp: Date.now(),
         resourceType: "secret",
-        secretValueHidden
+        secretValueHidden,
+        tags: tags || [],
+        secretMetadata: secretMetadata || [],
+        skipMultilineEncoding: skipMultilineEncoding || false,
+        comment: comment || ""
       };
 
       addPendingChange(deleteChange, {
@@ -532,6 +550,9 @@ export const SecretListView = ({
     });
     queryClient.invalidateQueries({
       queryKey: secretApprovalRequestKeys.count({ projectId })
+    });
+    queryClient.invalidateQueries({
+      queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
     });
     handlePopUpClose("deleteSecret");
     handlePopUpClose("secretDetail");
@@ -580,27 +601,32 @@ export const SecretListView = ({
       {FontAwesomeSpriteSymbols.map(({ icon, symbol }) => (
         <FontAwesomeIcon icon={icon} symbol={symbol} key={`font-awesome-svg-spritie-${symbol}`} />
       ))}
-      {secrets.map((secret) => (
-        <SecretItem
-          colWidth={colWidth}
-          environment={environment}
-          secretPath={secretPath}
-          tags={wsTags}
-          isSelected={Boolean(selectedSecrets?.[secret.id])}
-          onToggleSecretSelect={toggleSelectedSecret}
-          isVisible={isVisible}
-          secret={secret}
-          key={secret.id}
-          onSaveSecret={handleSaveSecret}
-          onDeleteSecret={onDeleteSecret}
-          onDetailViewSecret={onDetailViewSecret}
-          importedBy={importedBy}
-          onCreateTag={onCreateTag}
-          onShareSecret={onShareSecret}
-          isPending={secret.isPending}
-          pendingAction={secret.pendingAction}
-        />
-      ))}
+      {secrets
+        .filter((secret) => {
+          if (!excludePendingCreates) return true;
+          return !secret.isPending || secret.pendingAction !== PendingAction.Create;
+        })
+        .map((secret) => (
+          <SecretItem
+            colWidth={colWidth}
+            environment={environment}
+            secretPath={secretPath}
+            tags={wsTags}
+            isSelected={Boolean(selectedSecrets?.[secret.id])}
+            onToggleSecretSelect={toggleSelectedSecret}
+            isVisible={isVisible}
+            secret={secret}
+            key={secret.id}
+            onSaveSecret={handleSaveSecret}
+            onDeleteSecret={onDeleteSecret}
+            onDetailViewSecret={onDetailViewSecret}
+            importedBy={importedBy}
+            onCreateTag={onCreateTag}
+            onShareSecret={onShareSecret}
+            isPending={secret.isPending}
+            pendingAction={secret.pendingAction}
+          />
+        ))}
       <DeleteActionModal
         isOpen={popUp.deleteSecret.isOpen}
         deleteKey={(popUp.deleteSecret?.data as SecretV3RawSanitized)?.key}

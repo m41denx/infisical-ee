@@ -16,7 +16,7 @@ import { loginMappingSchema, sanitizedSshHost } from "@app/ee/services/ssh-host/
 import { LoginMappingSource } from "@app/ee/services/ssh-host/ssh-host-types";
 import { sanitizedSshHostGroup } from "@app/ee/services/ssh-host-group/ssh-host-group-schema";
 import { ApiDocsTags, PROJECTS } from "@app/lib/api-docs";
-import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { projectCreationLimit, readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { slugSchema } from "@app/server/lib/schemas";
 import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
@@ -89,7 +89,7 @@ export const registerDeprecatedProjectRouter = async (server: FastifyZodProvider
     method: "POST",
     url: "/",
     config: {
-      rateLimit: writeLimit
+      rateLimit: projectCreationLimit
     },
     schema: {
       hide: false,
@@ -101,8 +101,17 @@ export const registerDeprecatedProjectRouter = async (server: FastifyZodProvider
         }
       ],
       body: z.object({
-        projectName: z.string().trim().describe(PROJECTS.CREATE.projectName),
-        projectDescription: z.string().trim().optional().describe(PROJECTS.CREATE.projectDescription),
+        projectName: z
+          .string()
+          .trim()
+          .max(64, { message: "Name must be 64 or fewer characters" })
+          .describe(PROJECTS.CREATE.projectName),
+        projectDescription: z
+          .string()
+          .trim()
+          .max(1024, { message: "Description must be 1024 or fewer characters" })
+          .optional()
+          .describe(PROJECTS.CREATE.projectDescription),
         slug: slugSchema({ min: 5, max: 36 }).optional().describe(PROJECTS.CREATE.slug),
         kmsKeyId: z.string().optional(),
         template: slugSchema({ field: "Template Name", max: 64 })
@@ -271,8 +280,18 @@ export const registerDeprecatedProjectRouter = async (server: FastifyZodProvider
         slug: slugSchema({ min: 5, max: 64 }).describe("The slug of the project to update.")
       }),
       body: z.object({
-        name: z.string().trim().optional().describe(PROJECTS.UPDATE.name),
-        description: z.string().trim().optional().describe(PROJECTS.UPDATE.projectDescription),
+        name: z
+          .string()
+          .trim()
+          .max(64, { message: "Name must be 64 or fewer characters" })
+          .optional()
+          .describe(PROJECTS.UPDATE.name),
+        description: z
+          .string()
+          .trim()
+          .max(1024, { message: "Description must be 1024 or fewer characters" })
+          .optional()
+          .describe(PROJECTS.UPDATE.projectDescription),
         autoCapitalization: z.boolean().optional().describe(PROJECTS.UPDATE.autoCapitalization),
         hasDeleteProtection: z.boolean().optional().describe(PROJECTS.UPDATE.hasDeleteProtection)
       }),
@@ -364,7 +383,9 @@ export const registerDeprecatedProjectRouter = async (server: FastifyZodProvider
       rateLimit: readLimit
     },
     schema: {
-      hide: false,
+      deprecated: true,
+      description: "Deprecated: Use POST /api/v1/projects/{projectId}/certificates/search instead.",
+      hide: true,
       tags: [ApiDocsTags.PkiCertificates],
       params: z.object({
         slug: slugSchema({ min: 5, max: 64 }).describe(PROJECTS.LIST_CERTIFICATES.slug)

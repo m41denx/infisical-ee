@@ -9,10 +9,20 @@ import { SecretRotation } from "@app/hooks/api/secretRotationsV2";
 import { Auth0ClientSecretRotationReviewFields } from "./Auth0ClientSecretRotationReviewFields";
 import { AwsIamUserSecretRotationReviewFields } from "./AwsIamUserSecretRotationReviewFields";
 import { AzureClientSecretRotationReviewFields } from "./AzureClientSecretRotationReviewFields";
+import { ConvexAccessKeyRotationReviewFields } from "./ConvexAccessKeyRotationReviewFields";
+import { DatabricksServicePrincipalSecretRotationReviewFields } from "./DatabricksServicePrincipalSecretRotationReviewFields";
+import { DatadogApplicationKeySecretRotationReviewFields } from "./DatadogApplicationKeySecretRotationReviewFields";
+import { DbtServiceTokenRotationReviewFields } from "./DbtServiceTokenRotationReviewFields";
+import { HpIloRotationReviewFields } from "./HpIloRotationReviewFields";
 import { LdapPasswordRotationReviewFields } from "./LdapPasswordRotationReviewFields";
 import { OktaClientSecretRotationReviewFields } from "./OktaClientSecretRotationReviewFields";
+import { OpenRouterApiKeyRotationReviewFields } from "./OpenRouterApiKeyRotationReviewFields";
 import { RedisCredentialsRotationReviewFields } from "./RedisCredentialsRotationReviewFields";
+import { SalesforceOauthCredentialsRotationReviewFields } from "./SalesforceOauthCredentialsRotationReviewFields";
 import { SqlCredentialsRotationReviewFields } from "./shared";
+import { SupabaseApiKeyRotationReviewFields } from "./SupabaseApiKeyRotationReviewFields";
+import { UnixLinuxLocalAccountRotationReviewFields } from "./UnixLinuxLocalAccountRotationReviewFields";
+import { WindowsLocalAccountRotationReviewFields } from "./WindowsLocalAccountRotationReviewFields";
 
 const COMPONENT_MAP: Record<SecretRotation, React.FC> = {
   [SecretRotation.PostgresCredentials]: SqlCredentialsRotationReviewFields,
@@ -24,7 +34,19 @@ const COMPONENT_MAP: Record<SecretRotation, React.FC> = {
   [SecretRotation.LdapPassword]: LdapPasswordRotationReviewFields,
   [SecretRotation.AwsIamUserSecret]: AwsIamUserSecretRotationReviewFields,
   [SecretRotation.OktaClientSecret]: OktaClientSecretRotationReviewFields,
-  [SecretRotation.RedisCredentials]: RedisCredentialsRotationReviewFields
+  [SecretRotation.RedisCredentials]: RedisCredentialsRotationReviewFields,
+  [SecretRotation.MongoDBCredentials]: SqlCredentialsRotationReviewFields,
+  [SecretRotation.DatabricksServicePrincipalSecret]:
+    DatabricksServicePrincipalSecretRotationReviewFields,
+  [SecretRotation.UnixLinuxLocalAccount]: UnixLinuxLocalAccountRotationReviewFields,
+  [SecretRotation.DbtServiceToken]: DbtServiceTokenRotationReviewFields,
+  [SecretRotation.WindowsLocalAccount]: WindowsLocalAccountRotationReviewFields,
+  [SecretRotation.OpenRouterApiKey]: OpenRouterApiKeyRotationReviewFields,
+  [SecretRotation.HpIloLocalAccount]: HpIloRotationReviewFields,
+  [SecretRotation.SupabaseApiKey]: SupabaseApiKeyRotationReviewFields,
+  [SecretRotation.SalesforceOauthCredentials]: SalesforceOauthCredentialsRotationReviewFields,
+  [SecretRotation.DatadogApplicationKeySecret]: DatadogApplicationKeySecretRotationReviewFields,
+  [SecretRotation.ConvexAccessKey]: ConvexAccessKeyRotationReviewFields
 };
 
 export const SecretRotationV2ReviewFields = () => {

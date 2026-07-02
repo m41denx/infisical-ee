@@ -15,14 +15,7 @@ import { twMerge } from "tailwind-merge";
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { SecretReferenceTree } from "@app/components/secrets/SecretReferenceDetails";
-import {
-  DeleteActionModal,
-  IconButton,
-  Modal,
-  ModalContent,
-  ModalTrigger,
-  Tooltip
-} from "@app/components/v2";
+import { DeleteActionModal, IconButton, Modal, ModalContent, Tooltip } from "@app/components/v2";
 import { InfisicalSecretInput } from "@app/components/v2/InfisicalSecretInput";
 import {
   ProjectPermissionActions,
@@ -50,16 +43,23 @@ type Props = {
   secretValueHidden: boolean;
   secretPath: string;
   onSecretCreate: (env: string, key: string, value: string) => Promise<void>;
-  onSecretUpdate: (
-    env: string,
-    key: string,
-    value: string,
-    secretValueHidden: boolean,
-    type?: SecretType,
-    secretId?: string
-  ) => Promise<void>;
+  onSecretUpdate: (params: {
+    env: string;
+    key: string;
+    value: string | undefined;
+    secretValueHidden: boolean;
+    type?: SecretType;
+    secretId?: string;
+    newSecretName?: string;
+    secretComment?: string;
+    tags?: { id: string; slug: string }[];
+    secretMetadata?: { key: string; value: string; isEncrypted?: boolean }[];
+    skipMultilineEncoding?: boolean | null;
+    originalValue?: string;
+  }) => Promise<void>;
   onSecretDelete: (env: string, key: string, secretId?: string) => Promise<void>;
   isRotatedSecret?: boolean;
+  isHoneyTokenSecret?: boolean;
   isEmpty?: boolean;
   importedSecret?:
     | {
@@ -95,13 +95,21 @@ export const SecretEditRow = ({
   isVisible,
   secretId,
   isRotatedSecret,
+  isHoneyTokenSecret,
   importedBy,
   importedSecret,
   isEmpty,
   isSecretPresent
 }: Props) => {
+  const isManagedSecret = isRotatedSecret || isHoneyTokenSecret;
+
+  let deleteTooltipContent = "Delete";
+  if (isHoneyTokenSecret) deleteTooltipContent = "Cannot Delete Honey Token Secret";
+  else if (isRotatedSecret) deleteTooltipContent = "Cannot Delete Rotated Secret";
+
   const { handlePopUpOpen, handlePopUpToggle, handlePopUpClose, popUp } = usePopUp([
-    "editSecret"
+    "editSecret",
+    "secretReferenceTree"
   ] as const);
 
   const { currentProject } = useProject();
@@ -203,14 +211,14 @@ export const SecretEditRow = ({
           handlePopUpOpen("editSecret", { secretValue: value });
           return;
         }
-        await onSecretUpdate(
-          environment,
-          secretName,
+        await onSecretUpdate({
+          env: environment,
+          key: secretName,
           value,
           secretValueHidden,
-          isOverride ? SecretType.Personal : SecretType.Shared,
+          type: isOverride ? SecretType.Personal : SecretType.Shared,
           secretId
-        );
+        });
       }
     }
     if (secretValueHidden && !isOverride) {
@@ -223,14 +231,14 @@ export const SecretEditRow = ({
   };
 
   const handleEditSecret = async ({ secretValue }: { secretValue: string }) => {
-    await onSecretUpdate(
-      environment,
-      secretName,
-      secretValue,
+    await onSecretUpdate({
+      env: environment,
+      key: secretName,
+      value: secretValue,
       secretValueHidden,
-      isOverride ? SecretType.Personal : SecretType.Shared,
+      type: isOverride ? SecretType.Personal : SecretType.Shared,
       secretId
-    );
+    });
     reset({ value: secretValue });
     handlePopUpClose("editSecret");
   };
@@ -273,7 +281,7 @@ export const SecretEditRow = ({
       />
       {secretValueHidden && !isOverride && (
         <Tooltip
-          content={`You do not have access to view the current value${canEditSecretValue && !isRotatedSecret ? ", but you can set a new one" : "."}`}
+          content={`You do not have access to view the current value${canEditSecretValue && !isManagedSecret ? ", but you can set a new one" : "."}`}
         >
           <FontAwesomeIcon className="pl-2" size="sm" icon={faEyeSlash} />
         </Tooltip>
@@ -287,7 +295,7 @@ export const SecretEditRow = ({
               {...field}
               isReadOnly={
                 isImportedSecret ||
-                (isRotatedSecret && !isOverride) ||
+                (isManagedSecret && !isOverride) ||
                 isFetchingSecretValue ||
                 isErrorFetchingSecretValue
               }
@@ -305,7 +313,7 @@ export const SecretEditRow = ({
               environment={environment}
               isImport={isImportedSecret}
               defaultValue={secretValueHidden ? "" : undefined}
-              canEditButNotView={secretValueHidden && !isOverride}
+              canEditButNotView={secretValueHidden && !isOverride && !isManagedSecret}
               onFocus={() => setIsFieldFocused.on()}
               onBlur={() => {
                 field.onBlur();
@@ -381,34 +389,36 @@ export const SecretEditRow = ({
             </div>
 
             <div className="opacity-0 group-hover:opacity-100">
-              <Modal>
-                <ModalTrigger asChild>
-                  <div className="opacity-0 group-hover:opacity-100">
-                    <Tooltip content="Secret Reference Tree">
-                      <IconButton
-                        variant="plain"
-                        ariaLabel="reference-tree"
-                        className="h-full"
-                        isDisabled={!canReadSecretValue || !secretId || isEmpty}
-                      >
-                        <FontAwesomeIcon icon={faProjectDiagram} />
-                      </IconButton>
-                    </Tooltip>
-                  </div>
-                </ModalTrigger>
-                <ModalContent
-                  title="Secret Reference Details"
-                  subTitle="Visual breakdown of secrets referenced by this secret."
-                  onOpenAutoFocus={(e) => e.preventDefault()} // prevents secret input from displaying value on open
+              <Tooltip content="Secret Reference Tree">
+                <IconButton
+                  variant="plain"
+                  ariaLabel="reference-tree"
+                  className="h-full"
+                  isDisabled={!canReadSecretValue || !secretId || isEmpty}
+                  onClick={() => handlePopUpOpen("secretReferenceTree")}
                 >
-                  <SecretReferenceTree
-                    secretPath={secretPath}
-                    environment={environment}
-                    secretKey={secretName}
-                  />
-                </ModalContent>
-              </Modal>
+                  <FontAwesomeIcon icon={faProjectDiagram} />
+                </IconButton>
+              </Tooltip>
             </div>
+            <Modal
+              isOpen={popUp.secretReferenceTree.isOpen}
+              onOpenChange={(isOpen) => handlePopUpToggle("secretReferenceTree", isOpen)}
+            >
+              <ModalContent
+                className="max-w-3xl"
+                title="Secret Reference Details"
+                subTitle="Visual breakdown of secrets referenced by this secret."
+                onOpenAutoFocus={(e) => e.preventDefault()} // prevents secret input from displaying value on open
+              >
+                <SecretReferenceTree
+                  secretPath={secretPath}
+                  environment={environment}
+                  secretKey={secretName}
+                  onClose={() => handlePopUpToggle("secretReferenceTree", false)}
+                />
+              </ModalContent>
+            </Modal>
 
             <ProjectPermissionCan
               I={ProjectPermissionActions.Delete}
@@ -421,13 +431,13 @@ export const SecretEditRow = ({
             >
               {(isAllowed) => (
                 <div className="opacity-0 group-hover:opacity-100">
-                  <Tooltip content={isRotatedSecret ? "Cannot Delete Rotated Secret" : "Delete"}>
+                  <Tooltip content={deleteTooltipContent}>
                     <IconButton
                       variant="plain"
                       ariaLabel="delete-value"
                       className="h-full"
                       onClick={toggleModal}
-                      isDisabled={isDeleting || !isAllowed || isRotatedSecret}
+                      isDisabled={isDeleting || !isAllowed || isManagedSecret}
                     >
                       <FontAwesomeIcon icon={faTrash} />
                     </IconButton>

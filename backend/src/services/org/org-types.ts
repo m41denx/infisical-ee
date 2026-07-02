@@ -1,6 +1,12 @@
+import { z } from "zod";
+
 import { TOrgPermission } from "@app/lib/types";
 
 import { ActorAuthMethod, ActorType, MfaMethod } from "../auth/auth-type";
+import { OrgWithSubOrgsSchema } from "./org-schema";
+
+/** Root org with accessible sub-orgs (basic info only) */
+export type TOrgWithSubOrgs = z.infer<typeof OrgWithSubOrgsSchema>;
 
 export type TUpdateOrgMembershipDTO = {
   userId: string;
@@ -69,6 +75,11 @@ export type TFindAllWorkspacesDTO = {
   orgId: string;
 };
 
+export type TSecretShareBrandConfig = {
+  primaryColor?: string;
+  secondaryColor?: string;
+} | null;
+
 export type TUpdateOrgDTO = {
   data: Partial<{
     name: string;
@@ -91,12 +102,15 @@ export type TUpdateOrgDTO = {
     maxSharedSecretLifetime: number;
     maxSharedSecretViewLimit: number | null;
     blockDuplicateSecretSyncDestinations: boolean;
+    secretShareBrandConfig: TSecretShareBrandConfig;
   }>;
 } & TOrgPermission;
 
 export type TUpgradePrivilegeSystemDTO = Omit<TOrgPermission, "actor">;
 
 export type TGetOrgGroupsDTO = TOrgPermission;
+
+export type TFindAllOrgMembersDTO = TOrgPermission;
 
 export type TListProjectMembershipsByOrgMembershipIdDTO = {
   orgMembershipId: string;

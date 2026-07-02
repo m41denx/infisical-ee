@@ -1,20 +1,17 @@
 import https from "node:https";
 
-import axios, { AxiosInstance } from "axios";
+import axios, { AxiosInstance, isAxiosError } from "axios";
 import { v4 as uuidv4 } from "uuid";
 
 import { TGatewayServiceFactory } from "@app/ee/services/gateway/gateway-service";
+import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
 import { BadRequestError } from "@app/lib/errors";
 import { GatewayProxyProtocol, withGatewayProxy } from "@app/lib/gateway";
+import { withGatewayV2Proxy } from "@app/lib/gateway-v2/gateway-v2";
 import { logger } from "@app/lib/logger";
 import { blockLocalAndPrivateIpAddresses } from "@app/lib/validator";
 
-import { InfisicalImportData, VaultMappingType } from "../external-migration-types";
-
-enum KvVersion {
-  V1 = "1",
-  V2 = "2"
-}
+import { InfisicalImportData, KvVersion, VaultMappingType } from "../external-migration-types";
 
 type VaultData = {
   namespace: string;
@@ -23,40 +20,50 @@ type VaultData = {
   secretData: Record<string, string>;
 };
 
-const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">) => {
+const vaultFactory = (
+  gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">,
+  gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">
+) => {
   const $gatewayProxyWrapper = async <T>(
     inputs: {
       gatewayId: string;
-      targetHost?: string;
-      targetPort?: number;
+      targetProtocol: string;
+      targetHostname: string;
+      targetPort: number;
     },
-    gatewayCallback: (host: string, port: number, httpsAgent?: https.Agent) => Promise<T>
+    gatewayCallback: (host: string, port: number, httpsAgent?: https.Agent, hostHeader?: string) => Promise<T>
   ): Promise<T> => {
-    const relayDetails = await gatewayService.fnGetGatewayClientTlsByGatewayId(inputs.gatewayId);
-    const [relayHost, relayPort] = relayDetails.relayAddress.split(":");
+    const { gatewayId, targetProtocol, targetHostname, targetPort } = inputs;
 
-    const callbackResult = await withGatewayProxy(
-      async (port, httpsAgent) => {
-        const res = await gatewayCallback("http://localhost", port, httpsAgent);
-        return res;
-      },
-      {
-        protocol: GatewayProxyProtocol.Http,
-        targetHost: inputs.targetHost,
-        targetPort: inputs.targetPort,
-        relayHost,
-        relayPort: Number(relayPort),
-        identityId: relayDetails.identityId,
-        orgId: relayDetails.orgId,
-        tlsOptions: {
-          ca: relayDetails.certChain,
-          cert: relayDetails.certificate,
-          key: relayDetails.privateKey.toString()
+    const gatewayV2Details = await gatewayV2Service.getPlatformConnectionDetailsByGatewayId({
+      gatewayId,
+      targetHost: targetHostname,
+      targetPort
+    });
+
+    if (gatewayV2Details) {
+      const isHttps = targetProtocol === "https";
+      const httpsAgent = isHttps ? new https.Agent({ servername: targetHostname }) : undefined;
+
+      return withGatewayV2Proxy(
+        async (port) => gatewayCallback(`${targetProtocol}://localhost`, port, httpsAgent, targetHostname),
+        {
+          protocol: GatewayProxyProtocol.Tcp,
+          relayHost: gatewayV2Details.relayHost,
+          gateway: gatewayV2Details.gateway,
+          relay: gatewayV2Details.relay
         }
-      }
-    );
+      );
+    }
 
-    return callbackResult;
+    const relayDetails = await gatewayService.fnGetGatewayClientTlsByGatewayId(gatewayId);
+
+    return withGatewayProxy(async (port, httpsAgent) => gatewayCallback("http://localhost", port, httpsAgent), {
+      protocol: GatewayProxyProtocol.Http,
+      targetHost: `${targetProtocol}://${targetHostname}`,
+      targetPort,
+      relayDetails
+    });
   };
 
   const getMounts = async (request: AxiosInstance) => {
@@ -65,7 +72,7 @@ const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGateway
         data: Record<string, { accessor: string; options: { version?: string } | null; type: string }>;
       }>("/v1/sys/mounts")
       .catch((err) => {
-        if (axios.isAxiosError(err)) {
+        if (isAxiosError(err)) {
           logger.error(err.response?.data, "External migration: Failed to get Vault mounts");
         }
         throw err;
@@ -101,7 +108,7 @@ const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGateway
 
       return response.data.data.keys;
     } catch (err) {
-      if (axios.isAxiosError(err)) {
+      if (isAxiosError(err)) {
         logger.error(err.response?.data, "External migration: Failed to get Vault paths");
         if (err.response?.status === 404) {
           return null;
@@ -121,7 +128,7 @@ const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGateway
       const response = await request
         .get<{
           data: {
-            data: Record<string, string>; // KV v2 has nested data structure
+            data: Record<string, string> | null; // KV v2 has nested data structure. Can be null if it's a soft deleted secret.
             metadata: {
               created_time: string;
               deletion_time: string;
@@ -131,11 +138,27 @@ const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGateway
           };
         }>(`/v1/${mountPath}/data/${secretPath}`)
         .catch((err) => {
-          if (axios.isAxiosError(err)) {
+          if (isAxiosError(err)) {
+            // handle soft-deleted secrets (Vault returns 404 with metadata for soft deleted secrets)
+            const vaultResponse = err.response?.data as { data?: { metadata?: { deletion_time?: string } } };
+
+            if (err.response?.status === 404 && vaultResponse?.data?.metadata?.deletion_time) {
+              logger.info(
+                { secretPath, deletion_time: vaultResponse.data?.metadata?.deletion_time },
+                "External migration: Skipping soft-deleted Vault secret"
+              );
+              return null;
+            }
+
             logger.error(err.response?.data, "External migration: Failed to get Vault secret");
           }
           throw err;
         });
+
+      // if null returned from catch, skip secret
+      if (response === null) {
+        return null;
+      }
 
       return response.data.data.data;
     }
@@ -150,7 +173,7 @@ const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGateway
         renewable: boolean;
       }>(`/v1/${mountPath}/${secretPath}`)
       .catch((err) => {
-        if (axios.isAxiosError(err)) {
+        if (isAxiosError(err)) {
           logger.error(err.response?.data, "External migration: Failed to get Vault secret");
         }
         throw err;
@@ -206,15 +229,17 @@ const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGateway
     accessToken: string;
     gatewayId?: string;
   }): Promise<VaultData[]> {
-    const getData = async (host: string, port?: number, httpsAgent?: https.Agent) => {
+    const getData = async (host: string, port?: number, httpsAgent?: https.Agent, hostHeader?: string) => {
       const allData: VaultData[] = [];
 
       const request = axios.create({
         baseURL: port ? `${host}:${port}` : host,
         headers: {
           "X-Vault-Token": accessToken,
-          ...(namespace ? { "X-Vault-Namespace": namespace } : {})
+          ...(namespace ? { "X-Vault-Namespace": namespace } : {}),
+          ...(hostHeader ? { Host: hostHeader } : {})
         },
+        maxRedirects: 0,
         httpsAgent
       });
 
@@ -252,12 +277,14 @@ const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGateway
             kvVersion
           );
 
-          allData.push({
-            namespace: namespace || "",
-            mount: mountPath.replace(/\/$/, ""),
-            path: secretPath.replace(`${cleanMountPath}/`, ""),
-            secretData
-          });
+          if (secretData) {
+            allData.push({
+              namespace: namespace || "",
+              mount: mountPath.replace(/\/$/, ""),
+              path: secretPath.replace(`${cleanMountPath}/`, ""),
+              secretData
+            });
+          }
         }
       }
 
@@ -272,15 +299,20 @@ const vaultFactory = (gatewayService: Pick<TGatewayServiceFactory, "fnGetGateway
       const { port, protocol, hostname } = url;
       const cleanedProtocol = protocol.slice(0, -1);
 
+      const defaultPort = cleanedProtocol === "https" ? 443 : 80;
+      const targetPort = port ? Number(port) : defaultPort;
+
       data = await $gatewayProxyWrapper(
         {
           gatewayId,
-          targetHost: `${cleanedProtocol}://${hostname}`,
-          targetPort: port ? Number(port) : 8200 // 8200, default port for Vault self-hosted/dedicated
+          targetProtocol: cleanedProtocol,
+          targetHostname: hostname,
+          targetPort
         },
         getData
       );
     } else {
+      await blockLocalAndPrivateIpAddresses(baseUrl);
       data = await getData(baseUrl);
     }
 
@@ -526,9 +558,15 @@ export const importVaultDataFn = async (
     gatewayId?: string;
     orgId: string;
   },
-  { gatewayService }: { gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId"> }
+  {
+    gatewayService,
+    gatewayV2Service
+  }: {
+    gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">;
+    gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
+  }
 ) => {
-  await blockLocalAndPrivateIpAddresses(vaultUrl);
+  await blockLocalAndPrivateIpAddresses(vaultUrl, Boolean(gatewayId));
 
   if (mappingType === VaultMappingType.Namespace && !vaultNamespace) {
     throw new BadRequestError({
@@ -555,7 +593,7 @@ export const importVaultDataFn = async (
     `[importVaultDataFn]: Running ${orgId in vaultMigrationTransformMappings ? "custom" : "default"} transform`
   );
 
-  const vaultApi = vaultFactory(gatewayService);
+  const vaultApi = vaultFactory(gatewayService, gatewayV2Service);
 
   const vaultData = await vaultApi.collectVaultData({
     accessToken: vaultAccessToken,

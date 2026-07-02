@@ -6,15 +6,19 @@ import { DynamicSecretProviders } from "@app/hooks/api/dynamicSecret/types";
 
 import { EditDynamicSecretAwsElastiCacheProviderForm } from "./EditDynamicSecretAwsElastiCacheProviderForm";
 import { EditDynamicSecretAwsIamForm } from "./EditDynamicSecretAwsIamForm";
+import { EditDynamicSecretAwsMemoryDbProviderForm } from "./EditDynamicSecretAwsMemoryDbProviderForm";
 import { EditDynamicSecretAzureEntraIdForm } from "./EditDynamicSecretAzureEntraIdForm";
 import { EditDynamicSecretAzureSqlDatabaseForm } from "./EditDynamicSecretAzureSqlDatabaseForm";
 import { EditDynamicSecretCassandraForm } from "./EditDynamicSecretCassandraForm";
+import { EditDynamicSecretClickHouseForm } from "./EditDynamicSecretClickHouseForm";
 import { EditDynamicSecretCouchbaseForm } from "./EditDynamicSecretCouchbaseForm";
 import { EditDynamicSecretElasticSearchForm } from "./EditDynamicSecretElasticSearchForm";
 import { EditDynamicSecretGcpIamForm } from "./EditDynamicSecretGcpIamForm";
 import { EditDynamicSecretGithubForm } from "./EditDynamicSecretGithubForm";
+import { EditDynamicSecretIbmApiConnectForm } from "./EditDynamicSecretIbmApiConnectForm";
 import { EditDynamicSecretKubernetesForm } from "./EditDynamicSecretKubernetesForm";
 import { EditDynamicSecretLdapForm } from "./EditDynamicSecretLdapForm";
+import { EditDynamicSecretMilvusForm } from "./EditDynamicSecretMilvusForm";
 import { EditDynamicSecretMongoAtlasForm } from "./EditDynamicSecretMongoAtlasForm";
 import { EditDynamicSecretMongoDBForm } from "./EditDynamicSecretMongoDBForm";
 import { EditDynamicSecretRabbitMqForm } from "./EditDynamicSecretRabbitMqForm";
@@ -23,6 +27,7 @@ import { EditDynamicSecretSapAseForm } from "./EditDynamicSecretSapAseForm";
 import { EditDynamicSecretSapHanaForm } from "./EditDynamicSecretSapHanaForm";
 import { EditDynamicSecretSnowflakeForm } from "./EditDynamicSecretSnowflakeForm";
 import { EditDynamicSecretSqlProviderForm } from "./EditDynamicSecretSqlProviderForm";
+import { EditDynamicSecretSshForm } from "./EditDynamicSecretSshForm";
 import { EditDynamicSecretTotpForm } from "./EditDynamicSecretTotpForm";
 import { EditDynamicSecretVerticaForm } from "./EditDynamicSecretVertica";
 
@@ -136,6 +141,23 @@ export const EditDynamicSecretForm = ({
           exit={{ opacity: 0, translateX: -30 }}
         >
           <EditDynamicSecretAwsElastiCacheProviderForm
+            onClose={onClose}
+            projectSlug={projectSlug}
+            secretPath={secretPath}
+            dynamicSecret={dynamicSecretDetails}
+            environment={environment}
+          />
+        </motion.div>
+      )}
+      {dynamicSecretDetails?.type === DynamicSecretProviders.AwsMemoryDb && (
+        <motion.div
+          key="aws-memorydb-provider-edit"
+          transition={{ duration: 0.1 }}
+          initial={{ opacity: 0, translateX: 30 }}
+          animate={{ opacity: 1, translateX: 0 }}
+          exit={{ opacity: 0, translateX: -30 }}
+        >
+          <EditDynamicSecretAwsMemoryDbProviderForm
             onClose={onClose}
             projectSlug={projectSlug}
             secretPath={secretPath}
@@ -404,6 +426,23 @@ export const EditDynamicSecretForm = ({
           />
         </motion.div>
       )}
+      {dynamicSecretDetails?.type === DynamicSecretProviders.Milvus && (
+        <motion.div
+          key="milvus-edit"
+          transition={{ duration: 0.1 }}
+          initial={{ opacity: 0, translateX: 30 }}
+          animate={{ opacity: 1, translateX: 0 }}
+          exit={{ opacity: 0, translateX: -30 }}
+        >
+          <EditDynamicSecretMilvusForm
+            onClose={onClose}
+            projectSlug={projectSlug}
+            secretPath={secretPath}
+            dynamicSecret={dynamicSecretDetails}
+            environment={environment}
+          />
+        </motion.div>
+      )}
       {dynamicSecretDetails?.type === DynamicSecretProviders.Couchbase && (
         <motion.div
           key="couchbase-edit"
@@ -413,6 +452,57 @@ export const EditDynamicSecretForm = ({
           exit={{ opacity: 0, translateX: -30 }}
         >
           <EditDynamicSecretCouchbaseForm
+            onClose={onClose}
+            projectSlug={projectSlug}
+            secretPath={secretPath}
+            dynamicSecret={dynamicSecretDetails}
+            environment={environment}
+          />
+        </motion.div>
+      )}
+      {dynamicSecretDetails?.type === DynamicSecretProviders.Clickhouse && (
+        <motion.div
+          key="clickhouse-edit"
+          transition={{ duration: 0.1 }}
+          initial={{ opacity: 0, translateX: 30 }}
+          animate={{ opacity: 1, translateX: 0 }}
+          exit={{ opacity: 0, translateX: -30 }}
+        >
+          <EditDynamicSecretClickHouseForm
+            onClose={onClose}
+            projectSlug={projectSlug}
+            secretPath={secretPath}
+            dynamicSecret={dynamicSecretDetails}
+            environment={environment}
+          />
+        </motion.div>
+      )}
+      {dynamicSecretDetails?.type === DynamicSecretProviders.Ssh && (
+        <motion.div
+          key="ssh-edit"
+          transition={{ duration: 0.1 }}
+          initial={{ opacity: 0, translateX: 30 }}
+          animate={{ opacity: 1, translateX: 0 }}
+          exit={{ opacity: 0, translateX: -30 }}
+        >
+          <EditDynamicSecretSshForm
+            onClose={onClose}
+            projectSlug={projectSlug}
+            secretPath={secretPath}
+            dynamicSecret={dynamicSecretDetails}
+            environment={environment}
+          />
+        </motion.div>
+      )}
+      {dynamicSecretDetails?.type === DynamicSecretProviders.IbmApiConnect && (
+        <motion.div
+          key="ibm-api-connect-edit"
+          transition={{ duration: 0.1 }}
+          initial={{ opacity: 0, translateX: 30 }}
+          animate={{ opacity: 1, translateX: 0 }}
+          exit={{ opacity: 0, translateX: -30 }}
+        >
+          <EditDynamicSecretIbmApiConnectForm
             onClose={onClose}
             projectSlug={projectSlug}
             secretPath={secretPath}

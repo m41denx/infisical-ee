@@ -3,26 +3,27 @@ import { Controller, FormProvider, useForm, useFormContext, useWatch } from "rea
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
-import {
-  Button,
-  FormControl,
-  Input,
-  ModalClose,
-  Select,
-  SelectItem,
-  TextArea
-} from "@app/components/v2";
+import { FormControl, Input, Select, SelectItem, TextArea } from "@app/components/v2";
+import { Button, SheetFooter } from "@app/components/v3";
 import { PamResourceType, TSSHAccount } from "@app/hooks/api/pam";
 import { UNCHANGED_PASSWORD_SENTINEL } from "@app/hooks/api/pam/constants";
 import { SSHAuthMethod } from "@app/hooks/api/pam/types/ssh-resource";
 
-import { GenericAccountFields, genericAccountFieldsSchema } from "./GenericAccountFields";
+import { SshCaSetupSection } from "../../../components/SshCaSetupSection";
+import {
+  AccountPolicyField,
+  GenericAccountFields,
+  genericAccountFieldsSchema
+} from "./GenericAccountFields";
+import { MetadataFields } from "./MetadataFields";
+import { RequireMfaField } from "./RequireMfaField";
 
 type Props = {
   account?: TSSHAccount;
   resourceId?: string;
   resourceType?: PamResourceType;
   onSubmit: (formData: FormData) => Promise<void>;
+  closeSheet: () => void;
 };
 
 const SSHPasswordCredentialsSchema = z.object({
@@ -50,14 +51,12 @@ const BaseSshAccountSchema = z.discriminatedUnion("authMethod", [
 
 const formSchema = genericAccountFieldsSchema.extend({
   credentials: BaseSshAccountSchema,
-  // We don't support rotation for now, just feed a false value to
-  // make the schema happy
-  rotationEnabled: z.boolean().default(false)
+  requireMfa: z.boolean().nullable().optional()
 });
 
 type FormData = z.infer<typeof formSchema>;
 
-const SshAccountFields = ({ isUpdate }: { isUpdate: boolean }) => {
+const SshAccountFields = ({ isUpdate, resourceId }: { isUpdate: boolean; resourceId: string }) => {
   const { control, setValue } = useFormContext();
   const [showPassword, setShowPassword] = useState(false);
 
@@ -185,17 +184,14 @@ const SshAccountFields = ({ isUpdate }: { isUpdate: boolean }) => {
         />
       )}
 
-      {authMethod === SSHAuthMethod.Certificate && (
-        <p className="mb-0 text-xs text-mineshaft-400">
-          Certificate-based authentication will use the certificate configured on the SSH resource.
-        </p>
-      )}
+      {authMethod === SSHAuthMethod.Certificate && <SshCaSetupSection resourceId={resourceId} />}
     </div>
   );
 };
 
-export const SshAccountForm = ({ account, onSubmit }: Props) => {
+export const SshAccountForm = ({ account, resourceId, onSubmit, closeSheet }: Props) => {
   const isUpdate = Boolean(account);
+  const effectiveResourceId = resourceId || account?.resource?.id || "";
 
   const getDefaultCredentials = () => {
     if (!account) return undefined;
@@ -227,6 +223,7 @@ export const SshAccountForm = ({ account, onSubmit }: Props) => {
       : {
           name: "",
           description: "",
+          requireMfa: false,
           credentials: {
             authMethod: SSHAuthMethod.Password,
             username: "",
@@ -243,29 +240,31 @@ export const SshAccountForm = ({ account, onSubmit }: Props) => {
   return (
     <FormProvider {...form}>
       <form
+        className="flex flex-1 flex-col overflow-hidden"
         onSubmit={(e) => {
           handleSubmit(onSubmit)(e);
         }}
       >
-        <GenericAccountFields />
-        <SshAccountFields isUpdate={isUpdate} />
-        <div className="mt-6 flex items-center">
+        <div className="flex min-h-0 flex-1 shrink flex-col gap-4 overflow-y-auto p-4 pb-8">
+          <GenericAccountFields />
+          <SshAccountFields isUpdate={isUpdate} resourceId={effectiveResourceId} />
+          <RequireMfaField />
+          <AccountPolicyField />
+          <MetadataFields />
+        </div>
+        <SheetFooter className="shrink-0 border-t">
           <Button
-            className="mr-4"
-            size="sm"
-            type="submit"
-            colorSchema="secondary"
-            isLoading={isSubmitting}
+            isPending={isSubmitting}
             isDisabled={isSubmitting || !isDirty}
+            variant="neutral"
+            type="submit"
           >
             {isUpdate ? "Update Account" : "Create Account"}
           </Button>
-          <ModalClose asChild>
-            <Button colorSchema="secondary" variant="plain">
-              Cancel
-            </Button>
-          </ModalClose>
-        </div>
+          <Button onClick={() => closeSheet()} variant="outline" className="mr-auto" type="button">
+            Cancel
+          </Button>
+        </SheetFooter>
       </form>
     </FormProvider>
   );

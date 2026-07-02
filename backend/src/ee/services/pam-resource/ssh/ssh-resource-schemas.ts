@@ -2,13 +2,13 @@ import { z } from "zod";
 
 import { PamResource } from "../pam-resource-enums";
 import {
+  BaseCreateGatewayPamResourceSchema,
   BaseCreatePamAccountSchema,
-  BaseCreatePamResourceSchema,
   BasePamAccountSchema,
   BasePamAccountSchemaWithResource,
   BasePamResourceSchema,
-  BaseUpdatePamAccountSchema,
-  BaseUpdatePamResourceSchema
+  BaseUpdateGatewayPamResourceSchema,
+  BaseUpdatePamAccountSchema
 } from "../pam-resource-schemas";
 import { SSHAuthMethod } from "./ssh-resource-enums";
 
@@ -47,6 +47,16 @@ export const SSHAccountCredentialsSchema = z.discriminatedUnion("authMethod", [
   SSHCertificateCredentialsSchema
 ]);
 
+// Schema for session credentials - includes certificate with keys
+export const SSHSessionAccountCredentialsSchema = z.discriminatedUnion("authMethod", [
+  SSHPasswordCredentialsSchema,
+  SSHPublicKeyCredentialsSchema,
+  SSHCertificateCredentialsSchema.extend({
+    privateKey: z.string().trim().max(5000),
+    certificate: z.string().trim().max(5000)
+  })
+]);
+
 export const SSHResourceSchema = BaseSSHResourceSchema.extend({
   connectionDetails: SSHResourceConnectionDetailsSchema,
   rotationAccountCredentials: SSHAccountCredentialsSchema.nullable().optional()
@@ -73,14 +83,26 @@ export const SanitizedSSHResourceSchema = BaseSSHResourceSchema.extend({
     .optional()
 });
 
-export const CreateSSHResourceSchema = BaseCreatePamResourceSchema.extend({
+export const CreateSSHResourceSchema = BaseCreateGatewayPamResourceSchema.extend({
   connectionDetails: SSHResourceConnectionDetailsSchema,
   rotationAccountCredentials: SSHAccountCredentialsSchema.nullable().optional()
 });
 
-export const UpdateSSHResourceSchema = BaseUpdatePamResourceSchema.extend({
+export const UpdateSSHResourceSchema = BaseUpdateGatewayPamResourceSchema.extend({
   connectionDetails: SSHResourceConnectionDetailsSchema.optional(),
   rotationAccountCredentials: SSHAccountCredentialsSchema.nullable().optional()
+});
+
+// Resource Metadata
+export const SSHResourceInternalMetadataSchema = z.object({
+  caPrivateKey: z.string(),
+  caPublicKey: z.string(),
+  caKeyAlgorithm: z.string()
+});
+
+export const SanitizedSSHResourceInternalMetadataSchema = SSHResourceInternalMetadataSchema.pick({
+  caPublicKey: true,
+  caKeyAlgorithm: true
 });
 
 // Accounts
@@ -97,6 +119,7 @@ export const UpdateSSHAccountSchema = BaseUpdatePamAccountSchema.extend({
 });
 
 export const SanitizedSSHAccountWithResourceSchema = BasePamAccountSchemaWithResource.extend({
+  parentType: z.literal(PamResource.SSH),
   credentials: z.discriminatedUnion("authMethod", [
     z.object({
       authMethod: z.literal(SSHAuthMethod.Password),
@@ -114,4 +137,4 @@ export const SanitizedSSHAccountWithResourceSchema = BasePamAccountSchemaWithRes
 });
 
 // Sessions
-export const SSHSessionCredentialsSchema = SSHResourceConnectionDetailsSchema.and(SSHAccountCredentialsSchema);
+export const SSHSessionCredentialsSchema = SSHResourceConnectionDetailsSchema.and(SSHSessionAccountCredentialsSchema);

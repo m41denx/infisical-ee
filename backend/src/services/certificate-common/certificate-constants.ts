@@ -1,3 +1,12 @@
+export enum CertificateRequestStatus {
+  PENDING_APPROVAL = "pending_approval",
+  PENDING = "pending",
+  PENDING_VALIDATION = "pending_validation",
+  ISSUED = "issued",
+  FAILED = "failed",
+  REJECTED = "rejected"
+}
+
 export enum CertSubjectAlternativeNameType {
   DNS_NAME = "dns_name",
   IP_ADDRESS = "ip_address",
@@ -43,6 +52,12 @@ export enum CertSanEffect {
   REQUIRE = "require"
 }
 
+export enum CertPolicyState {
+  ALLOWED = "allowed",
+  REQUIRED = "required",
+  DENIED = "denied"
+}
+
 export enum CertDurationUnit {
   DAYS = "days",
   MONTHS = "months",
@@ -52,7 +67,10 @@ export enum CertDurationUnit {
 export enum CertSubjectAttributeType {
   COMMON_NAME = "common_name",
   ORGANIZATION = "organization",
-  COUNTRY = "country"
+  COUNTRY = "country",
+  STATE = "state",
+  LOCALITY = "locality",
+  ORGANIZATIONAL_UNIT = "organizational_unit"
 }
 
 export const mapKeyUsageToLegacy = (usage: CertKeyUsageType): string => {
@@ -163,7 +181,23 @@ export enum CertKeyAlgorithm {
   RSA_3072 = "RSA_3072",
   RSA_4096 = "RSA_4096",
   ECDSA_P256 = "EC_prime256v1",
-  ECDSA_P384 = "EC_secp384r1"
+  ECDSA_P384 = "EC_secp384r1",
+  ECDSA_P521 = "EC_secp521r1",
+  ML_DSA_44 = "ML-DSA-44",
+  ML_DSA_65 = "ML-DSA-65",
+  ML_DSA_87 = "ML-DSA-87",
+  SLH_DSA_SHA2_128F = "SLH-DSA-SHA2-128f",
+  SLH_DSA_SHA2_128S = "SLH-DSA-SHA2-128s",
+  SLH_DSA_SHA2_192F = "SLH-DSA-SHA2-192f",
+  SLH_DSA_SHA2_192S = "SLH-DSA-SHA2-192s",
+  SLH_DSA_SHA2_256F = "SLH-DSA-SHA2-256f",
+  SLH_DSA_SHA2_256S = "SLH-DSA-SHA2-256s",
+  SLH_DSA_SHAKE_128F = "SLH-DSA-SHAKE-128f",
+  SLH_DSA_SHAKE_128S = "SLH-DSA-SHAKE-128s",
+  SLH_DSA_SHAKE_192F = "SLH-DSA-SHAKE-192f",
+  SLH_DSA_SHAKE_192S = "SLH-DSA-SHAKE-192s",
+  SLH_DSA_SHAKE_256F = "SLH-DSA-SHAKE-256f",
+  SLH_DSA_SHAKE_256S = "SLH-DSA-SHAKE-256s"
 }
 
 export enum CertSignatureAlgorithm {
@@ -172,7 +206,22 @@ export enum CertSignatureAlgorithm {
   RSA_SHA512 = "RSA-SHA512",
   ECDSA_SHA256 = "ECDSA-SHA256",
   ECDSA_SHA384 = "ECDSA-SHA384",
-  ECDSA_SHA512 = "ECDSA-SHA512"
+  ECDSA_SHA512 = "ECDSA-SHA512",
+  ML_DSA_44 = "ML-DSA-44",
+  ML_DSA_65 = "ML-DSA-65",
+  ML_DSA_87 = "ML-DSA-87",
+  SLH_DSA_SHA2_128F = "SLH-DSA-SHA2-128f",
+  SLH_DSA_SHA2_128S = "SLH-DSA-SHA2-128s",
+  SLH_DSA_SHA2_192F = "SLH-DSA-SHA2-192f",
+  SLH_DSA_SHA2_192S = "SLH-DSA-SHA2-192s",
+  SLH_DSA_SHA2_256F = "SLH-DSA-SHA2-256f",
+  SLH_DSA_SHA2_256S = "SLH-DSA-SHA2-256s",
+  SLH_DSA_SHAKE_128F = "SLH-DSA-SHAKE-128f",
+  SLH_DSA_SHAKE_128S = "SLH-DSA-SHAKE-128s",
+  SLH_DSA_SHAKE_192F = "SLH-DSA-SHAKE-192f",
+  SLH_DSA_SHAKE_192S = "SLH-DSA-SHAKE-192s",
+  SLH_DSA_SHAKE_256F = "SLH-DSA-SHAKE-256f",
+  SLH_DSA_SHAKE_256S = "SLH-DSA-SHAKE-256s"
 }
 
 export enum CertificateRenewalErrorType {
@@ -195,6 +244,19 @@ export const CERTIFICATE_RENEWAL_CONFIG = {
   QUEUE_START_DELAY_MS: 5000
 } as const;
 
+export const DEFAULT_CRL_VALIDITY_DAYS = 7;
+
+export const ALGORITHM_FAMILIES = {
+  ECDSA: {
+    signature: ["SHA256-ECDSA", "SHA384-ECDSA", "SHA512-ECDSA"],
+    key: ["ECDSA-P256", "ECDSA-P384", "ECDSA-P521"]
+  },
+  RSA: {
+    signature: ["SHA256-RSA", "SHA384-RSA", "SHA512-RSA"],
+    key: ["RSA-2048", "RSA-3072", "RSA-4096"]
+  }
+} as const;
+
 export const SAN_TYPE_OPTIONS = Object.values(CertSubjectAlternativeNameType);
 export const KEY_USAGE_OPTIONS = Object.values(CertKeyUsageType);
 export const EXTENDED_KEY_USAGE_OPTIONS = Object.values(CertExtendedKeyUsageType);
@@ -203,5 +265,6 @@ export const DURATION_UNIT_OPTIONS = Object.values(CertDurationUnit);
 export const SUBJECT_ATTRIBUTE_TYPE_OPTIONS = Object.values(CertSubjectAttributeType);
 export const ATTRIBUTE_RULE_OPTIONS = Object.values(CertAttributeRule);
 export const SAN_EFFECT_OPTIONS = Object.values(CertSanEffect);
+export const POLICY_STATE_OPTIONS = Object.values(CertPolicyState);
 export const KEY_ALGORITHM_OPTIONS = Object.values(CertKeyAlgorithm);
 export const SIGNATURE_ALGORITHM_OPTIONS = Object.values(CertSignatureAlgorithm);

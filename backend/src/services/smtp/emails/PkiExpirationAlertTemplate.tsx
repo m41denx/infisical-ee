@@ -6,15 +6,30 @@ import { BaseEmailWrapper, BaseEmailWrapperProps } from "./BaseEmailWrapper";
 interface PkiExpirationAlertTemplateProps extends Omit<BaseEmailWrapperProps, "title" | "preview" | "children"> {
   alertName: string;
   alertBeforeDays: number;
-  projectId: string;
-  items: { type: string; friendlyName: string; serialNumber: string; expiryDate: string }[];
+  viewUrl: string;
+  eventLabel?: string;
+  items: { type: string; friendlyName: string; serialNumber: string; expiryDate: string; revocationReason?: string }[];
 }
+
+const getEventVerb = (eventLabel: string): string => {
+  switch (eventLabel) {
+    case "Issuance":
+      return "been issued";
+    case "Renewal":
+      return "been renewed";
+    case "Revocation":
+      return "been revoked";
+    default:
+      return "";
+  }
+};
 
 export const PkiExpirationAlertTemplate = ({
   alertName,
   siteUrl,
   alertBeforeDays,
-  projectId,
+  viewUrl,
+  eventLabel = "Expiration",
   items
 }: PkiExpirationAlertTemplateProps) => {
   const formatDate = (dateStr: string) => {
@@ -29,25 +44,48 @@ export const PkiExpirationAlertTemplate = ({
     }
   };
 
+  const isExpiration = eventLabel === "Expiration";
   const certificateText = items.length === 1 ? "certificate" : "certificates";
-  const daysText = alertBeforeDays === 1 ? "1 day" : `${alertBeforeDays} days`;
+  const countText = items.length === 1 ? "one" : String(items.length);
 
-  const message = `Alert ${alertName}: You have ${items.length === 1 ? "one" : items.length} ${certificateText} that will expire in ${daysText}.`;
+  const title = isExpiration ? "Certificate Expiration Notice" : `Certificate ${eventLabel} Notice`;
+
+  let message: string;
+  if (isExpiration) {
+    const daysText = alertBeforeDays === 1 ? "1 day" : `${alertBeforeDays} days`;
+    message = `Alert ${alertName}: You have ${countText} ${certificateText} expiring within ${daysText}.`;
+  } else {
+    const verb = getEventVerb(eventLabel);
+    message = `Alert ${alertName}: ${items.length === 1 ? "A" : `${items.length}`} ${certificateText} ${items.length === 1 ? "has" : "have"} ${verb}.`;
+  }
+
+  const getListHeading = () => {
+    if (isExpiration) return "Expiring certificates:";
+    switch (eventLabel) {
+      case "Issuance":
+        return "Issued certificates:";
+      case "Renewal":
+        return "Renewed certificates:";
+      case "Revocation":
+        return "Revoked certificates:";
+      default:
+        return "Certificates:";
+    }
+  };
+
+  const listHeading = getListHeading();
 
   return (
-    <BaseEmailWrapper title="Certificate Expiration Notice" preview={message} siteUrl={siteUrl}>
+    <BaseEmailWrapper title={title} preview={message} siteUrl={siteUrl}>
       <Heading className="text-black text-[18px] leading-[28px] text-center font-normal p-0 mx-0">
-        <strong>Certificate Expiration Notice</strong>
+        <strong>{title}</strong>
       </Heading>
 
       <Section className="px-[24px] mb-[28px] mt-[36px] pt-[12px] pb-[8px] border border-solid border-gray-200 rounded-md bg-gray-50">
-        <Text className="text-[14px]">
-          Alert <strong className="font-semibold">{alertName}</strong>: You have{" "}
-          {items.length === 1 ? "one" : items.length} {certificateText} that will expire in {daysText}.
-        </Text>
+        <Text className="text-[14px]">{message}</Text>
       </Section>
       <Section className="mb-[28px]">
-        <Text className="text-[14px] font-semibold mb-[12px]">Expiring certificates:</Text>
+        <Text className="text-[14px] font-semibold mb-[12px]">{listHeading}</Text>
         {items.map((item) => (
           <Section
             key={item.serialNumber}
@@ -55,15 +93,16 @@ export const PkiExpirationAlertTemplate = ({
           >
             <Text className="text-[14px] font-semibold m-0 mb-[4px]">{item.friendlyName}</Text>
             <Text className="text-[12px] text-gray-600 m-0 mb-[4px]">Serial: {item.serialNumber}</Text>
-            <Text className="text-[12px] text-gray-600 m-0">Expires: {formatDate(item.expiryDate)}</Text>
+            <Text className="text-[12px] text-gray-600 m-0 mb-[4px]">Expires: {formatDate(item.expiryDate)}</Text>
+            {item.revocationReason && (
+              <Text className="text-[12px] text-red-600 m-0">Revocation Reason: {item.revocationReason}</Text>
+            )}
           </Section>
         ))}
       </Section>
 
       <Section className="text-center mt-[32px] mb-[16px]">
-        <BaseButton href={`${siteUrl}/projects/cert-management/${projectId}/policies`}>
-          View Certificate Alerts
-        </BaseButton>
+        <BaseButton href={viewUrl}>View Certificate Alerts</BaseButton>
       </Section>
     </BaseEmailWrapper>
   );
@@ -88,6 +127,6 @@ PkiExpirationAlertTemplate.PreviewProps = {
     }
   ],
   alertName: "Production SSL Certificate Expiration Alert",
-  projectId: "c3b0ef29-915b-4cb1-8684-65b91b7fe02d",
+  viewUrl: "https://infisical.com/organizations/org-1/projects/cert-manager/proj-1/inventory",
   siteUrl: "https://infisical.com"
 } as PkiExpirationAlertTemplateProps;

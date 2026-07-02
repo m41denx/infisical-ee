@@ -1,46 +1,105 @@
-import { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { z } from "zod";
 
-import { Modal, ModalContent } from "@app/components/v2";
-import { GatewayDeploymentMethodSelect } from "@app/pages/organization/NetworkingPage/components/GatewayTab/components/GatewayDeploymentMethodSelect";
+import { createNotification } from "@app/components/notifications";
+import { Button, FormControl, Input, Modal, ModalClose, ModalContent } from "@app/components/v2";
+import { ROUTE_PATHS } from "@app/const/routes";
+import { useOrganization } from "@app/context";
+import { gatewaysQueryKeys } from "@app/hooks/api/gateways";
+import { useCreateGateway } from "@app/hooks/api/gateways-v2";
+import { slugSchema } from "@app/lib/schemas";
 
-import { GatewayCliDeploymentMethod } from "./GatewayCliDeploymentMethod";
-import { GatewayCliSystemdDeploymentMethod } from "./GatewayCliSystemdDeploymentMethod";
+const formSchema = z.object({
+  name: slugSchema({ field: "name" })
+});
+
+type FormData = z.infer<typeof formSchema>;
 
 type Props = {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
 };
 
-export const GatewayDeploymentInfoMap = {
-  cli: { name: "CLI", image: "SSH.png", component: GatewayCliDeploymentMethod },
-  systemd: { name: "CLI (systemd)", image: "SSH.png", component: GatewayCliSystemdDeploymentMethod }
-} as const;
+const Content = ({ onClose }: { onClose: () => void }) => {
+  const { currentOrg } = useOrganization();
+  const orgId = currentOrg?.id || "";
+  const navigate = useNavigate({ from: ROUTE_PATHS.Organization.NetworkingPage.path });
+  const { data: gateways } = useQuery(gatewaysQueryKeys.listWithTokens());
+  const { mutateAsync: createGateway, isPending } = useCreateGateway();
 
-export type GatewayDeploymentMethod = keyof typeof GatewayDeploymentInfoMap;
+  const {
+    control,
+    handleSubmit,
+    formState: { isSubmitting }
+  } = useForm<FormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { name: "" }
+  });
 
-const Content = () => {
-  const [selectedMethod, setSelectedMethod] = useState<null | GatewayDeploymentMethod>(null);
-
-  if (selectedMethod) {
-    const ComponentToRender = GatewayDeploymentInfoMap[selectedMethod]?.component;
-    if (ComponentToRender) {
-      return <ComponentToRender />;
+  const onSubmit = async ({ name }: FormData) => {
+    const existingNames = gateways?.map((g) => g.name) ?? [];
+    if (existingNames.includes(name.trim())) {
+      createNotification({ type: "error", text: "A gateway with this name already exists." });
+      return;
     }
-  }
 
-  return <GatewayDeploymentMethodSelect onSelect={setSelectedMethod} />;
+    try {
+      const gateway = await createGateway({ name, authMethod: { method: "token" } });
+      onClose();
+      navigate({
+        to: "/organizations/$orgId/networking/gateways/$gatewayId" as const,
+        params: { orgId, gatewayId: gateway.id }
+      });
+    } catch {
+      createNotification({ type: "error", text: "Failed to create gateway" });
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)}>
+      <Controller
+        control={control}
+        name="name"
+        render={({ field, fieldState: { error } }) => (
+          <FormControl
+            label="Name"
+            tooltipText="The name for your gateway."
+            isError={Boolean(error)}
+            errorText={error?.message}
+          >
+            <Input {...field} placeholder="Enter gateway name..." />
+          </FormControl>
+        )}
+      />
+
+      <div className="mt-6 flex items-center">
+        <Button
+          className="mr-4"
+          size="sm"
+          colorSchema="secondary"
+          type="submit"
+          isLoading={isPending || isSubmitting}
+        >
+          Create
+        </Button>
+        <ModalClose asChild>
+          <Button colorSchema="secondary" variant="plain">
+            Cancel
+          </Button>
+        </ModalClose>
+      </div>
+    </form>
+  );
 };
 
 export const GatewayDeployModal = ({ isOpen, onOpenChange }: Props) => {
   return (
     <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
-      <ModalContent
-        className="max-w-2xl"
-        title="Deploy Gateway"
-        subTitle="Select a deployment method to use for the gateway."
-        bodyClassName="overflow-visible"
-      >
-        <Content />
+      <ModalContent className="max-w-md" title="Create Gateway" bodyClassName="overflow-visible">
+        <Content onClose={() => onOpenChange(false)} />
       </ModalContent>
     </Modal>
   );

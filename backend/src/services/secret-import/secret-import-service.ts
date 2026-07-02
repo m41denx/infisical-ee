@@ -14,6 +14,7 @@ import {
   ProjectPermissionSecretActions,
   ProjectPermissionSub
 } from "@app/ee/services/permission/project-permission";
+import { ProjectEvents } from "@app/ee/services/project-events/project-events-types";
 import { getReplicationFolderName } from "@app/ee/services/secret-replication/secret-replication-service";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 
@@ -44,7 +45,7 @@ type TSecretImportServiceFactoryDep = {
   secretImportDAL: TSecretImportDALFactory;
   folderDAL: TSecretFolderDALFactory;
   secretDAL: Pick<TSecretDALFactory, "find">;
-  secretV2BridgeDAL: Pick<TSecretV2BridgeDALFactory, "find" | "invalidateSecretCacheByProjectId">;
+  secretV2BridgeDAL: Pick<TSecretV2BridgeDALFactory, "find" | "findByFolderIds" | "invalidateSecretCacheByProjectId">;
   projectBotService: Pick<TProjectBotServiceFactory, "getBotKey">;
   projectDAL: Pick<TProjectDALFactory, "checkProjectUpgradeStatus">;
   projectEnvDAL: TProjectEnvDALFactory;
@@ -127,6 +128,10 @@ export const secretImportServiceFactory = ({
       });
     }
 
+    if (environment === data.environment && secretPath === data.path) {
+      throw new BadRequestError({ message: "Cyclic import not allowed" });
+    }
+
     const sourceFolder = await folderDAL.findBySecretPath(projectId, data.environment, data.path);
     if (sourceFolder) {
       const existingImport = await secretImportDAL.findOne({
@@ -170,6 +175,7 @@ export const secretImportServiceFactory = ({
         orgId: actorOrgId,
         projectId,
         environmentSlug: importEnv.slug,
+        environmentName: importEnv.name,
         pickOnlyImportIds: [secImport.id],
         actorId,
         actor
@@ -180,14 +186,17 @@ export const secretImportServiceFactory = ({
         orgId: actorOrgId,
         projectId,
         environmentSlug: environment,
+        environmentName: folder.environment.name,
         actorId,
         actor,
-        event: {
-          importMutation: {
+        events: [
+          {
+            type: ProjectEvents.SecretImportMutation,
+            projectId,
             secretPath,
             environment
           }
-        }
+        ]
       });
     }
 
@@ -239,6 +248,15 @@ export const secretImportServiceFactory = ({
       });
     }
 
+    // check if user has permission to import from target path when source is changing
+    if (data.environment || data.path) {
+      const newSourcePath = data.path || secImpDoc.importPath;
+      throwIfMissingSecretReadValueOrDescribePermission(permission, ProjectPermissionSecretActions.DescribeSecret, {
+        environment: importedEnv.slug,
+        secretPath: newSourcePath
+      });
+    }
+
     const sourceFolder = await folderDAL.findBySecretPath(
       projectId,
       importedEnv.slug,
@@ -256,14 +274,63 @@ export const secretImportServiceFactory = ({
     const updatedSecImport = await secretImportDAL.transaction(async (tx) => {
       const secImp = await secretImportDAL.findOne({ folderId: folder.id, id });
       if (!secImp) throw ERR_SEC_IMP_NOT_FOUND;
+
+      let finalPosition = data.position;
+
       if (data.position) {
         if (secImp.isReplication) {
-          await secretImportDAL.updateAllPosition(folder.id, secImp.position, data.position, 2, tx);
+          const replicationFolderPath = path.join(secretPath, getReplicationFolderName(secImp.id));
+          const reservedImport = await secretImportDAL.findOne({
+            folderId: folder.id,
+            importEnv: folder.environment.id,
+            importPath: replicationFolderPath,
+            isReserved: true
+          });
+
+          const pairIds = new Set([secImp.id, ...(reservedImport ? [reservedImport.id] : [])]);
+
+          // Fetch all imports for this folder in position order.
+          const allImports = await secretImportDAL.find({ folderId: folder.id }, tx);
+          const otherImports = allImports
+            .filter((imp) => !pairIds.has(imp.id))
+            .sort((a, b) => Number(a.position) - Number(b.position));
+
+          // Determine where in the compacted list to insert the pair.
+          // data.position is the DB position of the displaced item in the original ordering.
+          let insertIndex = otherImports.length;
+          if (data.position > secImp.position) {
+            // Moving forward: pair goes after the displaced item
+            const idx = otherImports.findIndex((imp) => Number(imp.position) === data.position);
+            if (idx !== -1) insertIndex = idx + 1;
+          } else {
+            // Moving backward: pair goes before the displaced item
+            const idx = otherImports.findIndex((imp) => Number(imp.position) === data.position);
+            if (idx !== -1) insertIndex = idx;
+          }
+
+          // Build new positions for all imports: other imports get sequential positions
+          // with a 2-slot gap at insertIndex for the replication pair.
+          const positionUpdates: { id: string; position: number }[] = [];
+          let nextPos = 1;
+          for (let i = 0; i < otherImports.length; i += 1) {
+            if (i === insertIndex) nextPos += 2;
+            positionUpdates.push({ id: otherImports[i].id, position: nextPos });
+            nextPos += 1;
+          }
+
+          // The pair occupies the 2-slot gap at insertIndex + 1.
+          finalPosition = insertIndex + 1;
+          positionUpdates.push({ id: secImp.id, position: finalPosition });
+          if (reservedImport) {
+            positionUpdates.push({ id: reservedImport.id, position: finalPosition + 1 });
+          }
+
+          // Apply all position changes atomically to avoid unique constraint violations.
+          await secretImportDAL.bulkUpdatePosition(positionUpdates, tx);
         } else {
           await secretImportDAL.updateAllPosition(folder.id, secImp.position, data.position, 1, tx);
         }
-      }
-      if (secImp.isReplication) {
+      } else if (secImp.isReplication) {
         const replicationFolderPath = path.join(secretPath, getReplicationFolderName(secImp.id));
         await secretImportDAL.update(
           {
@@ -272,16 +339,15 @@ export const secretImportServiceFactory = ({
             importPath: replicationFolderPath,
             isReserved: true
           },
-          { position: data?.position ? data.position + 1 : undefined },
+          { position: undefined },
           tx
         );
       }
+
       const [doc] = await secretImportDAL.update(
         { id, folderId: folder.id },
         {
-          // when moving replicated import, the position is meant for reserved import
-          // replicated one should always be behind the reserved import
-          position: data.position,
+          position: finalPosition,
           importEnv: data?.environment ? importedEnv.id : undefined,
           importPath: data?.path
         },
@@ -361,14 +427,17 @@ export const secretImportServiceFactory = ({
       orgId: actorOrgId,
       projectId,
       environmentSlug: environment,
+      environmentName: folder.environment.name,
       actor,
       actorId,
-      event: {
-        importMutation: {
+      events: [
+        {
+          type: ProjectEvents.SecretImportMutation,
+          projectId,
           secretPath,
           environment
         }
-      }
+      ]
     });
 
     await secretV2BridgeDAL.invalidateSecretCacheByProjectId(projectId);
@@ -443,6 +512,7 @@ export const secretImportServiceFactory = ({
         secretPath: secretImportDoc.importPath,
         projectId,
         environmentSlug: secretImportDoc.importEnv.slug,
+        environmentName: secretImportDoc.importEnv.name,
         pickOnlyImportIds: [secretImportDoc.id],
         actorId,
         actor
@@ -531,11 +601,10 @@ export const secretImportServiceFactory = ({
       throw new NotFoundError({
         message: `Folder with path '${secretPath}' not found on environments with slugs '${environments.join(", ")}'`
       });
-    const counts = await Promise.all(
-      folders.map((folder) => secretImportDAL.getProjectImportCount({ folderId: folder.id, search }))
+    return secretImportDAL.getUniqueImportCountByFolderIds(
+      folders.map((folder) => folder.id),
+      search
     );
-
-    return counts.reduce((sum, count) => sum + count, 0);
   };
 
   const getImports = async ({

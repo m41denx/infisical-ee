@@ -54,7 +54,6 @@ export const PkiCollectionPage = () => {
     if (!projectId) return;
 
     await deletePkiCollection({
-      projectId,
       collectionId: collectionIdToDelete
     });
 
@@ -64,7 +63,7 @@ export const PkiCollectionPage = () => {
     });
     handlePopUpClose("deletePkiCollection");
     navigate({
-      to: "/organizations/$orgId/projects/cert-management/$projectId/policies",
+      to: "/organizations/$orgId/projects/cert-manager/$projectId/policies",
       params: {
         orgId: currentOrg.id,
         projectId: params.projectId
@@ -77,7 +76,7 @@ export const PkiCollectionPage = () => {
       {data && (
         <div className="mx-auto mb-6 w-full max-w-8xl">
           <Link
-            to="/organizations/$orgId/projects/cert-management/$projectId/policies"
+            to="/organizations/$orgId/projects/cert-manager/$projectId/policies"
             params={{
               orgId: currentOrg.id,
               projectId: params.projectId

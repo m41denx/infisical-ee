@@ -4,26 +4,28 @@ import { Knex } from "knex";
 import { AccessScope, OrganizationActionScope } from "@app/db/schemas";
 import { OrgPermissionActions, OrgPermissionSubjects } from "@app/ee/services/permission/org-permission";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
+import { getConfig } from "@app/lib/config/env";
 import { crypto } from "@app/lib/crypto";
 import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
+import { sanitizeEmail, validateEmail } from "@app/lib/validator";
 import { TAuthTokenServiceFactory } from "@app/services/auth-token/auth-token-service";
 import { TokenType } from "@app/services/auth-token/auth-token-types";
 import { TOrgDALFactory } from "@app/services/org/org-dal";
 import { SmtpTemplates, TSmtpService } from "@app/services/smtp/smtp-service";
 
-import { AuthMethod, AuthTokenType } from "../auth/auth-type";
+import { ActorType, AuthMethod, AuthModeSignUpTokenPayload, AuthTokenType } from "../auth/auth-type";
 import { TGroupProjectDALFactory } from "../group-project/group-project-dal";
 import { TMembershipUserDALFactory } from "../membership-user/membership-user-dal";
 import { TUserAliasDALFactory } from "../user-alias/user-alias-dal";
 import { TUserDALFactory } from "./user-dal";
-import { TListUserGroupsDTO, TUpdateUserEmailDTO, TUpdateUserMfaDTO } from "./user-types";
+import { TListUserGroupsDTO, TUpdateUserEmailDTO, TUpdateUserMfaDTO, TVerifyCurrentEmailOTPDTO } from "./user-types";
 
 type TUserServiceFactoryDep = {
   userDAL: Pick<
     TUserDALFactory,
     | "find"
-    | "findUserByUsername"
+    | "findOne"
     | "findById"
     | "transaction"
     | "updateById"
@@ -36,7 +38,7 @@ type TUserServiceFactoryDep = {
     | "findAllMyAccounts"
   >;
   groupProjectDAL: Pick<TGroupProjectDALFactory, "findByUserId">;
-  orgDAL: Pick<TOrgDALFactory, "findById" | "find">;
+  orgDAL: Pick<TOrgDALFactory, "findById" | "find" | "findEffectiveOrgMembership" | "findEffectiveOrgMemberships">;
   membershipUserDAL: Pick<TMembershipUserDALFactory, "find" | "insertMany" | "findOne" | "updateById">;
   tokenService: Pick<TAuthTokenServiceFactory, "createTokenForUser" | "validateTokenForUser" | "revokeAllMySessions">;
   smtpService: Pick<TSmtpService, "sendMail">;
@@ -57,29 +59,25 @@ export const userServiceFactory = ({
   userAliasDAL
 }: TUserServiceFactoryDep) => {
   const sendEmailVerificationCode = async (token: string) => {
-    const { authType, aliasId, username, authTokenType } = crypto.jwt().decode(token) as {
-      authType: string;
-      aliasId?: string;
-      username: string;
-      authTokenType: AuthTokenType;
-    };
-    if (authTokenType !== AuthTokenType.PROVIDER_TOKEN) throw new BadRequestError({ name: "Invalid auth token type" });
+    const config = getConfig();
 
-    // akhilmhdh: case sensitive email resolution
-    const users = await userDAL.findUserByUsername(username);
-    const user = users?.length > 1 ? users.find((el) => el.username === username) : users?.[0];
-    if (!user) throw new NotFoundError({ name: `User with username '${username}' not found` });
+    const { aliasId, userId, authTokenType } = crypto
+      .jwt()
+      .verify(token, config.AUTH_SECRET) as AuthModeSignUpTokenPayload;
+    if (authTokenType !== AuthTokenType.SIGNUP_TOKEN) throw new BadRequestError({ name: "Invalid auth token type" });
+
+    const user = await userDAL.findById(userId);
+    if (!user) throw new BadRequestError({ message: "Invalid token" });
+
     let { isEmailVerified } = user;
     if (aliasId) {
-      const userAlias = await userAliasDAL.findOne({ userId: user.id, aliasType: authType, id: aliasId });
+      const userAlias = await userAliasDAL.findOne({ userId: user.id, id: aliasId });
       if (!userAlias) throw new NotFoundError({ name: `User alias with ID '${aliasId}' not found` });
       isEmailVerified = userAlias.isEmailVerified;
     }
 
-    if (!user.email)
-      throw new BadRequestError({ name: "Failed to send email verification code due to no email on user" });
-    if (isEmailVerified)
-      throw new BadRequestError({ name: "Failed to send email verification code due to email already verified" });
+    if (!user.email) throw new BadRequestError({ message: "Invalid token" });
+    if (isEmailVerified) throw new BadRequestError({ name: "Invalid token" });
 
     const userToken = await tokenService.createTokenForUser({
       type: TokenType.TOKEN_EMAIL_VERIFICATION,
@@ -89,53 +87,11 @@ export const userServiceFactory = ({
 
     await smtpService.sendMail({
       template: SmtpTemplates.EmailVerification,
-      subjectLine: "Infisical confirmation code",
+      subjectLine: `Infisical confirmation code: ${userToken}`,
       recipients: [user.email],
       substitutions: {
         code: userToken
       }
-    });
-  };
-
-  const verifyEmailVerificationCode = async (username: string, code: string) => {
-    // akhilmhdh: case sensitive email resolution
-    const usersByusername = await userDAL.findUserByUsername(username);
-
-    logger.info(
-      usersByusername.map((user) => ({
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        isEmailVerified: user.isEmailVerified
-      })),
-      `Verify email users: [username=${username}]`
-    );
-
-    const user =
-      usersByusername?.length > 1 ? usersByusername.find((el) => el.username === username) : usersByusername?.[0];
-    if (!user) throw new NotFoundError({ name: `User with username '${username}' not found` });
-    if (!user.email)
-      throw new BadRequestError({ name: "Failed to verify email verification code due to no email on user" });
-
-    const token = await tokenService.validateTokenForUser({
-      type: TokenType.TOKEN_EMAIL_VERIFICATION,
-      userId: user.id,
-      code
-    });
-
-    if (token?.aliasId) {
-      const userAlias = await userAliasDAL.findOne({ userId: user.id, id: token.aliasId });
-      if (!userAlias) throw new NotFoundError({ name: `User alias with ID '${token.aliasId}' not found` });
-      if (userAlias?.isEmailVerified)
-        throw new BadRequestError({ name: "Failed to verify email verification code due to email already verified" });
-
-      await userAliasDAL.updateById(token.aliasId, { isEmailVerified: true });
-    }
-    const userEmails = user?.email ? await userDAL.find({ email: user.email }) : [];
-
-    await userDAL.updateById(user.id, {
-      isEmailVerified: true,
-      username: userEmails?.length === 1 && userEmails?.[0]?.id === user.id ? user.email.toLowerCase() : undefined
     });
   };
 
@@ -176,7 +132,14 @@ export const userServiceFactory = ({
       throw new BadRequestError({ message: "LDAP auth method cannot be updated", name: "UpdateAuthMethods" });
     }
 
-    const updatedUser = await userDAL.updateById(userId, { authMethods });
+    // When email auth is removed, clear the stored password so no stale credential lingers.
+    // Re-enabling email auth later requires a fresh password via the setup flow.
+    const isRemovingEmailAuth = user.authMethods?.includes(AuthMethod.EMAIL) && !authMethods.includes(AuthMethod.EMAIL);
+
+    const updatedUser = await userDAL.updateById(userId, {
+      authMethods,
+      ...(isRemovingEmailAuth ? { hashedPassword: null } : {})
+    });
     return updatedUser;
   };
 
@@ -201,6 +164,8 @@ export const userServiceFactory = ({
 
   const requestEmailChangeOTP = async ({ userId, newEmail }: TUpdateUserEmailDTO) => {
     const startTime = new Date();
+    const normalizedNewEmail = sanitizeEmail(newEmail);
+    validateEmail(normalizedNewEmail);
     const changeEmailOTP = await userDAL.transaction(async (tx) => {
       const user = await userDAL.findById(userId, tx);
       if (!user)
@@ -208,6 +173,13 @@ export const userServiceFactory = ({
 
       if (user.authMethods?.includes(AuthMethod.LDAP)) {
         throw new BadRequestError({ message: "Cannot update email for LDAP users", name: "RequestEmailChangeOTP" });
+      }
+
+      if (!user.email) {
+        throw new BadRequestError({
+          message: "Cannot change email: no current email address is set on this account.",
+          name: "RequestEmailChangeOTP"
+        });
       }
 
       const hasScimRestriction = await checkUserScimRestriction(userId, tx);
@@ -219,28 +191,29 @@ export const userServiceFactory = ({
       }
 
       // Silently check if another user already has this email - don't send OTP if email is taken
-      const existingUsers = await userDAL.findUserByUsername(newEmail.toLowerCase(), tx);
-      const existingUser = existingUsers?.find((u) => u.id !== userId);
+      const existingUser = await userDAL.findOne({ username: normalizedNewEmail }, tx);
       if (!existingUser) {
-        // Generate 6-digit OTP
+        // Step 1 of 2: send OTP to the CURRENT email so the legitimate owner must approve
+        // the change before any code is sent to the new address.
         const otpCode = await tokenService.createTokenForUser({
-          type: TokenType.TOKEN_EMAIL_CHANGE_OTP,
+          type: TokenType.TOKEN_EMAIL_CHANGE_CURRENT_OTP,
           userId,
           payload: newEmail.toLowerCase()
         });
 
-        // Send OTP to NEW email address
         await smtpService.sendMail({
-          template: SmtpTemplates.EmailVerification,
-          subjectLine: "Infisical email change verification",
-          recipients: [newEmail.toLowerCase()],
+          template: SmtpTemplates.EmailChangeRequestNotification,
+          subjectLine: "Confirm your Infisical email change",
+          recipients: [user.email],
           substitutions: {
+            currentEmail: user.email,
+            requestedEmail: newEmail.toLowerCase(),
             code: otpCode
           }
         });
       }
 
-      return { success: true, message: "Verification code sent to new email address" };
+      return { success: true, message: "Verification code sent to current email address" };
     });
     // Force this function to have a minimum execution time of 2 seconds to avoid possible information disclosure about existing users
     const endTime = new Date();
@@ -253,7 +226,74 @@ export const userServiceFactory = ({
     return changeEmailOTP;
   };
 
-  const updateUserEmail = async ({ userId, newEmail, otpCode }: TUpdateUserEmailDTO & { otpCode: string }) => {
+  const verifyCurrentEmailOTP = async ({ userId, otpCode }: TVerifyCurrentEmailOTPDTO) => {
+    return userDAL.transaction(async (tx) => {
+      const user = await userDAL.findById(userId, tx);
+      if (!user)
+        throw new NotFoundError({ message: `User with ID '${userId}' not found`, name: "VerifyCurrentEmailOTP" });
+
+      if (user.authMethods?.includes(AuthMethod.LDAP)) {
+        throw new BadRequestError({ message: "Cannot update email for LDAP users", name: "VerifyCurrentEmailOTP" });
+      }
+
+      const hasScimRestriction = await checkUserScimRestriction(userId, tx);
+      if (hasScimRestriction) {
+        throw new BadRequestError({
+          message: "Email changes are disabled because SCIM is enabled for one or more of your organizations",
+          name: "VerifyCurrentEmailOTP"
+        });
+      }
+
+      let tokenData;
+      try {
+        tokenData = await tokenService.validateTokenForUser({
+          type: TokenType.TOKEN_EMAIL_CHANGE_CURRENT_OTP,
+          userId,
+          code: otpCode
+        });
+      } catch (error) {
+        throw new BadRequestError({ message: "Invalid verification code", name: "VerifyCurrentEmailOTP" });
+      }
+
+      const newEmail = tokenData?.payload;
+      if (!newEmail) {
+        throw new BadRequestError({ message: "Invalid verification code", name: "VerifyCurrentEmailOTP" });
+      }
+
+      // Re-check availability — someone else may have claimed this email since the request was issued
+      const existingUser = await userDAL.findOne({ username: newEmail }, tx);
+      if (existingUser) {
+        throw new BadRequestError({ message: "Email is no longer available", name: "VerifyCurrentEmailOTP" });
+      }
+
+      // Step 2 of 2: now that current-email control is proven, send OTP to the NEW address
+      const newEmailOtpCode = await tokenService.createTokenForUser({
+        type: TokenType.TOKEN_EMAIL_CHANGE_OTP,
+        userId,
+        payload: newEmail
+      });
+
+      await smtpService.sendMail({
+        template: SmtpTemplates.EmailVerification,
+        subjectLine: "Infisical email change verification",
+        recipients: [newEmail],
+        substitutions: {
+          code: newEmailOtpCode
+        }
+      });
+
+      return { success: true, newEmail };
+    });
+  };
+
+  const updateUserEmail = async ({
+    userId,
+    newEmail: unsanitizedEmail,
+    otpCode
+  }: TUpdateUserEmailDTO & { otpCode: string }) => {
+    const newEmail = sanitizeEmail(unsanitizedEmail);
+    validateEmail(newEmail);
+
     const changedUser = await userDAL.transaction(async (tx) => {
       const user = await userDAL.findById(userId, tx);
       if (!user) throw new NotFoundError({ message: `User with ID '${userId}' not found`, name: "UpdateUserEmail" });
@@ -289,8 +329,7 @@ export const userServiceFactory = ({
       }
 
       // Final check if another user has this email
-      const existingUsers = await userDAL.findUserByUsername(newEmail.toLowerCase(), tx);
-      const existingUser = existingUsers?.find((u) => u.id !== userId);
+      const existingUser = await userDAL.findOne({ username: newEmail }, tx);
       if (existingUser) {
         throw new BadRequestError({ message: "Email is no longer available", name: "UpdateUserEmail" });
       }
@@ -345,11 +384,30 @@ export const userServiceFactory = ({
 
     return {
       ...user,
-      encryptionVersion: user.encryptionVersion!
+      hashedPassword: null,
+      encryptionVersion: 2
     };
   };
 
   const deleteUser = async (userId: string) => {
+    // If the deleting user is the only remaining server admin, block self-deletion.
+    // The super_admin table's `initialized` flag is not reset on user delete, so
+    // letting the last super admin self-delete leaves /admin/signup permanently
+    // redirecting to /login — the instance becomes unrecoverable without direct
+    // DB intervention (#6091). The super-admin-service.deleteUser path enforces
+    // the same guard for admin-initiated deletes; this mirrors it for self-delete.
+    const userToDelete = await userDAL.findById(userId);
+
+    if (userToDelete?.superAdmin) {
+      const superAdmins = await userDAL.find({ superAdmin: true });
+      if (superAdmins.length === 1 && superAdmins[0].id === userId) {
+        throw new BadRequestError({
+          message:
+            "Cannot delete the only server admin on this instance. Promote another user to server admin before deleting this account."
+        });
+      }
+    }
+
     const user = await userDAL.deleteById(userId);
 
     try {
@@ -401,31 +459,41 @@ export const userServiceFactory = ({
   };
 
   const getUserProjectFavorites = async (userId: string, orgId: string) => {
-    const orgMembership = await membershipUserDAL.findOne({
-      scope: AccessScope.Organization,
-      actorUserId: userId,
-      scopeOrgId: orgId
+    const orgMemberships = await orgDAL.findEffectiveOrgMemberships({
+      actorType: ActorType.USER,
+      actorId: userId,
+      orgId
     });
 
-    if (!orgMembership) {
+    if (!orgMemberships.length) {
       throw new ForbiddenRequestError({
         message: "User does not belong in the organization."
       });
     }
 
-    return { projectFavorites: orgMembership.projectFavorites || [] };
+    // Project favorites are stored on the user's direct membership row; group-only members have no favorites
+    const directMembership = orgMemberships.find((m) => m.actorUserId === userId);
+    const projectFavorites = directMembership?.projectFavorites ?? [];
+    return { projectFavorites };
   };
 
   const updateUserProjectFavorites = async (userId: string, orgId: string, projectIds: string[]) => {
-    const orgMembership = await membershipUserDAL.findOne({
-      scope: AccessScope.Organization,
-      actorUserId: userId,
-      scopeOrgId: orgId
+    const orgMemberships = await orgDAL.findEffectiveOrgMemberships({
+      actorType: ActorType.USER,
+      actorId: userId,
+      orgId
     });
 
-    if (!orgMembership) {
+    if (!orgMemberships.length) {
       throw new ForbiddenRequestError({
         message: "User does not belong in the organization."
+      });
+    }
+
+    const directMembership = orgMemberships.find((m) => m.actorUserId === userId);
+    if (!directMembership) {
+      throw new ForbiddenRequestError({
+        message: "Project favorites can only be updated when you have direct membership in the organization."
       });
     }
 
@@ -442,7 +510,7 @@ export const userServiceFactory = ({
       (projectMembership) => projectMembership.scopeProjectId as string
     );
 
-    const updatedOrgMembership = await membershipUserDAL.updateById(orgMembership.id, {
+    const updatedOrgMembership = await membershipUserDAL.updateById(directMembership.id, {
       projectFavorites: memberProjectFavorites
     });
 
@@ -451,9 +519,8 @@ export const userServiceFactory = ({
 
   const listUserGroups = async ({ username, actorOrgId, actor, actorId, actorAuthMethod }: TListUserGroupsDTO) => {
     // akhilmhdh: case sensitive email resolution
-    const usersByusername = await userDAL.findUserByUsername(username);
-    const user =
-      usersByusername?.length > 1 ? usersByusername.find((el) => el.username === username) : usersByusername?.[0];
+    const user = await userDAL.findOne({ username });
+
     if (!user) throw new NotFoundError({ name: `User with username '${username}' not found` });
 
     // This makes it so the user can always read information about themselves, but no one else if they don't have the Members Read permission.
@@ -475,11 +542,11 @@ export const userServiceFactory = ({
 
   return {
     sendEmailVerificationCode,
-    verifyEmailVerificationCode,
     updateUserMfa,
     updateUserName,
     updateAuthMethods,
     requestEmailChangeOTP,
+    verifyCurrentEmailOTP,
     updateUserEmail,
     deleteUser,
     getMe,

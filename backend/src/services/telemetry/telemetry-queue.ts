@@ -2,8 +2,8 @@ import { PostHog } from "posthog-node";
 
 import { TKeyStoreFactory } from "@app/keystore/keystore";
 import { getConfig } from "@app/lib/config/env";
+import { CronJobName, TCronJobFactory } from "@app/lib/cron/cron-job";
 import { logger } from "@app/lib/logger";
-import { QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue";
 
 import { getServerCfg } from "../super-admin/super-admin-service";
 import { TTelemetryDALFactory } from "./telemetry-dal";
@@ -15,7 +15,7 @@ import {
 import { PostHogEventTypes } from "./telemetry-types";
 
 type TTelemetryQueueServiceFactoryDep = {
-  queueService: TQueueServiceFactory;
+  cronJob: TCronJobFactory;
   keyStore: Pick<TKeyStoreFactory, "getItem" | "deleteItem">;
   telemetryDAL: TTelemetryDALFactory;
   telemetryService: TTelemetryServiceFactory;
@@ -24,7 +24,7 @@ type TTelemetryQueueServiceFactoryDep = {
 export type TTelemetryQueueServiceFactory = ReturnType<typeof telemetryQueueServiceFactory>;
 
 export const telemetryQueueServiceFactory = ({
-  queueService,
+  cronJob,
   keyStore,
   telemetryDAL,
   telemetryService
@@ -35,75 +35,55 @@ export const telemetryQueueServiceFactory = ({
       ? new PostHog(appCfg.POSTHOG_PROJECT_API_KEY, { host: appCfg.POSTHOG_HOST, flushAt: 1, flushInterval: 0 })
       : undefined;
 
-  queueService.start(QueueName.TelemetryInstanceStats, async () => {
-    const { instanceId } = await getServerCfg();
-    const telemtryStats = await telemetryDAL.getTelemetryInstanceStats();
-    // parse the redis values into integer
-    const numberOfSecretOperationsMade = parseInt((await keyStore.getItem(TELEMETRY_SECRET_OPERATIONS_KEY)) || "0", 10);
-    const numberOfSecretProcessed = parseInt((await keyStore.getItem(TELEMETRY_SECRET_PROCESSED_KEY)) || "0", 10);
-    const stats = { ...telemtryStats, numberOfSecretProcessed, numberOfSecretOperationsMade };
-
-    // send to postHog
-    postHog?.capture({
-      event: PostHogEventTypes.TelemetryInstanceStats,
-      distinctId: instanceId,
-      properties: stats
-    });
-    // reset the stats
-    await keyStore.deleteItem(TELEMETRY_SECRET_PROCESSED_KEY);
-    await keyStore.deleteItem(TELEMETRY_SECRET_OPERATIONS_KEY);
-  });
-
-  queueService.start(QueueName.TelemetryAggregatedEvents, async () => {
-    await telemetryService.processAggregatedEvents();
-  });
-
   // every day at midnight a telemetry job executes on self-hosted instances
-  // this sends some telemetry information like instance id secrets operated etc
-  const startTelemetryCheck = async () => {
-    // this is a fast way to check its cloud or not
-    if (appCfg.INFISICAL_CLOUD) return;
-    // clear previous job
-    await queueService.stopRepeatableJob(
-      QueueName.TelemetryInstanceStats,
-      QueueJobs.TelemetryInstanceStats,
-      { pattern: "0 0 * * *", utc: true },
-      QueueName.TelemetryInstanceStats // just a job id
-    );
+  const startTelemetryCheck = () => {
+    // cloud instances skip telemetry stats
+    if (appCfg.INFISICAL_CLOUD || !postHog) return;
 
-    if (postHog) {
-      await queueService.queue(QueueName.TelemetryInstanceStats, QueueJobs.TelemetryInstanceStats, undefined, {
-        jobId: QueueName.TelemetryInstanceStats,
-        repeat: { pattern: "0 0 * * *", utc: true }
-      });
-    }
+    cronJob.register({
+      name: CronJobName.TelemetryInstanceStats,
+      pattern: "0 0 * * *",
+      runHashTtlS: 3 * 24 * 60 * 60,
+      handler: async () => {
+        const { instanceId } = await getServerCfg();
+        const telemetryStats = await telemetryDAL.getTelemetryInstanceStats();
+        const numberOfSecretOperationsMade = parseInt(
+          (await keyStore.getItem(TELEMETRY_SECRET_OPERATIONS_KEY)) || "0",
+          10
+        );
+        const numberOfSecretProcessed = parseInt((await keyStore.getItem(TELEMETRY_SECRET_PROCESSED_KEY)) || "0", 10);
+        const stats = {
+          ...telemetryStats,
+          numberOfSecretProcessed,
+          numberOfSecretOperationsMade,
+          ...(appCfg.INFISICAL_PLATFORM_VERSION ? { infisicalVersion: appCfg.INFISICAL_PLATFORM_VERSION } : {})
+        };
+
+        postHog.capture({
+          event: PostHogEventTypes.TelemetryInstanceStats,
+          distinctId: instanceId,
+          properties: stats
+        });
+        await keyStore.deleteItem(TELEMETRY_SECRET_PROCESSED_KEY);
+        await keyStore.deleteItem(TELEMETRY_SECRET_OPERATIONS_KEY);
+      }
+    });
   };
 
-  const startAggregatedEventsJob = async () => {
-    // clear previous aggregated events job
-    await queueService.stopRepeatableJob(
-      QueueName.TelemetryAggregatedEvents,
-      QueueJobs.TelemetryAggregatedEvents,
-      { pattern: "*/5 * * * *", utc: true },
-      QueueName.TelemetryAggregatedEvents // just a job id
-    );
+  const startAggregatedEventsJob = () => {
+    if (!postHog) return;
 
-    if (postHog) {
-      // Start aggregated events job (runs every five minutes)
-      await queueService.queue(QueueName.TelemetryAggregatedEvents, QueueJobs.TelemetryAggregatedEvents, undefined, {
-        jobId: QueueName.TelemetryAggregatedEvents,
-        repeat: { pattern: "*/5 * * * *", utc: true }
-      });
-    }
+    cronJob.register({
+      name: CronJobName.TelemetryAggregatedEvents,
+      pattern: "*/5 * * * *",
+      runHashTtlS: 60 * 60,
+      handler: async () => {
+        await telemetryService.processAggregatedEvents();
+      }
+    });
   };
 
-  queueService.listen(QueueName.TelemetryInstanceStats, "failed", (err) => {
-    logger.error(err?.failedReason, `${QueueName.TelemetryInstanceStats}: failed`);
-  });
-
-  queueService.listen(QueueName.TelemetryAggregatedEvents, "failed", (err) => {
-    logger.error(err?.failedReason, `${QueueName.TelemetryAggregatedEvents}: failed`);
-  });
+  logger.info("telemetry queue service initialized");
 
   return {
     startTelemetryCheck,

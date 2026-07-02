@@ -16,6 +16,7 @@ export type TCmek = {
   projectId: string;
   isDisabled: boolean;
   isReserved: boolean;
+  isExportable: boolean;
   orgId: string;
   version: number;
   createdAt: string;
@@ -26,11 +27,13 @@ type ProjectRef = { projectId: string };
 type KeyRef = { keyId: string };
 
 export type TCreateCmek = Pick<TCmek, "name" | "description" | "encryptionAlgorithm" | "keyUsage"> &
+  Partial<Pick<TCmek, "isExportable">> &
   ProjectRef;
 export type TUpdateCmek = KeyRef &
   Partial<Pick<TCmek, "name" | "description" | "isDisabled">> &
   ProjectRef;
 export type TDeleteCmek = KeyRef & ProjectRef;
+export type TRotateCmek = KeyRef & ProjectRef;
 
 export type TCmekEncrypt = KeyRef & { plaintext: string; isBase64Encoded?: boolean };
 export type TCmekDecrypt = KeyRef & { ciphertext: string };
@@ -76,13 +79,67 @@ export type TCmekDecryptResponse = {
   plaintext: string;
 };
 
+export type TCmekGetPublicKeyDTO = {
+  keyId: string;
+};
+
+export type TCmekGetPublicKeyResponse = {
+  publicKey: string;
+};
+
+export type TCmekGetPrivateKeyDTO = {
+  keyId: string;
+};
+
+export type TCmekGetPrivateKeyResponse = {
+  privateKey: string;
+};
+
+export type TCmekBulkExportPrivateKeysDTO = {
+  keyIds: string[];
+};
+
+export type TCmekBulkExportedKey = {
+  keyId: string;
+  name: string;
+  keyUsage: KmsKeyUsage;
+  algorithm: AsymmetricKeyAlgorithm | SymmetricKeyAlgorithm;
+  privateKey: string;
+  publicKey?: string;
+};
+
+export type TCmekBulkExportPrivateKeysResponse = {
+  keys: TCmekBulkExportedKey[];
+};
+
+export type TCmekBulkImportKeyEntry = {
+  name: string;
+  keyUsage: KmsKeyUsage;
+  encryptionAlgorithm: AsymmetricKeyAlgorithm | SymmetricKeyAlgorithm;
+  keyMaterial: string;
+  isExportable?: boolean;
+};
+
+export type TCmekBulkImportKeysDTO = {
+  projectId: string;
+  keys: TCmekBulkImportKeyEntry[];
+};
+
+export type TCmekBulkImportKeysResponse = {
+  keys: { id: string; name: string }[];
+  errors: { name: string; message: string }[];
+};
+
 export enum CmekOrderBy {
   Name = "name"
 }
 
 export enum AsymmetricKeyAlgorithm {
   RSA_4096 = "RSA_4096",
-  ECC_NIST_P256 = "ECC_NIST_P256"
+  ECC_NIST_P256 = "ECC_NIST_P256",
+  ML_DSA_44 = "ML_DSA_44",
+  ML_DSA_65 = "ML_DSA_65",
+  ML_DSA_87 = "ML_DSA_87"
 }
 
 // Supported symmetric encrypt/decrypt algorithms
@@ -110,5 +167,10 @@ export enum SigningAlgorithm {
   // ECDSA algorithms
   ECDSA_SHA_256 = "ECDSA_SHA_256",
   ECDSA_SHA_384 = "ECDSA_SHA_384",
-  ECDSA_SHA_512 = "ECDSA_SHA_512"
+  ECDSA_SHA_512 = "ECDSA_SHA_512",
+
+  // ML-DSA (post-quantum) — signing algorithm equals key algorithm
+  ML_DSA_44 = "ML_DSA_44",
+  ML_DSA_65 = "ML_DSA_65",
+  ML_DSA_87 = "ML_DSA_87"
 }

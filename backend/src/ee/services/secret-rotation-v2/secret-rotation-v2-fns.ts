@@ -3,18 +3,30 @@ import { AxiosError } from "axios";
 import { getConfig } from "@app/lib/config/env";
 import { BadRequestError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
+import { TQueueOptions } from "@app/queue/queue-service";
 import { KmsDataKey } from "@app/services/kms/kms-types";
 
 import { AUTH0_CLIENT_SECRET_ROTATION_LIST_OPTION } from "./auth0-client-secret";
 import { AWS_IAM_USER_SECRET_ROTATION_LIST_OPTION } from "./aws-iam-user-secret";
 import { AZURE_CLIENT_SECRET_ROTATION_LIST_OPTION } from "./azure-client-secret";
+import { CONVEX_ACCESS_KEY_ROTATION_LIST_OPTION } from "./convex-access-key";
+import { DATABRICKS_SERVICE_PRINCIPAL_SECRET_ROTATION_LIST_OPTION } from "./databricks-service-principal-secret";
+import {
+  DATADOG_APPLICATION_KEY_SECRET_ROTATION_LIST_OPTION,
+  TDatadogApplicationKeySecretRotation
+} from "./datadog-application-key-secret";
+import { DBT_SERVICE_TOKEN_ROTATION_LIST_OPTION } from "./dbt-service-token";
+import { HP_ILO_ROTATION_LIST_OPTION, THpIloRotation } from "./hp-ilo-rotation";
 import { LDAP_PASSWORD_ROTATION_LIST_OPTION, TLdapPasswordRotation } from "./ldap-password";
+import { MONGODB_CREDENTIALS_ROTATION_LIST_OPTION } from "./mongodb-credentials";
 import { MSSQL_CREDENTIALS_ROTATION_LIST_OPTION } from "./mssql-credentials";
 import { MYSQL_CREDENTIALS_ROTATION_LIST_OPTION } from "./mysql-credentials";
 import { OKTA_CLIENT_SECRET_ROTATION_LIST_OPTION } from "./okta-client-secret";
+import { OPEN_ROUTER_API_KEY_ROTATION_LIST_OPTION } from "./open-router-api-key";
 import { ORACLEDB_CREDENTIALS_ROTATION_LIST_OPTION } from "./oracledb-credentials";
 import { POSTGRES_CREDENTIALS_ROTATION_LIST_OPTION } from "./postgres-credentials";
 import { REDIS_CREDENTIALS_ROTATION_LIST_OPTION } from "./redis-credentials";
+import { SALESFORCE_OAUTH_CREDENTIALS_ROTATION_LIST_OPTION } from "./salesforce-oauth-credentials";
 import { TSecretRotationV2DALFactory } from "./secret-rotation-v2-dal";
 import { SecretRotation, SecretRotationStatus } from "./secret-rotation-v2-enums";
 import { TSecretRotationV2ServiceFactory, TSecretRotationV2ServiceFactoryDep } from "./secret-rotation-v2-service";
@@ -26,6 +38,15 @@ import {
   TSecretRotationV2Raw,
   TUpdateSecretRotationV2DTO
 } from "./secret-rotation-v2-types";
+import { SUPABASE_API_KEY_ROTATION_LIST_OPTION, TSupabaseApiKeyRotation } from "./supabase-api-key";
+import {
+  TUnixLinuxLocalAccountRotation,
+  UNIX_LINUX_LOCAL_ACCOUNT_ROTATION_LIST_OPTION
+} from "./unix-linux-local-account-rotation";
+import {
+  TWindowsLocalAccountRotation,
+  WINDOWS_LOCAL_ACCOUNT_ROTATION_LIST_OPTION
+} from "./windows-local-account-rotation";
 
 const SECRET_ROTATION_LIST_OPTIONS: Record<SecretRotation, TSecretRotationV2ListItem> = {
   [SecretRotation.PostgresCredentials]: POSTGRES_CREDENTIALS_ROTATION_LIST_OPTION,
@@ -37,7 +58,18 @@ const SECRET_ROTATION_LIST_OPTIONS: Record<SecretRotation, TSecretRotationV2List
   [SecretRotation.AwsIamUserSecret]: AWS_IAM_USER_SECRET_ROTATION_LIST_OPTION,
   [SecretRotation.LdapPassword]: LDAP_PASSWORD_ROTATION_LIST_OPTION,
   [SecretRotation.OktaClientSecret]: OKTA_CLIENT_SECRET_ROTATION_LIST_OPTION,
-  [SecretRotation.RedisCredentials]: REDIS_CREDENTIALS_ROTATION_LIST_OPTION
+  [SecretRotation.RedisCredentials]: REDIS_CREDENTIALS_ROTATION_LIST_OPTION,
+  [SecretRotation.MongoDBCredentials]: MONGODB_CREDENTIALS_ROTATION_LIST_OPTION,
+  [SecretRotation.DatabricksServicePrincipalSecret]: DATABRICKS_SERVICE_PRINCIPAL_SECRET_ROTATION_LIST_OPTION,
+  [SecretRotation.UnixLinuxLocalAccount]: UNIX_LINUX_LOCAL_ACCOUNT_ROTATION_LIST_OPTION,
+  [SecretRotation.DbtServiceToken]: DBT_SERVICE_TOKEN_ROTATION_LIST_OPTION,
+  [SecretRotation.WindowsLocalAccount]: WINDOWS_LOCAL_ACCOUNT_ROTATION_LIST_OPTION,
+  [SecretRotation.OpenRouterApiKey]: OPEN_ROUTER_API_KEY_ROTATION_LIST_OPTION,
+  [SecretRotation.HpIloLocalAccount]: HP_ILO_ROTATION_LIST_OPTION,
+  [SecretRotation.SupabaseApiKey]: SUPABASE_API_KEY_ROTATION_LIST_OPTION,
+  [SecretRotation.SalesforceOauthCredentials]: SALESFORCE_OAUTH_CREDENTIALS_ROTATION_LIST_OPTION,
+  [SecretRotation.DatadogApplicationKeySecret]: DATADOG_APPLICATION_KEY_SECRET_ROTATION_LIST_OPTION,
+  [SecretRotation.ConvexAccessKey]: CONVEX_ACCESS_KEY_ROTATION_LIST_OPTION
 };
 
 export const listSecretRotationOptions = () => {
@@ -134,14 +166,19 @@ export const decryptSecretRotationCredentials = async ({
 export const getSecretRotationRotateSecretJobOptions = ({
   id,
   nextRotationAt
-}: Pick<TSecretRotationV2Raw, "id" | "nextRotationAt">) => {
+}: Pick<TSecretRotationV2Raw, "id" | "nextRotationAt">): TQueueOptions => {
   const appCfg = getConfig();
 
   return {
     jobId: `secret-rotation-v2-rotate-${id}`,
-    retryLimit: appCfg.isRotationDevelopmentMode ? 3 : 5,
-    retryBackoff: true,
-    startAfter: nextRotationAt ?? undefined
+    attempts: appCfg.isRotationDevelopmentMode ? 1 : 5,
+    removeOnFail: true,
+    removeOnComplete: true,
+    backoff: {
+      type: "exponential",
+      delay: 1000
+    },
+    delay: nextRotationAt ? Number(nextRotationAt) - Date.now() : undefined
   };
 };
 
@@ -246,6 +283,38 @@ export const parseRotationErrorMessage = (err: unknown): string => {
     : `${errorMessage.substring(0, MAX_MESSAGE_LENGTH - 3)}...`;
 };
 
+export const getWebhookSanitizedErrorMessage = (err: unknown): string => {
+  let errorCategory = null;
+
+  if (err instanceof AxiosError) {
+    const status = err?.response?.status;
+    if (status === 401 || status === 403) {
+      errorCategory = "an authentication/authorization error";
+    } else if (status === 404) {
+      errorCategory = "a not found error";
+    } else if (status === 429) {
+      errorCategory = "a rate limit error";
+    } else if (err.code === "ECONNREFUSED" || err.code === "ECONNRESET" || err.code === "ETIMEDOUT") {
+      errorCategory = "a connection error";
+    } else {
+      errorCategory = `an HTTP error (status ${status ?? "unknown"})`;
+    }
+  } else if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    if (msg.includes("timeout") || msg.includes("etimedout")) {
+      errorCategory = "a timeout error";
+    } else if (msg.includes("econnrefused") || msg.includes("econnreset") || msg.includes("connect")) {
+      errorCategory = "a connection error";
+    } else if (msg.includes("authentication") || msg.includes("unauthorized") || msg.includes("permission")) {
+      errorCategory = "an authentication/authorization error";
+    }
+  }
+
+  return errorCategory
+    ? `Credential rotation failed due to ${errorCategory}. Check the rotation status in the dashboard for more details.`
+    : `Credential rotation failed. Check the rotation status in the dashboard for more details.`;
+};
+
 function haveUnequalProperties<T>(obj1: T, obj2: T, properties: (keyof T)[]): boolean {
   return properties.some((prop) => obj1[prop] !== obj2[prop]);
 }
@@ -266,6 +335,61 @@ export const throwOnImmutableParameterUpdate = (
         )
       ) {
         throw new BadRequestError({ message: "Cannot update rotation method or DN" });
+      }
+      break;
+    case SecretRotation.UnixLinuxLocalAccount:
+      if (
+        haveUnequalProperties(
+          updatePayload.parameters as TUnixLinuxLocalAccountRotation["parameters"],
+          secretRotation.parameters as TUnixLinuxLocalAccountRotation["parameters"],
+          ["rotationMethod", "username"]
+        )
+      ) {
+        throw new BadRequestError({ message: "Cannot update rotation method or username" });
+      }
+      break;
+    case SecretRotation.WindowsLocalAccount:
+      if (
+        haveUnequalProperties(
+          updatePayload.parameters as TWindowsLocalAccountRotation["parameters"],
+          secretRotation.parameters as TWindowsLocalAccountRotation["parameters"],
+          ["rotationMethod", "username"]
+        )
+      ) {
+        throw new BadRequestError({ message: "Cannot update rotation method or username" });
+      }
+      break;
+    case SecretRotation.HpIloLocalAccount:
+      if (
+        haveUnequalProperties(
+          updatePayload.parameters as THpIloRotation["parameters"],
+          secretRotation.parameters as THpIloRotation["parameters"],
+          ["rotationMethod", "username"]
+        )
+      ) {
+        throw new BadRequestError({ message: "Cannot update rotation method or username" });
+      }
+      break;
+    case SecretRotation.SupabaseApiKey:
+      if (
+        haveUnequalProperties(
+          updatePayload.parameters as TSupabaseApiKeyRotation["parameters"],
+          secretRotation.parameters as TSupabaseApiKeyRotation["parameters"],
+          ["projectRef", "keyType"]
+        )
+      ) {
+        throw new BadRequestError({ message: "Cannot update project reference or key type" });
+      }
+      break;
+    case SecretRotation.DatadogApplicationKeySecret:
+      if (
+        haveUnequalProperties(
+          updatePayload.parameters as TDatadogApplicationKeySecretRotation["parameters"],
+          secretRotation.parameters as TDatadogApplicationKeySecretRotation["parameters"],
+          ["serviceAccountId"]
+        )
+      ) {
+        throw new BadRequestError({ message: "Cannot update service account ID" });
       }
       break;
     default:
@@ -295,7 +419,11 @@ export const rotateSecretsFns = async ({
   try {
     const secretRotation = await secretRotationV2DAL.findById(rotationId);
 
-    if (!secretRotation) throw new Error(`Secret rotation ${rotationId} not found`);
+    if (!secretRotation) {
+      // skip rather than throw, so it doesn't retry-storm when a rotation is deleted.
+      logger.info(`secretRotationV2Queue: rotation ${rotationId} not found (deleted?), skipping ${logDetails}`);
+      return;
+    }
 
     if (!secretRotation.isAutoRotationEnabled) {
       logger.info(`secretRotationV2Queue: Skipping Rotation - Auto-Rotation Disabled Since Queue ${logDetails}`);

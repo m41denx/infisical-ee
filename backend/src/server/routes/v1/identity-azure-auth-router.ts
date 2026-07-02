@@ -1,14 +1,19 @@
 import { z } from "zod";
 
-import { IdentityAzureAuthsSchema } from "@app/db/schemas";
+import { IdentityAuthMethod, IdentityAzureAuthsSchema } from "@app/db/schemas";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags, AZURE_AUTH } from "@app/lib/api-docs";
+import { UnauthorizedError } from "@app/lib/errors";
+import { logger } from "@app/lib/logger";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { slugSchema } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
-import { AuthMode } from "@app/services/auth/auth-type";
+import { ActorType, AuthMode } from "@app/services/auth/auth-type";
 import { TIdentityTrustedIp } from "@app/services/identity/identity-types";
 import { validateAzureAuthField } from "@app/services/identity-azure-auth/identity-azure-auth-validators";
 import { isSuperAdmin } from "@app/services/super-admin/super-admin-fns";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider) => {
   server.route({
@@ -19,11 +24,13 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
     },
     schema: {
       hide: false,
+      operationId: "loginWithAzureAuth",
       tags: [ApiDocsTags.AzureAuth],
       description: "Login with Azure Auth for machine identity",
       body: z.object({
         identityId: z.string().trim().describe(AZURE_AUTH.LOGIN.identityId),
-        jwt: z.string()
+        jwt: z.string(),
+        organizationSlug: slugSchema().optional().describe(AZURE_AUTH.LOGIN.organizationSlug)
       }),
       response: {
         200: z.object({
@@ -35,28 +42,80 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
       }
     },
     handler: async (req) => {
-      const { identityAzureAuth, accessToken, identityAccessToken, identity } =
-        await server.services.identityAzureAuth.login(req.body);
+      try {
+        const { identityAzureAuth, accessToken, identityAccessToken, identity } =
+          await server.services.identityAzureAuth.login(req.body);
 
-      await server.services.auditLog.createAuditLog({
-        ...req.auditLogInfo,
-        orgId: identity.orgId,
-        event: {
-          type: EventType.LOGIN_IDENTITY_AZURE_AUTH,
-          metadata: {
-            identityId: identityAzureAuth.identityId,
-            identityAccessTokenId: identityAccessToken.id,
-            identityAzureAuthId: identityAzureAuth.id
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          actor: {
+            type: ActorType.IDENTITY,
+            metadata: {
+              identityId: identityAzureAuth.identityId,
+              name: identity.name
+            }
+          },
+          orgId: identity.orgId,
+          event: {
+            type: EventType.LOGIN_IDENTITY_AZURE_AUTH,
+            metadata: {
+              identityId: identityAzureAuth.identityId,
+              identityAccessTokenId: identityAccessToken.id,
+              identityAzureAuthId: identityAzureAuth.id
+            }
           }
-        }
-      });
+        });
 
-      return {
-        accessToken,
-        tokenType: "Bearer" as const,
-        expiresIn: identityAzureAuth.accessTokenTTL,
-        accessTokenMaxTTL: identityAzureAuth.accessTokenMaxTTL
-      };
+        void server.services.telemetry
+          .sendPostHogEvents({
+            event: PostHogEventTypes.MachineIdentityLogin,
+            distinctId: `identity-${identityAzureAuth.identityId}`,
+            organizationId: identity.orgId,
+            properties: {
+              identityId: identityAzureAuth.identityId,
+              orgId: identity.orgId,
+              authMethod: IdentityAuthMethod.AZURE_AUTH
+            }
+          })
+          .catch((error) => {
+            logger.error(error, `Failed to send telemetry event [identityId=${identityAzureAuth.identityId}]`);
+          });
+
+        return {
+          accessToken,
+          tokenType: "Bearer" as const,
+          expiresIn: identityAzureAuth.accessTokenTTL,
+          accessTokenMaxTTL: identityAzureAuth.accessTokenMaxTTL
+        };
+      } catch (error) {
+        if (
+          error instanceof UnauthorizedError &&
+          error.detail?.orgId &&
+          error.detail?.identityId &&
+          error.detail?.identityName
+        ) {
+          await server.services.auditLog.createAuditLog({
+            ...req.auditLogInfo,
+            actor: {
+              type: ActorType.IDENTITY,
+              metadata: {
+                identityId: error.detail.identityId as string,
+                name: error.detail.identityName as string
+              }
+            },
+            orgId: error.detail.orgId as string,
+            event: {
+              type: EventType.LOGIN_IDENTITY_AZURE_AUTH_FAILED,
+              metadata: {
+                identityId: error.detail.identityId as string,
+                reasonCode: error.detail.reasonCode as string,
+                message: error.message
+              }
+            }
+          });
+        }
+        throw error;
+      }
     }
   });
 
@@ -69,6 +128,7 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "attachAzureAuth",
       tags: [ApiDocsTags.AzureAuth],
       description: "Attach Azure Auth configuration onto machine identity",
       security: [
@@ -151,6 +211,21 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodAttached,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAzureAuth.orgId,
+          properties: {
+            identityId: identityAzureAuth.identityId,
+            orgId: identityAzureAuth.orgId,
+            authMethod: IdentityAuthMethod.AZURE_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAzureAuth.identityId}]`);
+        });
+
       return { identityAzureAuth };
     }
   });
@@ -164,6 +239,7 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "updateAzureAuth",
       tags: [ApiDocsTags.AzureAuth],
       description: "Update Azure Auth configuration on machine identity",
       security: [
@@ -241,6 +317,21 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodUpdated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAzureAuth.orgId,
+          properties: {
+            identityId: identityAzureAuth.identityId,
+            orgId: identityAzureAuth.orgId,
+            authMethod: IdentityAuthMethod.AZURE_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAzureAuth.identityId}]`);
+        });
+
       return { identityAzureAuth };
     }
   });
@@ -254,6 +345,7 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getAzureAuth",
       tags: [ApiDocsTags.AzureAuth],
       description: "Retrieve Azure Auth configuration on machine identity",
       security: [
@@ -303,6 +395,7 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "deleteAzureAuth",
       tags: [ApiDocsTags.AzureAuth],
       description: "Delete Azure Auth configuration on machine identity",
       security: [
@@ -338,6 +431,21 @@ export const registerIdentityAzureAuthRouter = async (server: FastifyZodProvider
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodRevoked,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAzureAuth.orgId,
+          properties: {
+            identityId: identityAzureAuth.identityId,
+            orgId: identityAzureAuth.orgId,
+            authMethod: IdentityAuthMethod.AZURE_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAzureAuth.identityId}]`);
+        });
 
       return { identityAzureAuth };
     }

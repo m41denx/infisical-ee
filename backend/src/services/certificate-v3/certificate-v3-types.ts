@@ -1,8 +1,8 @@
 import { TProjectPermission } from "@app/lib/types";
 
-import { ACMESANType, CertificateOrderStatus } from "../certificate/certificate-types";
 import {
   CertExtendedKeyUsageType,
+  CertificateRequestStatus,
   CertKeyUsageType,
   CertSubjectAlternativeNameType
 } from "../certificate-common/certificate-constants";
@@ -12,6 +12,11 @@ export type TIssueCertificateFromProfileDTO = {
   profileId: string;
   certificateRequest: {
     commonName?: string;
+    organization?: string;
+    organizationalUnit?: string;
+    country?: string;
+    state?: string;
+    locality?: string;
     keyUsages?: CertKeyUsageType[];
     extendedKeyUsages?: CertExtendedKeyUsageType[];
     altNames?: Array<{
@@ -25,8 +30,14 @@ export type TIssueCertificateFromProfileDTO = {
     notAfter?: Date;
     signatureAlgorithm?: string;
     keyAlgorithm?: string;
+    basicConstraints?: {
+      isCA: boolean;
+      pathLength?: number;
+    };
   };
+  metadata?: Array<{ key: string; value: string }>;
   removeRootsFromChain?: boolean;
+  applicationId?: string;
 } & Omit<TProjectPermission, "projectId">;
 
 export type TSignCertificateFromProfileDTO = {
@@ -38,14 +49,20 @@ export type TSignCertificateFromProfileDTO = {
   notBefore?: Date;
   notAfter?: Date;
   enrollmentType: EnrollmentType;
+  metadata?: Array<{ key: string; value: string }>;
   removeRootsFromChain?: boolean;
+  basicConstraints?: {
+    isCA: boolean;
+    pathLength?: number;
+  };
+  applicationId?: string;
 } & Omit<TProjectPermission, "projectId">;
 
 export type TOrderCertificateFromProfileDTO = {
   profileId: string;
   certificateOrder: {
     altNames: Array<{
-      type: ACMESANType;
+      type: CertSubjectAlternativeNameType;
       value: string;
     }>;
     validity: {
@@ -58,53 +75,51 @@ export type TOrderCertificateFromProfileDTO = {
     notAfter?: Date;
     signatureAlgorithm?: string;
     keyAlgorithm?: string;
+    template?: string;
+    csr?: string;
+    organization?: string;
+    organizationalUnit?: string;
+    country?: string;
+    state?: string;
+    locality?: string;
   };
+  metadata?: Array<{ key: string; value: string }>;
   removeRootsFromChain?: boolean;
+  applicationId?: string;
 } & Omit<TProjectPermission, "projectId">;
 
-export type TCertificateFromProfileResponse = {
+export type TCertificateIssuanceResponse = {
+  status: CertificateRequestStatus;
+  certificateRequestId: string;
+  projectId: string;
+  profileName: string;
+  commonName?: string;
+  certificate?: string;
+  issuingCaCertificate?: string;
+  certificateChain?: string;
+  privateKey?: string;
+  serialNumber?: string;
+  certificateId?: string;
+  message?: string;
+};
+
+export type TCertificateIssuedResponse = TCertificateIssuanceResponse & {
+  status: CertificateRequestStatus.ISSUED;
   certificate: string;
   issuingCaCertificate: string;
   certificateChain: string;
-  privateKey?: string;
   serialNumber: string;
   certificateId: string;
-  projectId: string;
-  profileName: string;
-  commonName: string;
 };
 
-export type TCertificateOrderResponse = {
-  orderId: string;
-  status: CertificateOrderStatus;
-  subjectAlternativeNames: Array<{
-    type: ACMESANType;
-    value: string;
-    status: CertificateOrderStatus;
-  }>;
-  authorizations: Array<{
-    identifier: {
-      type: ACMESANType;
-      value: string;
-    };
-    status: CertificateOrderStatus;
-    expires?: string;
-    challenges: Array<{
-      type: string;
-      status: CertificateOrderStatus;
-      url: string;
-      token: string;
-    }>;
-  }>;
-  finalize: string;
-  certificate?: string;
-  projectId: string;
-  profileName: string;
+export type TCertificatePendingApprovalResponse = TCertificateIssuanceResponse & {
+  status: CertificateRequestStatus.PENDING_APPROVAL;
 };
 
 export type TRenewCertificateDTO = {
   certificateId: string;
   removeRootsFromChain?: boolean;
+  certificateRequestId?: string;
 } & Omit<TProjectPermission, "projectId">;
 
 export type TUpdateRenewalConfigDTO = {
@@ -125,4 +140,14 @@ export type TRenewalConfigResponse = {
 export type TDisableRenewalResponse = {
   projectId: string;
   commonName: string;
+};
+
+export type TUpdateCertificateDTO = {
+  certificateId: string;
+  metadata?: Array<{ key: string; value: string }>;
+} & Omit<TProjectPermission, "projectId">;
+
+export type TAltNameEntry = {
+  type: CertSubjectAlternativeNameType;
+  value: string;
 };

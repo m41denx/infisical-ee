@@ -1,16 +1,18 @@
 import { z } from "zod";
 
-import { SecretApprovalRequestsReviewersSchema, SecretApprovalRequestsSchema, UsersSchema } from "@app/db/schemas";
+import { SecretApprovalRequestsReviewersSchema, SecretApprovalRequestsSchema } from "@app/db/schemas";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApprovalStatus, RequestState } from "@app/ee/services/secret-approval-request/secret-approval-request-types";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
-import { SanitizedTagSchema, secretRawSchema } from "@app/server/routes/sanitizedSchemas";
+import { SanitizedTagSchema, SanitizedUserSchema, secretRawSchema } from "@app/server/routes/sanitizedSchemas";
 import { AuthMode } from "@app/services/auth/auth-type";
-import { ResourceMetadataSchema } from "@app/services/resource-metadata/resource-metadata-schema";
+import { ResourceMetadataWithEncryptionSchema } from "@app/services/resource-metadata/resource-metadata-schema";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 const approvalRequestUser = z.object({ userId: z.string().nullable().optional() }).merge(
-  UsersSchema.pick({
+  SanitizedUserSchema.pick({
     email: true,
     firstName: true,
     lastName: true,
@@ -131,7 +133,7 @@ export const registerSecretApprovalRequestRouter = async (server: FastifyZodProv
         id: z.string()
       }),
       body: z.object({
-        bypassReason: z.string().optional()
+        bypassReason: z.string().max(1000).optional()
       }),
       response: {
         200: z.object({
@@ -141,7 +143,7 @@ export const registerSecretApprovalRequestRouter = async (server: FastifyZodProv
     },
     onRequest: verifyAuth([AuthMode.JWT]),
     handler: async (req) => {
-      const { approval, projectId, secretMutationEvents } =
+      const { approval, projectId, secretMutationEvents, isMergedViaBypass, requestedByActor } =
         await server.services.secretApprovalRequest.mergeSecretApprovalRequest({
           actorId: req.permission.id,
           actor: req.permission.type,
@@ -160,7 +162,9 @@ export const registerSecretApprovalRequestRouter = async (server: FastifyZodProv
           metadata: {
             mergedBy: req.permission.id,
             secretApprovalRequestSlug: approval.slug,
-            secretApprovalRequestId: approval.id
+            secretApprovalRequestId: approval.id,
+            isMergedViaBypass,
+            bypassReason: approval.bypassReason ?? undefined
           }
         }
       });
@@ -168,11 +172,28 @@ export const registerSecretApprovalRequestRouter = async (server: FastifyZodProv
       for await (const event of secretMutationEvents) {
         await server.services.auditLog.createAuditLog({
           ...req.auditLogInfo,
+          actor: requestedByActor ?? req.auditLogInfo.actor,
           orgId: req.permission.orgId,
           projectId,
           event
         });
       }
+
+      const timeToMergeSeconds = Math.round((Date.now() - new Date(approval.createdAt).getTime()) / 1000);
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretApprovalRequestMerged,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            requestId: approval.id,
+            projectId,
+            requestSlug: approval.slug,
+            timeToMergeSeconds,
+            ...req.auditLogInfo
+          }
+        })
+        .catch(() => {});
 
       return { approval };
     }
@@ -225,6 +246,20 @@ export const registerSecretApprovalRequestRouter = async (server: FastifyZodProv
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretApprovalRequestReviewed,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            requestId: review.requestId,
+            projectId: review.projectId,
+            reviewStatus: req.body.status,
+            ...req.auditLogInfo
+          }
+        })
+        .catch(() => {});
+
       return { review };
     }
   });
@@ -275,6 +310,20 @@ export const registerSecretApprovalRequestRouter = async (server: FastifyZodProv
           // akhilmhdh: had to apply any to avoid ts issue with this
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.SecretApprovalRequestStatusChanged,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: {
+            requestId: approval.id,
+            projectId: approval.projectId,
+            status: req.body.status,
+            ...req.auditLogInfo
+          }
+        })
+        .catch(() => {});
 
       return { approval };
     }
@@ -337,7 +386,7 @@ export const registerSecretApprovalRequestRouter = async (server: FastifyZodProv
                   isRotatedSecret: z.boolean().optional(),
                   op: z.string(),
                   tags: SanitizedTagSchema.array().optional(),
-                  secretMetadata: ResourceMetadataSchema.nullish(),
+                  secretMetadata: ResourceMetadataWithEncryptionSchema.nullish(),
                   secret: z
                     .object({
                       id: z.string(),
@@ -358,7 +407,7 @@ export const registerSecretApprovalRequestRouter = async (server: FastifyZodProv
                       secretValueHidden: z.boolean(),
                       secretComment: z.string().optional(),
                       tags: SanitizedTagSchema.array().optional(),
-                      secretMetadata: ResourceMetadataSchema.nullish(),
+                      secretMetadata: ResourceMetadataWithEncryptionSchema.nullish(),
                       skipMultilineEncoding: z.boolean().nullish()
                     })
                     .optional()

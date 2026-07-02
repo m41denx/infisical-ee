@@ -1,11 +1,18 @@
 import { useMemo } from "react";
-import { faTrash } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate } from "@tanstack/react-router";
 import { format } from "date-fns";
+import { MoreHorizontalIcon } from "lucide-react";
 
 import { createNotification } from "@app/components/notifications";
-import { IconButton, Td, Tooltip, Tr } from "@app/components/v2";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  IconButton,
+  TableCell,
+  TableRow
+} from "@app/components/v3";
 import { useOrganization } from "@app/context";
 import { getProjectBaseURL } from "@app/helpers/project";
 import { formatProjectRoleName } from "@app/helpers/roles";
@@ -47,8 +54,7 @@ export const IdentityProjectRow = ({
   }, [workspaces, project]);
 
   return (
-    <Tr
-      className="group h-10 cursor-pointer transition-colors duration-100 hover:bg-mineshaft-700"
+    <TableRow
       key={`identity-project-membership-${id}`}
       onClick={() => {
         if (isAccessible) {
@@ -71,36 +77,55 @@ export const IdentityProjectRow = ({
         });
       }}
     >
-      <Td className="max-w-0 truncate">{project.name}</Td>
-      <Td>{`${formatProjectRoleName(roles[0].role, roles[0].customRoleName)}${
+      <TableCell className="max-w-0 truncate">{project.name}</TableCell>
+      <TableCell>{`${formatProjectRoleName(roles[0].role, roles[0].customRoleName)}${
         roles.length > 1 ? ` (+${roles.length - 1})` : ""
-      }`}</Td>
-      <Td>{format(new Date(createdAt), "yyyy-MM-dd")}</Td>
-      <Td>
-        {isAccessible && (
-          <div className="opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-            <Tooltip content="Remove">
-              <IconButton
-                colorSchema="danger"
-                ariaLabel="copy icon"
-                variant="plain"
-                className="group relative"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePopUpOpen("removeIdentityFromProject", {
-                    identityId: identity.id,
-                    identityName: identity.name,
-                    projectId: project.id,
-                    projectName: project.name
-                  });
-                }}
-              >
-                <FontAwesomeIcon icon={faTrash} />
-              </IconButton>
-            </Tooltip>
-          </div>
-        )}
-      </Td>
-    </Tr>
+      }`}</TableCell>
+      <TableCell>{format(new Date(createdAt), "yyyy-MM-dd")}</TableCell>
+      <TableCell>
+        <DropdownMenu>
+          <DropdownMenuTrigger>
+            <IconButton variant="ghost" size="xs">
+              <MoreHorizontalIcon />
+            </IconButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              isDisabled={!isAccessible}
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate({
+                  to: `${getProjectBaseURL(project.type)}/access-management` as const,
+                  params: {
+                    orgId: currentOrg?.id || "",
+                    projectId: project.id
+                  },
+                  search: {
+                    selectedTab: TabSections.Identities
+                  }
+                });
+              }}
+            >
+              Access Project
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="danger"
+              isDisabled={!isAccessible}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePopUpOpen("removeIdentityFromProject", {
+                  identityId: identity.id,
+                  identityName: identity.name,
+                  projectId: project.id,
+                  projectName: project.name
+                });
+              }}
+            >
+              Remove From Project
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </TableCell>
+    </TableRow>
   );
 };

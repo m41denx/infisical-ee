@@ -25,11 +25,6 @@ const SharedParamsSchema = z.object({
   profileId: z.string().uuid()
 });
 
-export interface MyRequestInterface {
-  Params: { profileId: string; accountId?: string };
-  Body: TRawJwsPayload;
-}
-
 export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
   const validateExistingAccount = async <
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -44,7 +39,7 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
     schema?: TSchema;
   }): Promise<TAuthenciatedJwsPayload<T>> => {
     return server.services.pkiAcme.validateExistingAccountJwsPayload({
-      url: new URL(req.url, `${req.protocol}://${req.hostname}`),
+      url: new URL(req.url, `${req.protocol}://${req.host}`),
       profileId: (req.params as { profileId: string }).profileId,
       rawJwsPayload: req.body as TRawJwsPayload,
       schema,
@@ -100,8 +95,8 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
     handler: async (req) => server.services.pkiAcme.getAcmeDirectory(req.params.profileId)
   });
 
-  // HEAD /api/v1/cert-manager/acme/profiles/<profile_id>/new-nonce
-  // New Nonce (RFC 8555 Section 7.2)
+  // HEAD & GET /api/v1/cert-manager/acme/profiles/<profile_id>/new-nonce
+  // New Nonce (RFC 8555 Section 7.2) - HEAD returns 200, GET returns 204
   server.route({
     method: "HEAD",
     url: "/profiles/:profileId/new-nonce",
@@ -123,7 +118,33 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
     handler: async (req, res) => {
       const nonce = await server.services.pkiAcme.getAcmeNewNonce(req.params.profileId);
       res.header("Replay-Nonce", nonce);
+      res.header("Cache-Control", "no-store");
       return "";
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/profiles/:profileId/new-nonce",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      hide: false,
+      tags: [ApiDocsTags.PkiAcme],
+      description: "ACME New Nonce (GET) - generate a new nonce and return in Replay-Nonce header with 204 No Content",
+      params: z.object({
+        profileId: z.string().uuid()
+      }),
+      response: {
+        204: z.string().length(0)
+      }
+    },
+    handler: async (req, res) => {
+      const nonce = await server.services.pkiAcme.getAcmeNewNonce(req.params.profileId);
+      res.header("Replay-Nonce", nonce);
+      res.header("Cache-Control", "no-store");
+      return res.status(204).send("");
     }
   });
 
@@ -147,7 +168,7 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
     },
     handler: async (req, res) => {
       const { payload, protectedHeader } = await server.services.pkiAcme.validateNewAccountJwsPayload({
-        url: new URL(req.url, `${req.protocol}://${req.hostname}`),
+        url: new URL(req.url, `${req.protocol}://${req.host}`),
         rawJwsPayload: req.body
       });
       const { alg, jwk } = protectedHeader;
@@ -158,7 +179,8 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
           profileId: req.params.profileId,
           alg,
           jwk: jwk!,
-          payload
+          payload,
+          auditLogInfo: req.auditLogInfo
         })
       );
     }
@@ -230,7 +252,8 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
         await server.services.pkiAcme.createAcmeOrder({
           profileId,
           accountId,
-          payload
+          payload,
+          auditLogInfo: req.auditLogInfo
         })
       );
     }
@@ -304,7 +327,8 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
           profileId,
           accountId,
           orderId: req.params.orderId,
-          payload
+          payload,
+          auditLogInfo: req.auditLogInfo
         })
       );
     }
@@ -373,7 +397,12 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
       return sendAcmeResponse(
         res,
         profileId,
-        await server.services.pkiAcme.downloadAcmeCertificate({ profileId, accountId, orderId: req.params.orderId })
+        await server.services.pkiAcme.downloadAcmeCertificate({
+          profileId,
+          accountId,
+          orderId: req.params.orderId,
+          auditLogInfo: req.auditLogInfo
+        })
       );
     }
   });
@@ -444,7 +473,60 @@ export const registerPkiAcmeRouter = async (server: FastifyZodProvider) => {
           profileId,
           accountId,
           authzId: req.params.authzId,
-          challengeId: req.params.challengeId
+          challengeId: req.params.challengeId,
+          auditLogInfo: req.auditLogInfo
+        })
+      );
+    }
+  });
+
+  const AppScopedParams = z.object({
+    applicationId: z.string().uuid(),
+    profileId: z.string().uuid()
+  });
+
+  server.route({
+    method: "GET",
+    url: "/applications/:applicationId/profiles/:profileId/directory",
+    config: { rateLimit: readLimit },
+    schema: {
+      hide: false,
+      tags: [ApiDocsTags.PkiAcme],
+      description: "ACME Directory - provides URLs for the client to make API calls to",
+      params: AppScopedParams,
+      response: { 200: GetAcmeDirectoryResponseSchema }
+    },
+    handler: async (req) => server.services.pkiAcme.getAcmeDirectory(req.params.profileId, req.params.applicationId)
+  });
+
+  server.route({
+    method: "POST",
+    url: "/applications/:applicationId/profiles/:profileId/new-account",
+    config: { rateLimit: writeLimit },
+    schema: {
+      hide: false,
+      tags: [ApiDocsTags.PkiAcme],
+      description: "ACME New Account - register a new account or find existing one",
+      params: AppScopedParams,
+      body: RawJwsPayloadSchema,
+      response: { 201: CreateAcmeAccountResponseSchema }
+    },
+    handler: async (req, res) => {
+      const { payload, protectedHeader } = await server.services.pkiAcme.validateNewAccountJwsPayload({
+        url: new URL(req.url, `${req.protocol}://${req.host}`),
+        rawJwsPayload: req.body
+      });
+      const { alg, jwk } = protectedHeader;
+      return sendAcmeResponse(
+        res,
+        req.params.profileId,
+        await server.services.pkiAcme.createAcmeAccount({
+          profileId: req.params.profileId,
+          applicationId: req.params.applicationId,
+          alg,
+          jwk: jwk!,
+          payload,
+          auditLogInfo: req.auditLogInfo
         })
       );
     }

@@ -3,6 +3,7 @@ import { subject } from "@casl/ability";
 import {
   faAsterisk,
   faEdit,
+  faHandshake,
   faInfoCircle,
   faKey,
   faRotate,
@@ -18,33 +19,92 @@ import { IconButton, Modal, ModalContent, TableContainer, Tag, Tooltip } from "@
 import { ProjectPermissionSub } from "@app/context";
 import { ProjectPermissionSecretRotationActions } from "@app/context/ProjectPermissionContext/types";
 import { SECRET_ROTATION_MAP } from "@app/helpers/secretRotationsV2";
-import { TSecretRotationV2 } from "@app/hooks/api/secretRotationsV2";
+import { UsedBySecretSyncs } from "@app/hooks/api/dashboard/types";
+import { SecretRotation, TSecretRotationV2 } from "@app/hooks/api/secretRotationsV2";
+import { HpIloRotationMethod } from "@app/hooks/api/secretRotationsV2/types/hp-ilo-rotation";
+import { UnixLinuxLocalAccountRotationMethod } from "@app/hooks/api/secretRotationsV2/types/unix-linux-local-account-rotation";
+import { WindowsLocalAccountRotationMethod } from "@app/hooks/api/secretRotationsV2/types/windows-local-account-rotation";
+import { SecretV3RawSanitized, WsTag } from "@app/hooks/api/types";
 
+import { SecretListView } from "../SecretListView";
 import { SecretRotationSecretRow } from "./SecretRotationSecretRow";
 
 type Props = {
   secretRotation: TSecretRotationV2;
   onEdit: () => void;
   onRotate: () => void;
+  onReconcile: () => void;
   onViewGeneratedCredentials: () => void;
   onDelete: () => void;
+  projectId: string;
+  secretPath?: string;
+  tags?: WsTag[];
+  isProtectedBranch?: boolean;
+  usedBySecretSyncs?: UsedBySecretSyncs[];
+  importedBy?: {
+    environment: { name: string; slug: string };
+    folders: {
+      name: string;
+      secrets?: { secretId: string; referencedSecretKey: string; referencedSecretEnv: string }[];
+      isImported: boolean;
+    }[];
+  }[];
+  colWidth: number;
+  getMergedSecretsWithPending: (
+    paramSecrets?: (SecretV3RawSanitized | null)[]
+  ) => SecretV3RawSanitized[];
 };
 
 export const SecretRotationItem = ({
   secretRotation,
   onEdit,
   onRotate,
+  onReconcile,
   onViewGeneratedCredentials,
-  onDelete
+  onDelete,
+  projectId,
+  secretPath = "/",
+  tags = [],
+  isProtectedBranch = false,
+  usedBySecretSyncs,
+  importedBy,
+  colWidth,
+  getMergedSecretsWithPending
 }: Props) => {
   const { name, type, environment, folder, secrets, description } = secretRotation;
 
   const { name: rotationType, image } = SECRET_ROTATION_MAP[type];
   const [showSecrets, setShowSecrets] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  const showReconcileButton =
+    (secretRotation.type === SecretRotation.UnixLinuxLocalAccount &&
+      secretRotation.parameters.rotationMethod ===
+        UnixLinuxLocalAccountRotationMethod.LoginAsTarget) ||
+    (secretRotation.type === SecretRotation.WindowsLocalAccount &&
+      secretRotation.parameters.rotationMethod ===
+        WindowsLocalAccountRotationMethod.LoginAsTarget) ||
+    (secretRotation.type === SecretRotation.HpIloLocalAccount &&
+      secretRotation.parameters.rotationMethod === HpIloRotationMethod.LoginAsTarget);
 
   return (
     <>
-      <div className={twMerge("group flex border-b border-mineshaft-600 hover:bg-mineshaft-700")}>
+      <div
+        className={twMerge(
+          "group flex cursor-pointer border-b border-mineshaft-600 hover:bg-mineshaft-700"
+        )}
+        onClick={() => setIsExpanded(!isExpanded)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setIsExpanded(!isExpanded);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-label={`${isExpanded ? "Collapse" : "Expand"} rotation secrets for ${name}`}
+      >
         <div className="text- flex w-11 items-center py-2 pl-5 text-mineshaft-400">
           <FontAwesomeIcon icon={faRotate} />
         </div>
@@ -90,7 +150,8 @@ export const SecretRotationItem = ({
               I={ProjectPermissionSecretRotationActions.ReadGeneratedCredentials}
               a={subject(ProjectPermissionSub.SecretRotation, {
                 environment: environment.slug,
-                secretPath: folder.path
+                secretPath: folder.path,
+                ...(secretRotation.connectionId && { connectionId: secretRotation.connectionId })
               })}
               renderTooltip
               allowedLabel="View Generated Credentials"
@@ -115,7 +176,8 @@ export const SecretRotationItem = ({
               I={ProjectPermissionSecretRotationActions.RotateSecrets}
               a={subject(ProjectPermissionSub.SecretRotation, {
                 environment: environment.slug,
-                secretPath: folder.path
+                secretPath: folder.path,
+                ...(secretRotation.connectionId && { connectionId: secretRotation.connectionId })
               })}
               renderTooltip
               allowedLabel="Rotate Secrets"
@@ -136,6 +198,34 @@ export const SecretRotationItem = ({
                 </IconButton>
               )}
             </ProjectPermissionCan>
+            {showReconcileButton && (
+              <ProjectPermissionCan
+                I={ProjectPermissionSecretRotationActions.RotateSecrets}
+                a={subject(ProjectPermissionSub.SecretRotation, {
+                  environment: environment.slug,
+                  secretPath: folder.path,
+                  ...(secretRotation.connectionId && { connectionId: secretRotation.connectionId })
+                })}
+                renderTooltip
+                allowedLabel="Reconcile Secret"
+              >
+                {(isAllowed) => (
+                  <IconButton
+                    ariaLabel="Reconcile secret"
+                    variant="plain"
+                    size="sm"
+                    isDisabled={!isAllowed}
+                    className="w-0 overflow-hidden p-0 group-hover:w-5"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onReconcile();
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faHandshake} />
+                  </IconButton>
+                )}
+              </ProjectPermissionCan>
+            )}
           </div>
         </div>
         <AnimatePresence mode="wait">
@@ -150,7 +240,8 @@ export const SecretRotationItem = ({
               I={ProjectPermissionSecretRotationActions.Edit}
               a={subject(ProjectPermissionSub.SecretRotation, {
                 environment: environment.slug,
-                secretPath: folder.path
+                secretPath: folder.path,
+                ...(secretRotation.connectionId && { connectionId: secretRotation.connectionId })
               })}
               renderTooltip
               allowedLabel="Edit"
@@ -174,7 +265,8 @@ export const SecretRotationItem = ({
               I={ProjectPermissionSecretRotationActions.Delete}
               a={subject(ProjectPermissionSub.SecretRotation, {
                 environment: environment.slug,
-                secretPath: folder.path
+                secretPath: folder.path,
+                ...(secretRotation.connectionId && { connectionId: secretRotation.connectionId })
               })}
               renderTooltip
               allowedLabel="Delete"
@@ -198,6 +290,20 @@ export const SecretRotationItem = ({
           </motion.div>
         </AnimatePresence>
       </div>
+      {isExpanded && (
+        <SecretListView
+          colWidth={colWidth}
+          secrets={getMergedSecretsWithPending(secretRotation.secrets) || []}
+          tags={tags}
+          environment={environment.slug}
+          projectId={projectId}
+          secretPath={secretPath}
+          isProtectedBranch={isProtectedBranch}
+          importedBy={importedBy}
+          usedBySecretSyncs={usedBySecretSyncs}
+          excludePendingCreates
+        />
+      )}
       <Modal onOpenChange={setShowSecrets} isOpen={showSecrets}>
         <ModalContent
           onOpenAutoFocus={(e) => e.preventDefault()}

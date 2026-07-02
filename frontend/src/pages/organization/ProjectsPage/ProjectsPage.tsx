@@ -1,80 +1,51 @@
-// REFACTOR(akhilmhdh): This file needs to be split into multiple components too complex
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { Outlet, useMatches } from "@tanstack/react-router";
+import { Link, Outlet, useMatches } from "@tanstack/react-router";
+import { InfoIcon } from "lucide-react";
 
-import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
-import { NewProjectModal } from "@app/components/projects";
+import { AnnouncementModal } from "@app/components/announcements/AnnouncementModal";
+import { useAnnouncementSeen } from "@app/components/announcements/useAnnouncementSeen";
 import { PageHeader } from "@app/components/v2";
-import { useOrganization, useSubscription } from "@app/context";
-import { usePopUp } from "@app/hooks/usePopUp";
+import { Alert, AlertDescription, AlertTitle } from "@app/components/v3";
+import { useOrganization } from "@app/context";
+import { useGetRecentAnnouncements } from "@app/hooks/api/announcement";
 
-import { AllProjectView } from "./components/AllProjectView";
-import { MyProjectView } from "./components/MyProjectView";
-import { ProjectListView } from "./components/ProjectListToggle";
-
-// const formatDescription = (type: ProjectType) => {
-//   if (type === ProjectType.SecretManager)
-//     return "Securely store, manage, and rotate various application secrets, such as database credentials, API keys, etc.";
-//   if (type === ProjectType.CertificateManager)
-//     return "Manage your PKI infrastructure and issue digital certificates for services, applications, and devices.";
-//   if (type === ProjectType.KMS)
-//     return "Centralize the management of keys for cryptographic operations, such as encryption and decryption.";
-//   if (type === ProjectType.SecretScanning)
-//     return "Connect and monitor data sources to prevent secret leaks.";
-//   return "Infisical SSH lets you issue SSH credentials to users for short-lived, secure SSH access to infrastructure.";
-// };
+import { ProjectCategoryOverview } from "./components/ProjectCategoryOverview";
 
 export const ProjectsPage = () => {
   const { t } = useTranslation();
   const matches = useMatches();
+  const { currentOrg, isSubOrganization } = useOrganization();
 
-  const hasChildRoute = matches.some(
-    (match) =>
-      match.pathname.includes("/secret-management/") ||
-      match.pathname.includes("/cert-management/") ||
-      match.pathname.includes("/kms/") ||
-      match.pathname.includes("/pam/") ||
-      match.pathname.includes("/ssh/") ||
-      match.pathname.includes("/secret-scanning/")
-  );
+  const projectsRouteId =
+    "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects";
+  const lastMatch = matches[matches.length - 1];
+  const hasChildRoute = lastMatch && lastMatch.routeId !== projectsRouteId;
 
-  const [projectListView, setProjectListView] = useState<ProjectListView>(() => {
-    const storedView = localStorage.getItem("projectListView");
+  const { data: announcementData } = useGetRecentAnnouncements();
+  const announcements = announcementData?.announcements;
+  const latestAnnouncement = announcements?.[0];
+  const { hasUnseen, markSeen } = useAnnouncementSeen();
+  const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false);
 
-    if (
-      storedView &&
-      (storedView === ProjectListView.AllProjects || storedView === ProjectListView.MyProjects)
-    ) {
-      return storedView;
-    }
+  const shouldAutoOpen = Boolean(latestAnnouncement && hasUnseen(latestAnnouncement.id));
 
-    return ProjectListView.MyProjects;
-  });
+  useEffect(() => {
+    if (shouldAutoOpen) setIsAnnouncementOpen(true);
+  }, [shouldAutoOpen]);
 
-  const handleSetProjectListView = (value: ProjectListView) => {
-    localStorage.setItem("projectListView", value);
-    setProjectListView(value);
+  const handleAnnouncementOpenChange = (open: boolean) => {
+    setIsAnnouncementOpen(open);
+    if (!open && latestAnnouncement) markSeen(latestAnnouncement.id);
   };
-
-  const { popUp, handlePopUpOpen, handlePopUpToggle } = usePopUp([
-    "addNewWs",
-    "upgradePlan"
-  ] as const);
-
-  const { subscription } = useSubscription();
-  const { isSubOrganization } = useOrganization();
-  const isAddingProjectsAllowed = subscription?.workspaceLimit
-    ? subscription.workspacesUsed < subscription.workspaceLimit
-    : true;
 
   if (hasChildRoute) {
     return <Outlet />;
   }
 
   return (
-    <div className="mx-auto flex max-w-8xl flex-col justify-start bg-bunker-800">
+    <div className="mx-auto flex max-w-8xl flex-col justify-start bg-bunker-800 px-6">
       <Helmet>
         <title>{t("common.head-title", { title: t("settings.members.title") })}</title>
         <link rel="icon" href="/infisical.ico" />
@@ -82,34 +53,33 @@ export const ProjectsPage = () => {
       <PageHeader
         scope={isSubOrganization ? "namespace" : "org"}
         title={`${isSubOrganization ? "Sub-Organization" : "Organization"} Overview`}
-        description="Your team's complete security toolkit - organized and ready when you need them."
+        description="Your team's complete security toolkit — organized and ready when you need them."
       />
-      {projectListView === ProjectListView.MyProjects ? (
-        <MyProjectView
-          onAddNewProject={() => handlePopUpOpen("addNewWs")}
-          onUpgradePlan={() => handlePopUpOpen("upgradePlan")}
-          isAddingProjectsAllowed={isAddingProjectsAllowed}
-          projectListView={projectListView}
-          onProjectListViewChange={handleSetProjectListView}
-        />
-      ) : (
-        <AllProjectView
-          onAddNewProject={() => handlePopUpOpen("addNewWs")}
-          onUpgradePlan={() => handlePopUpOpen("upgradePlan")}
-          isAddingProjectsAllowed={isAddingProjectsAllowed}
-          projectListView={projectListView}
-          onProjectListViewChange={handleSetProjectListView}
+      <Alert variant="info" className="mb-6">
+        <InfoIcon />
+        <AlertTitle>Secret Sharing Has Moved</AlertTitle>
+        <AlertDescription>
+          <p>
+            Secret sharing now lives under Secrets Management. Go to{" "}
+            <Link
+              to="/organizations/$orgId/projects/secret-management/secret-sharing"
+              params={{ orgId: currentOrg.id }}
+              className="inline underline hover:opacity-80"
+            >
+              Secret Sharing
+            </Link>
+            .
+          </p>
+        </AlertDescription>
+      </Alert>
+      <ProjectCategoryOverview />
+      {announcements && announcements.length > 0 && (
+        <AnnouncementModal
+          announcements={announcements}
+          isOpen={isAnnouncementOpen}
+          onOpenChange={handleAnnouncementOpenChange}
         />
       )}
-      <NewProjectModal
-        isOpen={popUp.addNewWs.isOpen}
-        onOpenChange={(isOpen) => handlePopUpToggle("addNewWs", isOpen)}
-      />
-      <UpgradePlanModal
-        isOpen={popUp.upgradePlan.isOpen}
-        onOpenChange={(isOpen) => handlePopUpToggle("upgradePlan", isOpen)}
-        text="You have reached the maximum number of projects allowed on your current plan. Upgrade to Infisical Pro plan to add more projects."
-      />
     </div>
   );
 };

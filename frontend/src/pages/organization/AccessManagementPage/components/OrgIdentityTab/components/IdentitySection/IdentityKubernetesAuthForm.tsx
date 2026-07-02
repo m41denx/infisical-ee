@@ -1,100 +1,142 @@
-import { useEffect, useState } from "react";
-import { Controller, useFieldArray, useForm } from "react-hook-form";
-import { faInfoCircle, faPlus, faXmark } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
+import { HelpCircleIcon, InfoIcon } from "lucide-react";
 import { z } from "zod";
 
 import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
 import {
   Button,
-  FormControl,
-  IconButton,
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  GatewayPicker,
   Input,
   Select,
+  SelectContent,
   SelectItem,
-  Tab,
-  TabList,
-  TabPanel,
+  SelectTrigger,
+  SelectValue,
+  Switch,
   Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
   TextArea,
-  Tooltip
-} from "@app/components/v2";
-import { useOrganization, useOrgPermission, useSubscription } from "@app/context";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from "@app/components/v3";
+import { useOrganization, useSubscription } from "@app/context";
 import {
   OrgGatewayPermissionActions,
   OrgPermissionSubjects
 } from "@app/context/OrgPermissionContext/types";
-import { OrgMembershipRole } from "@app/helpers/roles";
 import {
-  gatewaysQueryKeys,
+  accessTokenTtlSchema,
+  DEFAULT_TRUSTED_IPS,
+  mapTrustedIpsFromServer,
+  superRefineAccessTokenTtl,
+  trustedIpsSchema
+} from "@app/helpers/identityAuthSchemas";
+import { useScopeVariant } from "@app/hooks";
+import {
   useAddIdentityKubernetesAuth,
   useGetIdentityKubernetesAuth,
   useUpdateIdentityKubernetesAuth
 } from "@app/hooks/api";
+import { AppConnection } from "@app/hooks/api/appConnections/enums";
 import {
-  IdentityKubernetesAuthTokenReviewMode,
-  IdentityTrustedIp
-} from "@app/hooks/api/identities/types";
-import { useGetVaultExternalMigrationConfigs } from "@app/hooks/api/migration/queries";
+  useListAppConnections,
+  useListAvailableAppConnections
+} from "@app/hooks/api/appConnections/queries";
+import { IdentityKubernetesAuthTokenReviewMode } from "@app/hooks/api/identities/types";
 import { VaultKubernetesAuthRole } from "@app/hooks/api/migration/types";
+import { useCanUseOrgAppConnectionImport } from "@app/hooks/useCanUseAppConnectionImport";
 import { usePopUp, UsePopUpState } from "@app/hooks/usePopUp";
 
-import { IdentityFormTab } from "./types";
+import { AccessTokenNumUsesLimitField } from "./shared/AccessTokenNumUsesLimitField";
+import { AccessTokenTtlFields } from "./shared/AccessTokenTtlFields";
+import { TrustedIpsField } from "./shared/TrustedIpsField";
+import { IDENTITY_AUTH_FORM_ID, IdentityFormTab } from "./types";
 import { VaultKubernetesAuthImportModal } from "./VaultKubernetesAuthImportModal";
 
-const schema = z
-  .object({
-    tokenReviewMode: z
-      .nativeEnum(IdentityKubernetesAuthTokenReviewMode)
-      .default(IdentityKubernetesAuthTokenReviewMode.Api),
-    kubernetesHost: z.string().optional().nullable(),
-    tokenReviewerJwt: z.string().optional(),
-    gatewayId: z.string().optional().nullable(),
-    allowedNames: z.string(),
-    allowedNamespaces: z.string(),
-    allowedAudience: z.string(),
-    caCert: z.string().optional(),
-    accessTokenTTL: z.string().refine((val) => Number(val) <= 315360000, {
-      message: "Access Token TTL cannot be greater than 315360000"
-    }),
-    accessTokenMaxTTL: z.string().refine((val) => Number(val) <= 315360000, {
-      message: "Access Token Max TTL cannot be greater than 315360000"
-    }),
-    accessTokenNumUsesLimit: z.string(),
-    accessTokenTrustedIps: z
-      .array(
-        z.object({
-          ipAddress: z.string().max(50)
-        })
-      )
-      .min(1)
-  })
-  .superRefine((data, ctx) => {
-    if (
-      data.tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api &&
-      !data.kubernetesHost?.length
-    ) {
-      ctx.addIssue({
-        path: ["kubernetesHost"],
-        code: z.ZodIssueCode.custom,
-        message: "When token review mode is set to API, a Kubernetes host must be provided"
-      });
-    }
+const buildSchema = (maxAccessTokenTTL: number) =>
+  z
+    .object({
+      tokenReviewMode: z
+        .nativeEnum(IdentityKubernetesAuthTokenReviewMode)
+        .default(IdentityKubernetesAuthTokenReviewMode.Api),
+      kubernetesHost: z.string().optional().nullable(),
+      tokenReviewerJwt: z.string().optional(),
+      gatewayId: z.string().optional().nullable(),
+      gatewayPoolId: z.string().optional().nullable(),
+      allowedNames: z.string(),
+      allowedNamespaces: z.string(),
+      allowedAudience: z.string(),
+      caCert: z.string().optional(),
+      verifyTlsCertificate: z.boolean().default(true),
+      accessTokenTTL: accessTokenTtlSchema(maxAccessTokenTTL, "Access Token TTL"),
+      accessTokenMaxTTL: accessTokenTtlSchema(maxAccessTokenTTL, "Access Token Max TTL"),
+      accessTokenNumUsesLimit: z.string(),
+      accessTokenTrustedIps: trustedIpsSchema
+    })
+    .superRefine((data, ctx) => {
+      if (
+        data.tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api &&
+        !data.kubernetesHost?.length
+      ) {
+        ctx.addIssue({
+          path: ["kubernetesHost"],
+          code: z.ZodIssueCode.custom,
+          message: "When token review mode is set to API, a Kubernetes host must be provided"
+        });
+      }
 
-    if (data.tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Gateway && !data.gatewayId) {
-      ctx.addIssue({
-        path: ["gatewayId"],
-        code: z.ZodIssueCode.custom,
-        message: "When token review mode is set to Gateway, a gateway must be selected"
-      });
-    }
-  });
+      if (
+        data.tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Gateway &&
+        !data.gatewayId &&
+        !data.gatewayPoolId
+      ) {
+        ctx.addIssue({
+          path: ["gatewayId"],
+          code: z.ZodIssueCode.custom,
+          message:
+            "When token review mode is set to Gateway, a gateway or gateway pool must be selected"
+        });
+      }
 
-export type FormData = z.infer<typeof schema>;
+      if (
+        data.verifyTlsCertificate &&
+        data.tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api &&
+        !data.caCert?.length
+      ) {
+        ctx.addIssue({
+          path: ["caCert"],
+          code: z.ZodIssueCode.custom,
+          message: "A CA certificate is required when TLS certificate verification is enabled."
+        });
+      }
+
+      if (
+        data.verifyTlsCertificate === false &&
+        data.tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api &&
+        data.caCert?.length
+      ) {
+        ctx.addIssue({
+          path: ["verifyTlsCertificate"],
+          code: z.ZodIssueCode.custom,
+          message:
+            "TLS certificate verification cannot be disabled while a CA certificate is provided. Either remove the CA certificate or enable verification."
+        });
+      }
+    })
+    .superRefine(superRefineAccessTokenTtl);
+
+export type FormData = z.infer<ReturnType<typeof buildSchema>>;
 
 type Props = {
   handlePopUpOpen: (
@@ -107,13 +149,17 @@ type Props = {
   ) => void;
   identityId?: string;
   isUpdate?: boolean;
+  maxAccessTokenTTL: number;
+  onSubmittingChange?: (isSubmitting: boolean) => void;
 };
 
 export const IdentityKubernetesAuthForm = ({
   handlePopUpOpen,
   handlePopUpToggle,
   identityId,
-  isUpdate
+  isUpdate,
+  maxAccessTokenTTL,
+  onSubmittingChange
 }: Props) => {
   const { currentOrg } = useOrganization();
   const orgId = currentOrg?.id || "";
@@ -121,11 +167,10 @@ export const IdentityKubernetesAuthForm = ({
   const { projectId } = useParams({
     strict: false
   });
+  const scopeVariant = useScopeVariant();
   const { mutateAsync: addMutateAsync } = useAddIdentityKubernetesAuth();
   const { mutateAsync: updateMutateAsync } = useUpdateIdentityKubernetesAuth();
   const [tabValue, setTabValue] = useState<IdentityFormTab>(IdentityFormTab.Configuration);
-
-  const { data: gateways, isPending: isGatewayLoading } = useQuery(gatewaysQueryKeys.list());
 
   const { data } = useGetIdentityKubernetesAuth(identityId ?? "", {
     enabled: isUpdate
@@ -134,10 +179,22 @@ export const IdentityKubernetesAuthForm = ({
   const { popUp, handlePopUpToggle: handleImportPopUpToggle } = usePopUp([
     "importFromVault"
   ] as const);
-  const { data: vaultConfigs = [] } = useGetVaultExternalMigrationConfigs();
-  const hasVaultConnection = vaultConfigs.some((config) => config.connectionId);
-  const { hasOrgRole } = useOrgPermission();
-  const isOrgAdmin = hasOrgRole(OrgMembershipRole.Admin);
+  const { data: projectVaultAppConnections = [] } = useListAvailableAppConnections(
+    AppConnection.HCVault,
+    projectId ?? "",
+    { enabled: Boolean(projectId) }
+  );
+  const { data: orgAppConnections = [] } = useListAppConnections(undefined, {
+    enabled: !projectId
+  });
+  const vaultAppConnections = useMemo(() => {
+    if (projectId) return projectVaultAppConnections;
+    return orgAppConnections.filter((c) => c.app === AppConnection.HCVault && !c.projectId);
+  }, [projectId, projectVaultAppConnections, orgAppConnections]);
+  const canUseAppConnectionImport = useCanUseOrgAppConnectionImport();
+  const hasVaultConnection = vaultAppConnections.length > 0;
+
+  const resolver = useMemo(() => zodResolver(buildSchema(maxAccessTokenTTL)), [maxAccessTokenTTL]);
 
   const {
     control,
@@ -148,7 +205,7 @@ export const IdentityKubernetesAuthForm = ({
 
     formState: { isSubmitting }
   } = useForm<FormData>({
-    resolver: zodResolver(schema),
+    resolver,
     defaultValues: {
       tokenReviewMode: IdentityKubernetesAuthTokenReviewMode.Api,
       kubernetesHost: "",
@@ -158,18 +215,13 @@ export const IdentityKubernetesAuthForm = ({
       gatewayId: "",
       allowedAudience: "",
       caCert: "",
+      verifyTlsCertificate: true,
       accessTokenTTL: "2592000",
       accessTokenMaxTTL: "2592000",
-      accessTokenNumUsesLimit: "0",
-      accessTokenTrustedIps: [{ ipAddress: "0.0.0.0/0" }, { ipAddress: "::/0" }]
+      accessTokenNumUsesLimit: "",
+      accessTokenTrustedIps: DEFAULT_TRUSTED_IPS
     }
   });
-
-  const {
-    fields: accessTokenTrustedIpsFields,
-    append: appendAccessTokenTrustedIp,
-    remove: removeAccessTokenTrustedIp
-  } = useFieldArray({ control, name: "accessTokenTrustedIps" });
 
   useEffect(() => {
     if (data) {
@@ -181,17 +233,15 @@ export const IdentityKubernetesAuthForm = ({
         allowedNamespaces: data.allowedNamespaces,
         allowedAudience: data.allowedAudience,
         caCert: data.caCert,
-        gatewayId: data.gatewayId || null,
+        verifyTlsCertificate: data.verifyTlsCertificate ?? false,
+        gatewayId: data.gatewayPoolId ? null : data.gatewayId || null,
+        gatewayPoolId: data.gatewayPoolId || null,
         accessTokenTTL: String(data.accessTokenTTL),
         accessTokenMaxTTL: String(data.accessTokenMaxTTL),
-        accessTokenNumUsesLimit: String(data.accessTokenNumUsesLimit),
-        accessTokenTrustedIps: data.accessTokenTrustedIps.map(
-          ({ ipAddress, prefix }: IdentityTrustedIp) => {
-            return {
-              ipAddress: `${ipAddress}${prefix !== undefined ? `/${prefix}` : ""}`
-            };
-          }
-        )
+        accessTokenNumUsesLimit: data.accessTokenNumUsesLimit
+          ? String(data.accessTokenNumUsesLimit)
+          : "",
+        accessTokenTrustedIps: mapTrustedIpsFromServer(data.accessTokenTrustedIps)
       });
     } else {
       reset({
@@ -202,13 +252,18 @@ export const IdentityKubernetesAuthForm = ({
         allowedNamespaces: "",
         allowedAudience: "",
         caCert: "",
+        verifyTlsCertificate: true,
         accessTokenTTL: "2592000",
         accessTokenMaxTTL: "2592000",
-        accessTokenNumUsesLimit: "0",
-        accessTokenTrustedIps: [{ ipAddress: "0.0.0.0/0" }, { ipAddress: "::/0" }]
+        accessTokenNumUsesLimit: "",
+        accessTokenTrustedIps: DEFAULT_TRUSTED_IPS
       });
     }
   }, [data]);
+
+  useEffect(() => {
+    onSubmittingChange?.(isSubmitting);
+  }, [isSubmitting, onSubmittingChange]);
 
   const handleImportFromVault = (role: VaultKubernetesAuthRole) => {
     try {
@@ -219,22 +274,14 @@ export const IdentityKubernetesAuthForm = ({
       });
 
       if (role.bound_service_account_names?.length > 0) {
-        // In Vault, "*" means allow all; in Infisical, empty field means allow any
-        const allowedNames = role.bound_service_account_names.includes("*")
-          ? ""
-          : role.bound_service_account_names.join(", ");
-        setValue("allowedNames", allowedNames, {
+        setValue("allowedNames", role.bound_service_account_names.join(", "), {
           shouldDirty: true,
           shouldTouch: true
         });
       }
 
       if (role.bound_service_account_namespaces?.length > 0) {
-        // In Vault, "*" means allow all; in Infisical, empty field means allow any
-        const allowedNamespaces = role.bound_service_account_namespaces.includes("*")
-          ? ""
-          : role.bound_service_account_namespaces.join(", ");
-        setValue("allowedNamespaces", allowedNamespaces, {
+        setValue("allowedNamespaces", role.bound_service_account_namespaces.join(", "), {
           shouldDirty: true,
           shouldTouch: true
         });
@@ -310,10 +357,12 @@ export const IdentityKubernetesAuthForm = ({
     allowedNamespaces,
     allowedAudience,
     caCert,
+    verifyTlsCertificate,
     accessTokenTTL,
     accessTokenMaxTTL,
     accessTokenNumUsesLimit,
     gatewayId,
+    gatewayPoolId,
     tokenReviewMode,
     accessTokenTrustedIps
   }: FormData) => {
@@ -334,12 +383,14 @@ export const IdentityKubernetesAuthForm = ({
         allowedNamespaces,
         allowedAudience,
         caCert,
+        verifyTlsCertificate,
         identityId,
-        gatewayId: gatewayId || null,
+        gatewayId: gatewayPoolId ? null : gatewayId || null,
+        gatewayPoolId: gatewayPoolId || null,
         tokenReviewMode,
         accessTokenTTL: Number(accessTokenTTL),
         accessTokenMaxTTL: Number(accessTokenMaxTTL),
-        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit),
+        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit || "0"),
         accessTokenTrustedIps
       });
     } else {
@@ -357,12 +408,14 @@ export const IdentityKubernetesAuthForm = ({
         allowedNames: allowedNames || "",
         allowedNamespaces: allowedNamespaces || "",
         allowedAudience: allowedAudience || "",
-        gatewayId: gatewayId || null,
+        gatewayId: gatewayPoolId ? null : gatewayId || null,
+        gatewayPoolId: gatewayPoolId || null,
         caCert: caCert || "",
+        verifyTlsCertificate,
         tokenReviewMode,
         accessTokenTTL: Number(accessTokenTTL),
         accessTokenMaxTTL: Number(accessTokenMaxTTL),
-        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit),
+        accessTokenNumUsesLimit: Number(accessTokenNumUsesLimit || "0"),
         accessTokenTrustedIps
       });
     }
@@ -381,6 +434,7 @@ export const IdentityKubernetesAuthForm = ({
 
   return (
     <form
+      id={IDENTITY_AUTH_FORM_ID}
       onSubmit={handleSubmit(onFormSubmit, (fields) => {
         setTabValue(
           [
@@ -400,388 +454,455 @@ export const IdentityKubernetesAuthForm = ({
       })}
     >
       <Tabs value={tabValue} onValueChange={(value) => setTabValue(value as IdentityFormTab)}>
-        <TabList>
-          <Tab value={IdentityFormTab.Configuration}>Configuration</Tab>
-          <Tab value={IdentityFormTab.Advanced}>Advanced</Tab>
-        </TabList>
-        <TabPanel value={IdentityFormTab.Configuration}>
-          {hasVaultConnection && !isUpdate && (
-            <div className="mb-4 flex items-center justify-between rounded-md border border-primary/30 bg-primary/10 p-3">
-              <div className="flex items-start gap-2 text-sm">
-                <FontAwesomeIcon icon={faInfoCircle} className="mt-0.5 text-primary" />
-                <span className="text-mineshaft-200">Load values from HashiCorp Vault</span>
-              </div>
-              <Tooltip
-                content={
-                  !isOrgAdmin
-                    ? "Only organization admins can import configurations from HashiCorp Vault"
-                    : undefined
-                }
-              >
-                <Button
-                  variant="outline_bg"
-                  size="xs"
-                  leftIcon={
-                    <img
-                      src="/images/integrations/Vault.png"
-                      alt="HashiCorp Vault"
-                      className="h-4 w-4"
-                    />
-                  }
-                  onClick={() => handleImportPopUpToggle("importFromVault", true)}
-                  isDisabled={!isOrgAdmin}
-                >
-                  Load from Vault
-                </Button>
-              </Tooltip>
-            </div>
-          )}
-          <div className="flex w-full items-center gap-2">
-            <div className="w-full flex-1">
-              <OrgPermissionCan
-                I={OrgGatewayPermissionActions.AttachGateways}
-                a={OrgPermissionSubjects.Gateway}
-              >
-                {(isAllowed) => (
-                  <Controller
-                    control={control}
-                    name="gatewayId"
-                    defaultValue=""
-                    render={({ field: { value, onChange }, fieldState: { error } }) => (
-                      <FormControl
-                        isError={Boolean(error?.message)}
-                        errorText={error?.message}
-                        label="Gateway"
-                        isOptional
+        <TabsList variant={scopeVariant}>
+          <TabsTrigger value={IdentityFormTab.Configuration}>Configuration</TabsTrigger>
+          <TabsTrigger value={IdentityFormTab.Advanced}>Advanced</TabsTrigger>
+        </TabsList>
+        <TabsContent value={IdentityFormTab.Configuration}>
+          <FieldGroup>
+            {hasVaultConnection && canUseAppConnectionImport && !isUpdate && (
+              <div className="flex items-center justify-between rounded-md border border-primary/30 bg-primary/10 p-3">
+                <div className="flex items-start gap-2 text-sm">
+                  <InfoIcon className="mt-0.5 size-4 text-primary" />
+                  <span className="text-foreground">Load values from HashiCorp Vault</span>
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => handleImportPopUpToggle("importFromVault", true)}
+                        isDisabled={!canUseAppConnectionImport}
                       >
-                        <Tooltip
-                          isDisabled={isAllowed}
-                          content="Restricted access. You don't have permission to attach gateways to resources."
-                        >
-                          <div>
-                            <Select
-                              isDisabled={!isAllowed}
-                              value={value as string}
-                              onValueChange={(v) => {
-                                if (v !== "") {
-                                  onChange(v);
-                                }
+                        <img
+                          src="/images/integrations/Vault.png"
+                          alt="HashiCorp Vault"
+                          className="h-4 w-4"
+                        />
+                        Load from Vault
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {!canUseAppConnectionImport && (
+                    <TooltipContent className="max-w-md">
+                      You don&apos;t have permission to import configurations from HashiCorp Vault
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </div>
+            )}
+            <OrgPermissionCan
+              I={OrgGatewayPermissionActions.AttachGateways}
+              a={OrgPermissionSubjects.Gateway}
+            >
+              {(isAllowed) => (
+                <Controller
+                  control={control}
+                  name="gatewayId"
+                  defaultValue=""
+                  render={({ fieldState: { error } }) => {
+                    const gatewayPoolIdVal = watch("gatewayPoolId");
+                    const gatewayIdVal = watch("gatewayId");
 
-                                if (v === null) {
-                                  setValue(
-                                    "tokenReviewMode",
-                                    IdentityKubernetesAuthTokenReviewMode.Api,
-                                    {
-                                      shouldDirty: true,
-                                      shouldTouch: true
-                                    }
-                                  );
-                                }
-                              }}
-                              className="w-full border border-mineshaft-500"
-                              dropdownContainerClassName="max-w-none"
-                              isLoading={isGatewayLoading}
-                              placeholder="Default: Internet Gateway"
-                              position="popper"
-                            >
-                              <SelectItem
-                                value={null as unknown as string}
-                                onClick={() => {
-                                  onChange(null);
+                    return (
+                      <Field>
+                        <FieldLabel htmlFor="gatewayId">Gateway (optional)</FieldLabel>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div>
+                              <GatewayPicker
+                                value={{
+                                  gatewayId: gatewayIdVal || null,
+                                  gatewayPoolId: gatewayPoolIdVal || null
                                 }}
-                              >
-                                Internet Gateway
-                              </SelectItem>
-                              {gateways?.map((el) => (
-                                <SelectItem value={el.id} key={el.id}>
-                                  {el.name}
-                                </SelectItem>
-                              ))}
-                            </Select>
-                          </div>
+                                onChange={({ gatewayId: gwId, gatewayPoolId: poolId }) => {
+                                  setValue("gatewayId", gwId, { shouldDirty: true });
+                                  setValue("gatewayPoolId", poolId, { shouldDirty: true });
+                                  if (!gwId && !poolId) {
+                                    setValue(
+                                      "tokenReviewMode",
+                                      IdentityKubernetesAuthTokenReviewMode.Api,
+                                      { shouldDirty: true, shouldTouch: true }
+                                    );
+                                  }
+                                }}
+                                isDisabled={!isAllowed}
+                                className="w-full"
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          {!isAllowed && (
+                            <TooltipContent className="max-w-md">
+                              Restricted access. You don&apos;t have permission to attach gateways
+                              to resources.
+                            </TooltipContent>
+                          )}
                         </Tooltip>
-                      </FormControl>
-                    )}
-                  />
-                )}
-              </OrgPermissionCan>
-            </div>
+                        <FieldError>{error?.message}</FieldError>
+                      </Field>
+                    );
+                  }}
+                />
+              )}
+            </OrgPermissionCan>
 
             <Controller
               control={control}
               name="tokenReviewMode"
-              render={({ field }) => (
-                <FormControl
-                  tooltipClassName="max-w-md"
-                  tooltipText="The method of which tokens are reviewed. If you select Gateway as Reviewer, the selected gateway will be used to review tokens with. If this option is enabled, the gateway must be deployed in Kubernetes, and the gateway must have the system:auth-delegator ClusterRole binding."
-                  label="Review Mode"
-                >
+              render={({ field, fieldState: { error } }) => (
+                <Field>
+                  <FieldLabel
+                    htmlFor="tokenReviewMode"
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    Review Mode
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <InfoIcon className="size-3.5 text-muted" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        The method of which tokens are reviewed. If you select Gateway as Reviewer,
+                        the selected gateway will be used to review tokens with. If this option is
+                        enabled, the gateway must be deployed in Kubernetes, and the gateway must
+                        have the system:auth-delegator ClusterRole binding.
+                      </TooltipContent>
+                    </Tooltip>
+                  </FieldLabel>
                   <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectItem value="gateway">Gateway as Reviewer</SelectItem>
-                    <SelectItem value="api">Manual Token Reviewer JWT (API)</SelectItem>
+                    <SelectTrigger id="tokenReviewMode" isError={Boolean(error)}>
+                      <SelectValue placeholder="Select review mode" />
+                    </SelectTrigger>
+                    <SelectContent position="popper">
+                      <SelectItem value="gateway">Gateway as Reviewer</SelectItem>
+                      <SelectItem value="api">Manual Token Reviewer JWT (API)</SelectItem>
+                    </SelectContent>
                   </Select>
-                </FormControl>
+                  <FieldError>{error?.message}</FieldError>
+                </Field>
               )}
             />
-          </div>
-          {tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api && (
-            <Controller
-              control={control}
-              defaultValue="2592000"
-              name="kubernetesHost"
-              render={({ field, fieldState: { error } }) => (
-                <FormControl
-                  label="Kubernetes Host / Base Kubernetes API URL "
-                  isError={Boolean(error)}
-                  errorText={error?.message}
-                  tooltipText="The host string, host:port pair, or URL to the base of the Kubernetes API server. This can usually be obtained by running 'kubectl cluster-info'"
-                  isRequired
-                >
-                  <Input
-                    {...field}
-                    placeholder="https://my-example-k8s-api-host.com"
-                    type="text"
-                    value={field.value || ""}
-                    autoComplete="off"
-                  />
-                </FormControl>
-              )}
-            />
-          )}
-
-          {tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api && (
-            <Controller
-              control={control}
-              name="tokenReviewerJwt"
-              render={({ field, fieldState: { error } }) => (
-                <FormControl
-                  tooltipClassName="max-w-md"
-                  label="Token Reviewer JWT"
-                  isError={Boolean(error)}
-                  errorText={error?.message}
-                  tooltipText="Optional JWT token for accessing Kubernetes TokenReview API. If provided, this long-lived token will be used to validate service account tokens during authentication. If omitted, the client's own JWT will be used instead, which requires the client to have the system:auth-delegator ClusterRole binding."
-                >
-                  <Input {...field} placeholder="" type="password" autoComplete="new-password" />
-                </FormControl>
-              )}
-            />
-          )}
-          <Controller
-            control={control}
-            defaultValue=""
-            name="allowedNamespaces"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Allowed Namespaces"
-                isError={Boolean(error)}
-                errorText={error?.message}
-                tooltipText="A comma-separated list of trusted namespaces that service accounts must belong to authenticate with Infisical."
-              >
-                <Input
-                  {...field}
-                  placeholder="namespaceA, namespaceB"
-                  type="text"
-                  autoComplete="off"
-                />
-              </FormControl>
-            )}
-          />
-
-          <Controller
-            control={control}
-            name="allowedNames"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Allowed Service Account Names"
-                isError={Boolean(error)}
-                tooltipText="An optional comma-separated list of trusted service account names that are allowed to authenticate with Infisical. Leave empty to allow any service account."
-                errorText={error?.message}
-              >
-                <Input
-                  {...field}
-                  placeholder="service-account-1-name, service-account-1-name"
-                  autoComplete="off"
-                />
-              </FormControl>
-            )}
-          />
-          <Controller
-            control={control}
-            defaultValue="2592000"
-            name="accessTokenTTL"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Access Token TTL (seconds)"
-                tooltipText="The lifetime for an acccess token in seconds. This value will be referenced at renewal time."
-                isError={Boolean(error)}
-                errorText={error?.message}
-              >
-                <Input {...field} placeholder="2592000" type="number" min="0" step="1" />
-              </FormControl>
-            )}
-          />
-          <Controller
-            control={control}
-            defaultValue="2592000"
-            name="accessTokenMaxTTL"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Access Token Max TTL (seconds)"
-                isError={Boolean(error)}
-                errorText={error?.message}
-                tooltipText="The maximum lifetime for an access token in seconds. This value will be referenced at renewal time."
-              >
-                <Input {...field} placeholder="2592000" type="number" min="0" step="1" />
-              </FormControl>
-            )}
-          />
-          <Controller
-            control={control}
-            defaultValue="0"
-            name="accessTokenNumUsesLimit"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Access Token Max Number of Uses"
-                isError={Boolean(error)}
-                errorText={error?.message}
-                tooltipText="The maximum number of times that an access token can be used; a value of 0 implies infinite number of uses."
-              >
-                <Input {...field} placeholder="0" type="number" min="0" step="1" />
-              </FormControl>
-            )}
-          />
-        </TabPanel>
-        <TabPanel value={IdentityFormTab.Advanced}>
-          <Controller
-            control={control}
-            defaultValue=""
-            name="allowedAudience"
-            render={({ field, fieldState: { error } }) => (
-              <FormControl
-                label="Allowed Audience"
-                isError={Boolean(error)}
-                errorText={error?.message}
-                tooltipText="An optional audience claim that the service account JWT token must have to authenticate with Infisical. Leave empty to allow any audience claim."
-              >
-                <Input {...field} placeholder="" type="text" />
-              </FormControl>
-            )}
-          />
-          {tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api && (
-            <Controller
-              control={control}
-              name="caCert"
-              render={({ field, fieldState: { error } }) => (
-                <FormControl
-                  label="CA Certificate"
-                  errorText={error?.message}
-                  isError={Boolean(error)}
-                  tooltipText="An optional PEM-encoded CA cert for the Kubernetes API server. This is used by the TLS client for secure communication with the Kubernetes API server."
-                >
-                  <TextArea {...field} placeholder="-----BEGIN CERTIFICATE----- ..." />
-                </FormControl>
-              )}
-            />
-          )}
-          {accessTokenTrustedIpsFields.map(({ id }, index) => (
-            <div className="mb-3 flex items-end space-x-2" key={id}>
+            {tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api && (
               <Controller
                 control={control}
-                name={`accessTokenTrustedIps.${index}.ipAddress`}
-                defaultValue="0.0.0.0/0"
-                render={({ field, fieldState: { error } }) => {
-                  return (
-                    <FormControl
-                      className="mb-0 grow"
-                      label={index === 0 ? "Access Token Trusted IPs" : undefined}
-                      isError={Boolean(error)}
-                      errorText={error?.message}
-                      tooltipText="The IPs or CIDR ranges that access tokens can be used from. By default, each token is given the 0.0.0.0/0, allowing usage from any network address."
+                defaultValue="2592000"
+                name="kubernetesHost"
+                render={({ field, fieldState: { error } }) => (
+                  <Field>
+                    <FieldLabel
+                      htmlFor="kubernetesHost"
+                      className="inline-flex items-center gap-1.5"
                     >
-                      <Input
-                        value={field.value}
-                        onChange={(e) => {
-                          if (subscription?.ipAllowlisting) {
-                            field.onChange(e);
-                            return;
-                          }
-
-                          handlePopUpOpen("upgradePlan", {
-                            featureName: "IP allowlisting"
-                          });
-                        }}
-                        placeholder="123.456.789.0"
-                      />
-                    </FormControl>
-                  );
-                }}
+                      Kubernetes Host / Base Kubernetes API URL
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <InfoIcon className="size-3.5 text-muted" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-md">
+                          The host string, host:port pair, or URL to the base of the Kubernetes API
+                          server. This can usually be obtained by running &apos;kubectl
+                          cluster-info&apos;
+                        </TooltipContent>
+                      </Tooltip>
+                    </FieldLabel>
+                    <Input
+                      {...field}
+                      id="kubernetesHost"
+                      placeholder="https://my-example-k8s-api-host.com"
+                      type="text"
+                      value={field.value || ""}
+                      autoComplete="off"
+                      isError={Boolean(error)}
+                    />
+                    <FieldError>{error?.message}</FieldError>
+                  </Field>
+                )}
               />
-              <IconButton
-                onClick={() => {
-                  if (subscription?.ipAllowlisting) {
-                    removeAccessTokenTrustedIp(index);
-                    return;
-                  }
+            )}
 
-                  handlePopUpOpen("upgradePlan", {
-                    featureName: "IP allowlisting"
-                  });
-                }}
-                size="lg"
-                colorSchema="danger"
-                variant="plain"
-                ariaLabel="update"
-                className="p-3"
-              >
-                <FontAwesomeIcon icon={faXmark} />
-              </IconButton>
-            </div>
-          ))}
-          <div className="my-4 ml-1">
-            <Button
-              variant="outline_bg"
-              onClick={() => {
-                if (subscription?.ipAllowlisting) {
-                  appendAccessTokenTrustedIp({
-                    ipAddress: "0.0.0.0/0"
-                  });
-                  return;
-                }
+            {tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api && (
+              <Controller
+                control={control}
+                name="tokenReviewerJwt"
+                render={({ field, fieldState: { error } }) => (
+                  <Field>
+                    <FieldLabel
+                      htmlFor="tokenReviewerJwt"
+                      className="inline-flex items-center gap-1.5"
+                    >
+                      Token Reviewer JWT (optional)
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <InfoIcon className="size-3.5 text-muted" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-md">
+                          Optional JWT token for accessing Kubernetes TokenReview API. If provided,
+                          this long-lived token will be used to validate service account tokens
+                          during authentication. If omitted, the client&apos;s own JWT will be used
+                          instead, which requires the client to have the system:auth-delegator
+                          ClusterRole binding.
+                        </TooltipContent>
+                      </Tooltip>
+                    </FieldLabel>
+                    <Input
+                      {...field}
+                      id="tokenReviewerJwt"
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="eyJhbGciOiJSUzI1NiIs..."
+                      isError={Boolean(error)}
+                    />
+                    <FieldError>{error?.message}</FieldError>
+                  </Field>
+                )}
+              />
+            )}
+            <Controller
+              control={control}
+              defaultValue=""
+              name="allowedNamespaces"
+              render={({ field, fieldState: { error } }) => (
+                <Field>
+                  <FieldLabel
+                    htmlFor="allowedNamespaces"
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    Allowed Namespaces (optional)
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <InfoIcon className="size-3.5 text-muted" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        <div className="flex flex-col gap-1">
+                          <p>
+                            A comma-separated list of trusted namespaces that service accounts must
+                            belong to authenticate with Infisical.
+                          </p>
+                          <p>
+                            Regex and Wildcard patterns are supported. Use{" "}
+                            <span className="font-mono">*</span> to explicitly allow all.
+                          </p>
+                          <p className="text-sm">
+                            Examples: <span className="font-mono">dev-*</span>,{" "}
+                            <span className="font-mono">staging-*</span>,{" "}
+                            <span className="font-mono">team-{"{a,b}"}</span>
+                          </p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </FieldLabel>
+                  <Input
+                    {...field}
+                    id="allowedNamespaces"
+                    placeholder="namespaceA, namespaceB, dev-*"
+                    type="text"
+                    autoComplete="off"
+                    isError={Boolean(error)}
+                  />
+                  <FieldError>{error?.message}</FieldError>
+                </Field>
+              )}
+            />
 
-                handlePopUpOpen("upgradePlan", {
-                  featureName: "IP allowlisting"
-                });
-              }}
-              leftIcon={<FontAwesomeIcon icon={faPlus} />}
-              size="xs"
-            >
-              Add IP Address
-            </Button>
-          </div>
-        </TabPanel>
+            <Controller
+              control={control}
+              name="allowedNames"
+              render={({ field, fieldState: { error } }) => (
+                <Field>
+                  <FieldLabel htmlFor="allowedNames" className="inline-flex items-center gap-1.5">
+                    Allowed Service Account Names (optional)
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <InfoIcon className="size-3.5 text-muted" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        <div className="flex flex-col gap-1">
+                          <p>
+                            An optional comma-separated list of trusted service account names that
+                            are allowed to authenticate with Infisical. Leave empty to allow any
+                            service account.
+                          </p>
+                          <p>
+                            Regex and Wildcard patterns are supported. Use{" "}
+                            <span className="font-mono">*</span> to explicitly allow all.
+                          </p>
+                          <p className="text-sm">
+                            Examples: <span className="font-mono">dev-*</span>,{" "}
+                            <span className="font-mono">staging-*</span>,{" "}
+                            <span className="font-mono">team-{"{a,b}"}</span>
+                          </p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </FieldLabel>
+                  <Input
+                    {...field}
+                    id="allowedNames"
+                    placeholder="service-account-1-name, sa-*, app-*-prod"
+                    autoComplete="off"
+                    isError={Boolean(error)}
+                  />
+                  <FieldError>{error?.message}</FieldError>
+                </Field>
+              )}
+            />
+            <AccessTokenTtlFields control={control} maxAccessTokenTTL={maxAccessTokenTTL} />
+            <AccessTokenNumUsesLimitField control={control} />
+          </FieldGroup>
+        </TabsContent>
+        <TabsContent value={IdentityFormTab.Advanced}>
+          <FieldGroup>
+            <Controller
+              control={control}
+              defaultValue=""
+              name="allowedAudience"
+              render={({ field, fieldState: { error } }) => (
+                <Field>
+                  <FieldLabel
+                    htmlFor="allowedAudience"
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    Allowed Audience (optional)
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <InfoIcon className="size-3.5 text-muted" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-md">
+                        An optional audience claim that the service account JWT token must have to
+                        authenticate with Infisical. Leave empty to allow any audience claim.
+                      </TooltipContent>
+                    </Tooltip>
+                  </FieldLabel>
+                  <Input
+                    {...field}
+                    id="allowedAudience"
+                    type="text"
+                    placeholder="https://kubernetes.default.svc"
+                    isError={Boolean(error)}
+                  />
+                  <FieldError>{error?.message}</FieldError>
+                </Field>
+              )}
+            />
+            {tokenReviewMode === IdentityKubernetesAuthTokenReviewMode.Api && (
+              <>
+                <Controller
+                  control={control}
+                  name="verifyTlsCertificate"
+                  render={({ field: { value, onChange }, fieldState: { error } }) => {
+                    const hasCaCert = Boolean(watch("caCert")?.length);
+                    return (
+                      <Field>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            id="k8s-verify-tls-certificate"
+                            variant={scopeVariant}
+                            checked={hasCaCert ? true : value}
+                            onCheckedChange={onChange}
+                            disabled={hasCaCert}
+                          />
+                          <FieldLabel
+                            htmlFor="k8s-verify-tls-certificate"
+                            className="mb-0 inline-flex items-center gap-1.5"
+                          >
+                            Verify TLS Certificate
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <HelpCircleIcon className="size-3.5 text-muted" />
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-md">
+                                <div className="flex flex-col gap-2">
+                                  {hasCaCert ? (
+                                    <p>
+                                      Verification is always on while a CA certificate is provided.
+                                      To disable verification, clear the CA certificate field below.
+                                    </p>
+                                  ) : (
+                                    <>
+                                      <p>
+                                        When enabled, Infisical validates the Kubernetes API
+                                        server&apos;s TLS certificate against the CA certificate
+                                        provided below.
+                                      </p>
+                                      <p>
+                                        Leaving this disabled means any host that responds at the
+                                        configured Kubernetes URL will be trusted, regardless of its
+                                        certificate. The connection is still over HTTPS, but the API
+                                        server&apos;s identity is not verified. Only do this for
+                                        testing or if you cannot supply a CA certificate.
+                                      </p>
+                                    </>
+                                  )}
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </FieldLabel>
+                        </div>
+                        <FieldError>{error?.message}</FieldError>
+                      </Field>
+                    );
+                  }}
+                />
+                <Controller
+                  control={control}
+                  name="caCert"
+                  render={({ field, fieldState: { error } }) => {
+                    const verifyTlsCertificate = watch("verifyTlsCertificate");
+                    return (
+                      <Field>
+                        <FieldLabel htmlFor="caCert" className="inline-flex items-center gap-1.5">
+                          CA Certificate
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <InfoIcon className="size-3.5 text-muted" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-md">
+                              The PEM-encoded CA certificate that issued the Kubernetes API
+                              server&apos;s TLS certificate. Required when TLS certificate
+                              verification is enabled. Providing a CA certificate forces TLS
+                              verification on.
+                            </TooltipContent>
+                          </Tooltip>
+                        </FieldLabel>
+                        <TextArea
+                          {...field}
+                          id="caCert"
+                          placeholder="-----BEGIN CERTIFICATE----- ..."
+                          isError={Boolean(error)}
+                          onChange={(e) => {
+                            field.onChange(e);
+                            if (e.target.value.length > 0 && !verifyTlsCertificate) {
+                              setValue("verifyTlsCertificate", true, {
+                                shouldDirty: true,
+                                shouldValidate: true
+                              });
+                            }
+                          }}
+                        />
+                        <FieldError>{error?.message}</FieldError>
+                      </Field>
+                    );
+                  }}
+                />
+              </>
+            )}
+            <TrustedIpsField
+              control={control}
+              name="accessTokenTrustedIps"
+              label="Access Token Trusted IPs"
+              isAllowed={Boolean(subscription?.ipAllowlisting)}
+              onUpgradeRequired={() =>
+                handlePopUpOpen("upgradePlan", { featureName: "IP allowlisting" })
+              }
+              tooltip="The IPs or CIDR ranges that access tokens can be used from. By default, each token is given the 0.0.0.0/0, allowing usage from any network address."
+            />
+          </FieldGroup>
+        </TabsContent>
       </Tabs>
-      <div className="flex items-center">
-        <Button
-          className="mr-4"
-          size="sm"
-          type="submit"
-          isLoading={isSubmitting}
-          isDisabled={isSubmitting}
-        >
-          {isUpdate ? "Update" : "Add"}
-        </Button>
-
-        <Button
-          colorSchema="secondary"
-          variant="plain"
-          onClick={() => handlePopUpToggle("identityAuthMethod", false)}
-        >
-          Cancel
-        </Button>
-      </div>
       <VaultKubernetesAuthImportModal
         isOpen={popUp.importFromVault.isOpen}
         onOpenChange={(isOpen) => handleImportPopUpToggle("importFromVault", isOpen)}
+        appConnections={vaultAppConnections}
         onImport={handleImportFromVault}
       />
     </form>

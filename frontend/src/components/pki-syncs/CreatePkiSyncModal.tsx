@@ -12,6 +12,7 @@ type Props = {
   onOpenChange: (isOpen: boolean) => void;
   selectSync?: PkiSync | null;
   initialData?: any;
+  applicationId?: string;
 };
 
 type ContentProps = {
@@ -19,9 +20,16 @@ type ContentProps = {
   selectedSync: PkiSync | null;
   setSelectedSync: (selectedSync: PkiSync | null) => void;
   initialData?: any;
+  applicationId?: string;
 };
 
-const Content = ({ onComplete, setSelectedSync, selectedSync, initialData }: ContentProps) => {
+const Content = ({
+  onComplete,
+  setSelectedSync,
+  selectedSync,
+  initialData,
+  applicationId
+}: ContentProps) => {
   if (selectedSync) {
     return (
       <CreatePkiSyncForm
@@ -29,6 +37,7 @@ const Content = ({ onComplete, setSelectedSync, selectedSync, initialData }: Con
         onCancel={() => setSelectedSync(null)}
         destination={selectedSync}
         initialData={initialData}
+        applicationId={applicationId}
       />
     );
   }
@@ -40,6 +49,7 @@ export const CreatePkiSyncModal = ({
   onOpenChange,
   selectSync = null,
   initialData,
+  applicationId,
   ...props
 }: Props) => {
   const [selectedSync, setSelectedSync] = useState<PkiSync | null>(selectSync);
@@ -65,7 +75,7 @@ export const CreatePkiSyncModal = ({
           )
         }
         className="max-w-3xl"
-        bodyClassName="overflow-visible"
+        bodyClassName={selectedSync ? "overflow-visible" : undefined}
         subTitle={
           selectedSync ? undefined : "Select a third-party service to sync certificates to."
         }
@@ -78,6 +88,7 @@ export const CreatePkiSyncModal = ({
           selectedSync={selectedSync}
           setSelectedSync={setSelectedSync}
           initialData={initialData}
+          applicationId={applicationId}
         />
       </ModalContent>
     </Modal>

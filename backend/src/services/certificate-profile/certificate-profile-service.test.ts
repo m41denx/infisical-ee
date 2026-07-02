@@ -5,19 +5,19 @@
 import { ForbiddenError } from "@casl/ability";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
 import type { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
-import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
+import { ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
 
 import { ActorType, AuthMethod } from "../auth/auth-type";
 import type { TCertificateBodyDALFactory } from "../certificate/certificate-body-dal";
 import type { TCertificateSecretDALFactory } from "../certificate/certificate-secret-dal";
-import type { TCertificateAuthorityCertDALFactory } from "../certificate-authority/certificate-authority-cert-dal";
 import type { TCertificateAuthorityDALFactory } from "../certificate-authority/certificate-authority-dal";
-import type { TCertificateTemplateV2DALFactory } from "../certificate-template-v2/certificate-template-v2-dal";
+import type { TExternalCertificateAuthorityDALFactory } from "../certificate-authority/external-certificate-authority-dal";
+import type { TCertificatePolicyDALFactory } from "../certificate-policy/certificate-policy-dal";
 import { TAcmeEnrollmentConfigDALFactory } from "../enrollment-config/acme-enrollment-config-dal";
 import type { TApiEnrollmentConfigDALFactory } from "../enrollment-config/api-enrollment-config-dal";
 import type { TEstEnrollmentConfigDALFactory } from "../enrollment-config/est-enrollment-config-dal";
+import type { TScepEnrollmentConfigDALFactory } from "../enrollment-config/scep-enrollment-config-dal";
 import type { TKmsServiceFactory } from "../kms/kms-service";
 import type { TProjectDALFactory } from "../project/project-dal";
 import type { TCertificateProfileDALFactory } from "./certificate-profile-dal";
@@ -66,7 +66,7 @@ describe("CertificateProfileService", () => {
     delete: vi.fn()
   } as unknown as TCertificateProfileDALFactory;
 
-  const mockCertificateTemplateV2DAL = {
+  const mockCertificatePolicyDAL = {
     findById: vi.fn(),
     create: vi.fn(),
     updateById: vi.fn(),
@@ -80,7 +80,7 @@ describe("CertificateProfileService", () => {
     findOne: vi.fn(),
     update: vi.fn(),
     delete: vi.fn()
-  } as unknown as TCertificateTemplateV2DALFactory;
+  } as unknown as TCertificatePolicyDALFactory;
 
   const mockActor = {
     actor: ActorType.USER,
@@ -97,9 +97,11 @@ describe("CertificateProfileService", () => {
     enrollmentType: EnrollmentType.API,
     issuerType: IssuerType.CA,
     caId: "ca-123",
-    certificateTemplateId: "template-123",
+    certificatePolicyId: "policy-123",
     apiConfigId: "api-config-123",
     estConfigId: null,
+    externalConfigs: null,
+    defaults: null,
     createdAt: new Date(),
     updatedAt: new Date()
   };
@@ -112,11 +114,11 @@ describe("CertificateProfileService", () => {
       status: "active",
       name: "Test CA"
     },
-    certificateTemplate: {
-      id: "template-123",
+    certificatePolicy: {
+      id: "policy-123",
       projectId: "project-123",
-      name: "Test Template",
-      description: "Test template"
+      name: "Test Policy",
+      description: "Test policy"
     },
     apiConfig: {
       id: "api-config-123",
@@ -125,10 +127,10 @@ describe("CertificateProfileService", () => {
     }
   };
 
-  const sampleTemplate = {
-    id: "template-123",
+  const samplePolicy = {
+    id: "policy-123",
     projectId: "project-123",
-    name: "Test Template"
+    name: "Test Policy"
   };
 
   const mockApiEnrollmentConfigDAL = {
@@ -165,17 +167,33 @@ describe("CertificateProfileService", () => {
     delete: vi.fn()
   } as unknown as TAcmeEnrollmentConfigDALFactory;
 
+  const mockScepEnrollmentConfigDAL = {
+    create: vi.fn().mockResolvedValue({ id: "scep-config-123" }),
+    findById: vi.fn(),
+    updateById: vi.fn(),
+    transaction: vi.fn(),
+    find: vi.fn(),
+    findOne: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn()
+  } as unknown as TScepEnrollmentConfigDALFactory;
+
   const mockPermissionService = {
     getProjectPermission: vi.fn().mockResolvedValue({
       permission: {
-        throwUnlessCan: vi.fn()
+        can: vi.fn().mockReturnValue(true),
+        throwUnlessCan: vi.fn(),
+        rules: []
+      }
+    }),
+    getResourcePermission: vi.fn().mockResolvedValue({
+      permission: {
+        can: vi.fn().mockReturnValue(true),
+        throwUnlessCan: vi.fn(),
+        rules: []
       }
     })
-  } as unknown as Pick<TPermissionServiceFactory, "getProjectPermission">;
-
-  const mockLicenseService = {
-    getPlan: vi.fn()
-  } as unknown as Pick<TLicenseServiceFactory, "getPlan">;
+  } as unknown as Pick<TPermissionServiceFactory, "getProjectPermission" | "getResourcePermission">;
 
   const mockKmsService = {
     encryptWithKmsKey: vi
@@ -229,17 +247,18 @@ describe("CertificateProfileService", () => {
     delete: vi.fn()
   } as unknown as TCertificateAuthorityDALFactory;
 
-  const mockCertificateAuthorityCertDAL = {
-    create: vi.fn(),
+  const mockExternalCertificateAuthorityDAL = {
     findById: vi.fn(),
-    updateById: vi.fn(),
-    deleteById: vi.fn(),
-    transaction: vi.fn(),
-    find: vi.fn(),
-    findOne: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn()
-  } as unknown as TCertificateAuthorityCertDALFactory;
+    findOne: vi.fn()
+  } as unknown as Pick<TExternalCertificateAuthorityDALFactory, "findById" | "findOne">;
+
+  const mockResourceMetadataDAL = {
+    find: vi.fn().mockResolvedValue([])
+  };
+
+  const mockCertificatePolicyService = {
+    validateRequestAgainstPolicy: vi.fn().mockReturnValue({ isValid: true, errors: [], warnings: [] })
+  };
 
   beforeEach(() => {
     vi.spyOn(ForbiddenError, "from").mockReturnValue({
@@ -252,20 +271,28 @@ describe("CertificateProfileService", () => {
       return await fn();
     });
 
+    (mockCertificateAuthorityDAL.findById as any).mockResolvedValue({
+      id: "ca-123",
+      projectId: "project-123"
+    });
+
     service = certificateProfileServiceFactory({
       certificateProfileDAL: mockCertificateProfileDAL,
-      certificateTemplateV2DAL: mockCertificateTemplateV2DAL,
+      certificatePolicyDAL: mockCertificatePolicyDAL,
+      certificatePolicyService: mockCertificatePolicyService,
       apiEnrollmentConfigDAL: mockApiEnrollmentConfigDAL,
       estEnrollmentConfigDAL: mockEstEnrollmentConfigDAL,
       acmeEnrollmentConfigDAL: mockAcmeEnrollmentConfigDAL,
+      scepEnrollmentConfigDAL: mockScepEnrollmentConfigDAL,
+      scepDynamicChallengeDAL: { deleteByConfigId: vi.fn() },
       certificateBodyDAL: mockCertificateBodyDAL,
       certificateSecretDAL: mockCertificateSecretDAL,
       certificateAuthorityDAL: mockCertificateAuthorityDAL,
-      certificateAuthorityCertDAL: mockCertificateAuthorityCertDAL,
+      externalCertificateAuthorityDAL: mockExternalCertificateAuthorityDAL,
       permissionService: mockPermissionService,
-      licenseService: mockLicenseService,
       kmsService: mockKmsService,
-      projectDAL: mockProjectDAL
+      projectDAL: mockProjectDAL,
+      resourceMetadataDAL: mockResourceMetadataDAL
     });
   });
 
@@ -280,7 +307,7 @@ describe("CertificateProfileService", () => {
       enrollmentType: EnrollmentType.API,
       issuerType: IssuerType.CA,
       caId: "ca-123",
-      certificateTemplateId: "template-123",
+      certificatePolicyId: "policy-123",
       apiConfig: {
         autoRenew: true,
         renewBeforeDays: 30
@@ -292,10 +319,7 @@ describe("CertificateProfileService", () => {
         id: "project-123",
         orgId: "org-123"
       });
-      (mockLicenseService.getPlan as any).mockResolvedValue({
-        pkiAcme: true
-      });
-      (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(sampleTemplate);
+      (mockCertificatePolicyDAL.findById as any).mockResolvedValue(samplePolicy);
       (mockCertificateProfileDAL.findByNameAndProjectId as any).mockResolvedValue(null);
       (mockCertificateProfileDAL.findBySlugAndProjectId as any).mockResolvedValue(null);
       (mockCertificateProfileDAL.create as any).mockResolvedValue({
@@ -312,7 +336,7 @@ describe("CertificateProfileService", () => {
       });
 
       expect(result).toEqual(sampleProfile);
-      expect(mockCertificateTemplateV2DAL.findById).toHaveBeenCalledWith("template-123");
+      expect(mockCertificatePolicyDAL.findById).toHaveBeenCalledWith("policy-123");
       expect(mockCertificateProfileDAL.findBySlugAndProjectId).toHaveBeenCalledWith("new-profile", "project-123");
       expect(mockCertificateProfileDAL.create).toHaveBeenCalledWith(
         {
@@ -321,10 +345,11 @@ describe("CertificateProfileService", () => {
           enrollmentType: EnrollmentType.API,
           issuerType: IssuerType.CA,
           caId: "ca-123",
-          certificateTemplateId: "template-123",
+          certificatePolicyId: "policy-123",
           apiConfigId: "api-config-123",
           estConfigId: null,
           acmeConfigId: null,
+          scepConfigId: null,
           projectId: "project-123"
         },
         undefined
@@ -332,7 +357,7 @@ describe("CertificateProfileService", () => {
     });
 
     it("should throw NotFoundError when certificate template not found", async () => {
-      (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(null);
+      (mockCertificatePolicyDAL.findById as any).mockResolvedValue(null);
 
       await expect(
         service.createProfile({
@@ -344,8 +369,8 @@ describe("CertificateProfileService", () => {
     });
 
     it("should throw ForbiddenRequestError when template belongs to different project", async () => {
-      (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue({
-        ...sampleTemplate,
+      (mockCertificatePolicyDAL.findById as any).mockResolvedValue({
+        ...samplePolicy,
         projectId: "different-project"
       });
 
@@ -370,39 +395,39 @@ describe("CertificateProfileService", () => {
       ).rejects.toThrow(ForbiddenRequestError);
     });
 
-    it("should throw ForbiddenRequestError for EST enrollment without EST config", async () => {
-      const invalidData = {
+    it("should create profile with EST enrollment type but no EST config (config attached to Application junction)", async () => {
+      const data = {
         ...validProfileData,
         enrollmentType: EnrollmentType.EST,
         estConfigId: null
       };
 
-      await expect(
-        service.createProfile({
-          ...mockActor,
-          projectId: "project-123",
-          data: invalidData
-        })
-      ).rejects.toThrow(ForbiddenRequestError);
+      const result = await service.createProfile({
+        ...mockActor,
+        projectId: "project-123",
+        data
+      });
+
+      expect(result).toBeDefined();
     });
 
-    it("should throw ForbiddenRequestError for API enrollment without API config", async () => {
-      const invalidData = {
+    it("should create profile with API enrollment type but no API config (config attached to Application junction)", async () => {
+      const data = {
         slug: "invalid-profile",
         description: "Invalid test profile",
         enrollmentType: EnrollmentType.API,
         issuerType: IssuerType.CA,
         caId: "ca-123",
-        certificateTemplateId: "template-123"
+        certificatePolicyId: "policy-123"
       };
 
-      await expect(
-        service.createProfile({
-          ...mockActor,
-          projectId: "project-123",
-          data: invalidData
-        })
-      ).rejects.toThrow(ForbiddenRequestError);
+      const result = await service.createProfile({
+        ...mockActor,
+        projectId: "project-123",
+        data
+      });
+
+      expect(result).toBeDefined();
     });
 
     it("should create profile with API enrollment", async () => {
@@ -412,7 +437,7 @@ describe("CertificateProfileService", () => {
         enrollmentType: EnrollmentType.API,
         issuerType: IssuerType.CA,
         caId: "ca-123",
-        certificateTemplateId: "template-123",
+        certificatePolicyId: "policy-123",
         apiConfig: {
           autoRenew: true,
           renewBeforeDays: 30
@@ -426,31 +451,7 @@ describe("CertificateProfileService", () => {
       });
 
       expect(result).toEqual(sampleProfile);
-      expect(mockCertificateTemplateV2DAL.findById).toHaveBeenCalledWith("template-123");
-    });
-
-    it("should throw BadRequestError when plan does not support ACME", async () => {
-      (mockLicenseService.getPlan as any).mockResolvedValue({
-        pkiAcme: false
-      });
-
-      await expect(
-        service.createProfile({
-          ...mockActor,
-          projectId: "project-123",
-          data: {
-            ...validProfileData,
-            enrollmentType: EnrollmentType.ACME,
-            acmeConfig: {},
-            apiConfig: undefined,
-            estConfig: undefined
-          }
-        })
-      ).rejects.toThrowError(
-        new BadRequestError({
-          message: "Failed to create certificate profile: Plan restriction. Upgrade plan to continue"
-        })
-      );
+      expect(mockCertificatePolicyDAL.findById).toHaveBeenCalledWith("policy-123");
     });
   });
 
@@ -493,12 +494,12 @@ describe("CertificateProfileService", () => {
       ).rejects.toThrow(NotFoundError);
     });
 
-    it("should validate certificate template when updating", async () => {
-      (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(sampleTemplate);
+    it("should validate certificate policy when updating", async () => {
+      (mockCertificatePolicyDAL.findById as any).mockResolvedValue(samplePolicy);
 
       const updateWithTemplate = {
         ...updateData,
-        certificateTemplateId: "template-123"
+        certificatePolicyId: "policy-123"
       };
 
       await service.updateProfile({
@@ -507,7 +508,7 @@ describe("CertificateProfileService", () => {
         data: updateWithTemplate
       });
 
-      expect(mockCertificateTemplateV2DAL.findById).toHaveBeenCalledWith("template-123");
+      expect(mockCertificatePolicyDAL.findById).toHaveBeenCalledWith("policy-123");
     });
   });
 
@@ -604,13 +605,18 @@ describe("CertificateProfileService", () => {
 
       expect(result.profiles).toEqual(mockProfiles);
       expect(result.totalCount).toBe(1);
-      expect(mockCertificateProfileDAL.findByProjectId).toHaveBeenCalledWith("project-123", {
-        offset: 0,
-        limit: 20,
-        search: undefined,
-        enrollmentType: undefined,
-        caId: undefined
-      });
+      expect(mockCertificateProfileDAL.findByProjectId).toHaveBeenCalledWith(
+        "project-123",
+        {
+          offset: 0,
+          limit: 20,
+          search: undefined,
+          enrollmentType: undefined,
+          caId: undefined,
+          issuerType: undefined
+        },
+        { allowRules: [], forbidRules: [] }
+      );
     });
 
     it("should list profiles with filters", async () => {
@@ -624,13 +630,18 @@ describe("CertificateProfileService", () => {
         caId: "ca-123"
       });
 
-      expect(mockCertificateProfileDAL.findByProjectId).toHaveBeenCalledWith("project-123", {
-        offset: 10,
-        limit: 5,
-        search: "test",
-        enrollmentType: EnrollmentType.API,
-        caId: "ca-123"
-      });
+      expect(mockCertificateProfileDAL.findByProjectId).toHaveBeenCalledWith(
+        "project-123",
+        {
+          offset: 10,
+          limit: 5,
+          search: "test",
+          enrollmentType: EnrollmentType.API,
+          caId: "ca-123",
+          issuerType: undefined
+        },
+        { allowRules: [], forbidRules: [] }
+      );
     });
   });
 
@@ -738,7 +749,7 @@ describe("CertificateProfileService", () => {
           enrollmentType: EnrollmentType.EST,
           issuerType: IssuerType.CA,
           caId: "ca-123",
-          certificateTemplateId: "template-123",
+          certificatePolicyId: "policy-123",
           estConfig: {
             disableBootstrapCaValidation: false,
             passphrase: "secret-passphrase",
@@ -751,10 +762,7 @@ describe("CertificateProfileService", () => {
           id: "project-123",
           orgId: "org-123"
         });
-        (mockLicenseService.getPlan as any).mockResolvedValue({
-          pkiAcme: true
-        });
-        (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(sampleTemplate);
+        (mockCertificatePolicyDAL.findById as any).mockResolvedValue(samplePolicy);
         (mockCertificateProfileDAL.findByNameAndProjectId as any).mockResolvedValue(null);
         (mockCertificateProfileDAL.findBySlugAndProjectId as any).mockResolvedValue(null);
         (mockCertificateProfileDAL.create as any).mockResolvedValue({
@@ -789,14 +797,14 @@ describe("CertificateProfileService", () => {
           enrollmentType: EnrollmentType.API,
           issuerType: IssuerType.CA,
           caId: "ca-123",
-          certificateTemplateId: "template-123",
+          certificatePolicyId: "policy-123",
           apiConfig: {
             autoRenew: true,
             renewBeforeDays: 30
           }
         };
 
-        (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(sampleTemplate);
+        (mockCertificatePolicyDAL.findById as any).mockResolvedValue(samplePolicy);
         (mockCertificateProfileDAL.findBySlugAndProjectId as any).mockResolvedValue(sampleProfile);
 
         await expect(
@@ -815,14 +823,14 @@ describe("CertificateProfileService", () => {
           enrollmentType: EnrollmentType.API,
           issuerType: IssuerType.CA,
           caId: "ca-123",
-          certificateTemplateId: "template-123",
+          certificatePolicyId: "policy-123",
           apiConfig: {
             autoRenew: true,
             renewBeforeDays: 7
           }
         };
 
-        (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(sampleTemplate);
+        (mockCertificatePolicyDAL.findById as any).mockResolvedValue(samplePolicy);
         (mockCertificateProfileDAL.findByNameAndProjectId as any).mockResolvedValue(null);
         (mockCertificateProfileDAL.findBySlugAndProjectId as any).mockResolvedValue(null);
         (mockCertificateProfileDAL.create as any).mockResolvedValue({
@@ -980,13 +988,13 @@ describe("CertificateProfileService", () => {
           enrollmentType: EnrollmentType.API,
           issuerType: IssuerType.CA,
           caId: "ca-123",
-          certificateTemplateId: "nonexistent-template",
+          certificatePolicyId: "nonexistent-template",
           apiConfig: {
             autoRenew: false
           }
         };
 
-        (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(null);
+        (mockCertificatePolicyDAL.findById as any).mockResolvedValue(null);
 
         await expect(
           service.createProfile({
@@ -996,7 +1004,7 @@ describe("CertificateProfileService", () => {
           })
         ).rejects.toThrow(NotFoundError);
 
-        expect(mockCertificateTemplateV2DAL.findById).toHaveBeenCalledWith("nonexistent-template");
+        expect(mockCertificatePolicyDAL.findById).toHaveBeenCalledWith("nonexistent-template");
       });
 
       it("should handle concurrent profile creation conflicts", async () => {
@@ -1006,13 +1014,13 @@ describe("CertificateProfileService", () => {
           enrollmentType: EnrollmentType.API,
           issuerType: IssuerType.CA,
           caId: "ca-123",
-          certificateTemplateId: "template-123",
+          certificatePolicyId: "policy-123",
           apiConfig: {
             autoRenew: false
           }
         };
 
-        (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(sampleTemplate);
+        (mockCertificatePolicyDAL.findById as any).mockResolvedValue(samplePolicy);
         (mockCertificateProfileDAL.findByNameAndProjectId as any).mockResolvedValue(null);
         (mockCertificateProfileDAL.findBySlugAndProjectId as any).mockResolvedValue(null);
         (mockCertificateProfileDAL.create as any).mockRejectedValue(new Error("Unique constraint violation"));
@@ -1035,7 +1043,7 @@ describe("CertificateProfileService", () => {
           enrollmentType: EnrollmentType.API,
           issuerType: IssuerType.CA,
           caId: "ca-123",
-          certificateTemplateId: "template-456",
+          certificatePolicyId: "template-456",
           apiConfig: {
             autoRenew: false
           }
@@ -1047,7 +1055,7 @@ describe("CertificateProfileService", () => {
           slug: "foreign-template"
         };
 
-        (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(foreignTemplate);
+        (mockCertificatePolicyDAL.findById as any).mockResolvedValue(foreignTemplate);
 
         await expect(
           service.createProfile({
@@ -1065,13 +1073,13 @@ describe("CertificateProfileService", () => {
           enrollmentType: EnrollmentType.API,
           issuerType: IssuerType.CA,
           caId: "ca-123",
-          certificateTemplateId: "template-123",
+          certificatePolicyId: "policy-123",
           apiConfig: {
             autoRenew: false
           }
         };
 
-        (mockCertificateTemplateV2DAL.findById as any).mockResolvedValue(sampleTemplate);
+        (mockCertificatePolicyDAL.findById as any).mockResolvedValue(samplePolicy);
         (mockCertificateProfileDAL.findByNameAndProjectId as any).mockResolvedValue(null);
         (mockCertificateProfileDAL.findBySlugAndProjectId as any).mockResolvedValue(null);
         (mockCertificateProfileDAL.create as any).mockResolvedValue({

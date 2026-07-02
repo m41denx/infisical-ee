@@ -1,11 +1,14 @@
 import { Knex } from "knex";
 
 import { TDbClient } from "@app/db";
-import { AccessScope, AccessScopeData, MembershipsSchema, TableName } from "@app/db/schemas";
+import { AccessScope, AccessScopeData, MembershipsSchema, TableName, TGroups } from "@app/db/schemas";
 import { BadRequestError, DatabaseError } from "@app/lib/errors";
 import { ormify, selectAllTableCols, sqlNestRelationships } from "@app/lib/knex";
 import { buildKnexFilterForSearchResource } from "@app/lib/search-resource/db";
 import { TSearchResourceOperator } from "@app/lib/search-resource/search";
+import { OrderByDirection } from "@app/lib/types";
+
+import { OrgGroupsOrderBy } from "./membership-group-types";
 
 export type TMembershipGroupDALFactory = ReturnType<typeof membershipGroupDALFactory>;
 
@@ -18,6 +21,8 @@ type TFindGroupArg = {
     groupId: string;
     name: Omit<TSearchResourceOperator, "number">;
     role: Omit<TSearchResourceOperator, "number">;
+    orderBy: OrgGroupsOrderBy;
+    orderDirection: OrderByDirection;
   }>;
 };
 
@@ -42,10 +47,6 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
         .where((qb) => {
           if (scopeData.scope === AccessScope.Organization) {
             void qb.where(`${TableName.Membership}.scope`, AccessScope.Organization);
-          } else if (scopeData.scope === AccessScope.Namespace) {
-            void qb
-              .where(`${TableName.Membership}.scope`, AccessScope.Namespace)
-              .where(`${TableName.Membership}.scopeNamespaceId`, scopeData.namespaceId);
           } else if (scopeData.scope === AccessScope.Project) {
             void qb
               .where(`${TableName.Membership}.scope`, AccessScope.Project)
@@ -56,6 +57,9 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
         .select(
           db.ref("name").withSchema(TableName.Groups).as("groupName"),
           db.ref("slug").withSchema(TableName.Groups).as("groupSlug"),
+          db.ref("orgId").withSchema(TableName.Groups).as("groupOrgId"),
+          db.ref("createdAt").withSchema(TableName.Groups).as("groupCreatedAt"),
+          db.ref("updatedAt").withSchema(TableName.Groups).as("groupUpdatedAt"),
           db.ref("slug").withSchema(TableName.Role).as("roleSlug"),
           db.ref("name").withSchema(TableName.Role).as("roleName"),
           db.ref("id").withSchema(TableName.MembershipRole).as("membershipRoleId"),
@@ -79,14 +83,17 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
         data: docs,
         key: "id",
         parentMapper: (el) => {
-          const { groupName, groupSlug } = el;
+          const { groupName, groupSlug, groupOrgId, groupCreatedAt, groupUpdatedAt } = el;
           return {
             ...MembershipsSchema.parse(el),
             group: {
               id: groupId,
               name: groupName,
-              slug: groupSlug
-            }
+              slug: groupSlug,
+              orgId: groupOrgId,
+              createdAt: groupCreatedAt,
+              updatedAt: groupUpdatedAt
+            } as TGroups
           };
         },
         childrenMapper: [
@@ -130,12 +137,12 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
 
   const findGroups = async ({ scopeData, tx, filter }: TFindGroupArg) => {
     try {
-      const paginatedGroups = (tx || db.replicaNode())(TableName.Membership)
+      // Base filtered query (no pagination) — shared for count and ID subquery
+      const baseFilterQuery = (tx || db.replicaNode())(TableName.Membership)
         .whereNotNull(`${TableName.Membership}.actorGroupId`)
         .join(TableName.Groups, `${TableName.Groups}.id`, `${TableName.Membership}.actorGroupId`)
         .join(TableName.MembershipRole, `${TableName.Membership}.id`, `${TableName.MembershipRole}.membershipId`)
         .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
-        .distinct(`${TableName.Membership}.id`)
         .where(`${TableName.Membership}.scopeOrgId`, scopeData.orgId)
         .where((qb) => {
           if (filter.groupId) {
@@ -144,10 +151,6 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
 
           if (scopeData.scope === AccessScope.Organization) {
             void qb.where(`${TableName.Membership}.scope`, AccessScope.Organization);
-          } else if (scopeData.scope === AccessScope.Namespace) {
-            void qb
-              .where(`${TableName.Membership}.scope`, AccessScope.Namespace)
-              .where(`${TableName.Membership}.scopeNamespaceId`, scopeData.namespaceId);
           } else if (scopeData.scope === AccessScope.Project) {
             void qb
               .where(`${TableName.Membership}.scope`, AccessScope.Project)
@@ -155,15 +158,12 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
           }
         });
 
-      if (filter.limit) void paginatedGroups.limit(filter.limit);
-      if (filter.offset) void paginatedGroups.offset(filter.offset);
-
       if (filter.name || filter.role) {
         buildKnexFilterForSearchResource(
-          paginatedGroups,
+          baseFilterQuery,
           {
-            name: filter.name!,
-            role: filter.role!
+            ...(filter.name && { name: filter.name }),
+            ...(filter.role && { role: filter.role })
           },
           (attr) => {
             switch (attr) {
@@ -178,19 +178,59 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
         );
       }
 
+      // Count total matching groups (without pagination)
+      const [countResult] = (await baseFilterQuery.clone().countDistinct(`${TableName.Membership}.id as count`)) as [
+        { count: string | number }?
+      ];
+      const totalCount = Number(countResult?.count ?? 0);
+
+      const dir = filter.orderDirection === OrderByDirection.DESC ? "DESC" : "ASC";
+
+      const paginatedGroupByColumns = [`${TableName.Membership}.id`, `${TableName.Groups}.name`];
+      let paginatedOrderByRaw: string;
+      let outerOrderByRaw: string;
+
+      switch (filter.orderBy) {
+        case OrgGroupsOrderBy.Slug:
+          paginatedGroupByColumns.push(`${TableName.Groups}.slug`);
+          paginatedOrderByRaw = `LOWER("${TableName.Groups}"."slug") ${dir}`;
+          outerOrderByRaw = `LOWER("${TableName.Groups}"."slug") ${dir}`;
+          break;
+        case OrgGroupsOrderBy.Role:
+          paginatedOrderByRaw = `MIN(LOWER(COALESCE("${TableName.Role}"."slug", "${TableName.MembershipRole}"."role"))) ${dir}`;
+          outerOrderByRaw = `LOWER(COALESCE("${TableName.Role}"."slug", "${TableName.MembershipRole}"."role")) ${dir}`;
+          break;
+        default:
+          paginatedOrderByRaw = `LOWER("${TableName.Groups}"."name") ${dir}`;
+          outerOrderByRaw = `LOWER("${TableName.Groups}"."name") ${dir}`;
+      }
+
+      // Paginated IDs subquery
+      const paginatedGroups = baseFilterQuery
+        .clone()
+        .clearSelect()
+        .select(`${TableName.Membership}.id`)
+        .groupBy(...paginatedGroupByColumns)
+        .orderByRaw(paginatedOrderByRaw)
+        .orderBy(`${TableName.Membership}.id`, "asc");
+      if (filter.limit) void paginatedGroups.limit(filter.limit);
+      if (filter.offset) void paginatedGroups.offset(filter.offset);
+
       const docs = await (tx || db.replicaNode())(TableName.Membership)
         .whereNotNull(`${TableName.Membership}.actorGroupId`)
         .join(TableName.Groups, `${TableName.Groups}.id`, `${TableName.Membership}.actorGroupId`)
         .join(TableName.MembershipRole, `${TableName.Membership}.id`, `${TableName.MembershipRole}.membershipId`)
         .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
-        .distinct(`${TableName.Membership}.id`)
         .where(`${TableName.Membership}.scopeOrgId`, scopeData.orgId)
         .whereIn(`${TableName.Membership}.id`, paginatedGroups)
+        .orderByRaw(outerOrderByRaw)
+        .orderBy(`${TableName.Membership}.id`, "asc")
         .select(selectAllTableCols(TableName.Membership))
         .select(
           db.ref("name").withSchema(TableName.Groups).as("groupName"),
           db.ref("slug").withSchema(TableName.Groups).as("groupSlug"),
           db.ref("id").withSchema(TableName.Groups).as("groupId"),
+          db.ref("orgId").withSchema(TableName.Groups).as("groupOrgId"),
 
           db.ref("slug").withSchema(TableName.Role).as("roleSlug"),
           db.ref("name").withSchema(TableName.Role).as("roleName"),
@@ -209,24 +249,20 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
             .as("membershipRoleTemporaryAccessEndTime"),
           db.ref("createdAt").withSchema(TableName.MembershipRole).as("membershipRoleCreatedAt"),
           db.ref("updatedAt").withSchema(TableName.MembershipRole).as("membershipRoleUpdatedAt")
-        )
-        .select(
-          db.raw(
-            `count(${TableName.Membership}."actorGroupId") OVER(PARTITION BY ${TableName.Membership}."scopeOrgId") as total`
-          )
         );
 
       const data = sqlNestRelationships({
         data: docs,
         key: "id",
         parentMapper: (el) => {
-          const { groupId, groupName, groupSlug } = el;
+          const { groupId, groupName, groupSlug, groupOrgId } = el;
           return {
             ...MembershipsSchema.parse(el),
             group: {
               id: groupId,
               name: groupName,
-              slug: groupSlug
+              slug: groupSlug,
+              ...(groupOrgId != null && { orgId: groupOrgId })
             }
           };
         },
@@ -262,11 +298,68 @@ export const membershipGroupDALFactory = (db: TDbClient) => {
           }
         ]
       });
-      return { data, totalCount: Number((data?.[0] as unknown as { total: number })?.total ?? 0) };
+      return { data, totalCount };
     } catch (error) {
       throw new DatabaseError({ error, name: "MembershipfindGroup" });
     }
   };
 
-  return { ...orm, findGroups, getGroupById };
+  type TFindEffectiveInOrgArg = {
+    scopeOrgId: string;
+    excludeMembershipIds: string[];
+    userIds: string[];
+    identityIds: string[];
+    groupIds: string[];
+    tx?: Knex;
+  };
+
+  /**
+   * Find all memberships in an org that grant access to the given actors (users, identities, or groups).
+   * Used to determine which actors still have at least one membership after excluding some (e.g. when unlinking a group).
+   */
+  const findEffectiveInOrg = async ({
+    scopeOrgId,
+    excludeMembershipIds,
+    userIds,
+    identityIds,
+    groupIds,
+    tx
+  }: TFindEffectiveInOrgArg) => {
+    try {
+      if (userIds.length === 0 && identityIds.length === 0 && groupIds.length === 0) {
+        return [];
+      }
+
+      const qb = (tx || db.replicaNode())(TableName.Membership)
+        .where(`${TableName.Membership}.scopeOrgId`, scopeOrgId)
+        .where(`${TableName.Membership}.scope`, AccessScope.Organization)
+        .where((inner) => {
+          if (userIds.length > 0) void inner.orWhereIn(`${TableName.Membership}.actorUserId`, userIds);
+          if (identityIds.length > 0) void inner.orWhereIn(`${TableName.Membership}.actorIdentityId`, identityIds);
+          if (groupIds.length > 0) void inner.orWhereIn(`${TableName.Membership}.actorGroupId`, groupIds);
+        })
+        .select(
+          `${TableName.Membership}.id`,
+          `${TableName.Membership}.actorUserId`,
+          `${TableName.Membership}.actorIdentityId`,
+          `${TableName.Membership}.actorGroupId`
+        );
+
+      if (excludeMembershipIds.length > 0) {
+        void qb.whereNotIn(`${TableName.Membership}.id`, excludeMembershipIds);
+      }
+
+      const rows = await qb;
+      return rows as Array<{
+        id: string;
+        actorUserId: string | null;
+        actorIdentityId: string | null;
+        actorGroupId: string | null;
+      }>;
+    } catch (error) {
+      throw new DatabaseError({ error, name: "MembershipFindEffectiveInOrg" });
+    }
+  };
+
+  return { ...orm, findGroups, getGroupById, findEffectiveInOrg };
 };

@@ -1,13 +1,15 @@
 import { z } from "zod";
 
-import { UsersSchema } from "@app/db/schemas";
 import { getConfig } from "@app/lib/config/env";
 import { ForbiddenRequestError } from "@app/lib/errors";
 import { authRateLimit, smtpRateLimit } from "@app/server/config/rateLimiter";
 import { addAuthOriginDomainCookie } from "@app/server/lib/cookie";
 import { GenericResourceNameSchema } from "@app/server/lib/schemas";
+import { CompleteAccountType } from "@app/services/auth/auth-signup-type";
 import { getServerCfg } from "@app/services/super-admin/super-admin-service";
 import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
+
+import { SanitizedUserSchema } from "../sanitizedSchemas";
 
 export const registerSignupRouter = async (server: FastifyZodProvider) => {
   server.route({
@@ -19,12 +21,14 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
       })
     },
     schema: {
+      operationId: "beginEmailSignupV3",
       body: z.object({
         email: z.string().email().trim()
       }),
       response: {
         200: z.object({
-          message: z.string()
+          message: z.string(),
+          cooldownSeconds: z.number()
         })
       }
     },
@@ -47,8 +51,8 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
           });
         }
       }
-      await server.services.signup.beginEmailSignupProcess(email);
-      return { message: `Sent an email verification code to ${email}` };
+      const { cooldownSeconds } = await server.services.signup.beginEmailSignupProcess(email);
+      return { message: `Sent an email verification code to ${email}`, cooldownSeconds };
     }
   });
 
@@ -57,10 +61,12 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
     method: "POST",
     config: {
       rateLimit: smtpRateLimit({
-        keyGenerator: (req) => (req.body as { email?: string })?.email?.trim().substring(0, 100) || req.realIp
+        keyGenerator: (req) =>
+          (req.body as { email?: string })?.email?.trim()?.toLowerCase().substring(0, 100) || req.realIp
       })
     },
     schema: {
+      operationId: "verifyEmailSignupV3",
       body: z.object({
         email: z.string().email().trim(),
         code: z.string().trim()
@@ -69,7 +75,7 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
         200: z.object({
           message: z.string(),
           token: z.string(),
-          user: UsersSchema
+          user: SanitizedUserSchema
         })
       }
     },
@@ -87,105 +93,34 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
   });
 
   server.route({
-    url: "/complete-account/signup",
+    url: "/complete-account",
     method: "POST",
     config: {
       rateLimit: authRateLimit
     },
     schema: {
-      body: z
-        .object({
+      operationId: "completeAccountSignupV3",
+      body: z.discriminatedUnion("type", [
+        z.object({
+          type: z.literal(CompleteAccountType.Email),
           email: z.string().trim(),
           firstName: z.string().trim(),
           lastName: z.string().trim().optional(),
-          providerAuthToken: z.string().trim().optional().nullish(),
           attributionSource: z.string().trim().optional(),
-          password: z.string()
+          password: z.string(),
+          organizationName: GenericResourceNameSchema.optional(),
+          hubspotUtk: z.string().trim().max(512).optional()
+        }),
+        z.object({
+          type: z.literal(CompleteAccountType.Alias),
+          code: z.string().trim(),
+          hubspotUtk: z.string().trim().max(512).optional()
         })
-        .and(
-          z.preprocess(
-            (data) => {
-              if (typeof data === "object" && data && "useDefaultOrg" in data === false) {
-                return { ...data, useDefaultOrg: false };
-              }
-              return data;
-            },
-            z.discriminatedUnion("useDefaultOrg", [
-              z.object({ useDefaultOrg: z.literal(true) }),
-              z.object({
-                useDefaultOrg: z.literal(false),
-                organizationName: GenericResourceNameSchema
-              })
-            ])
-          )
-        ),
+      ]),
       response: {
         200: z.object({
           message: z.string(),
-          user: UsersSchema,
-          token: z.string(),
-          organizationId: z.string().nullish()
-        })
-      }
-    },
-    handler: async (req, res) => {
-      const userAgent = req.headers["user-agent"];
-      if (!userAgent) throw new Error("user agent header is required");
-      const appCfg = getConfig();
-
-      const { user, accessToken, refreshToken, organizationId } =
-        await server.services.signup.completeEmailAccountSignup({
-          ...req.body,
-          ip: req.realIp,
-          userAgent,
-          authorization: req.headers.authorization as string
-        });
-
-      if (user.email) {
-        void server.services.telemetry.sendLoopsEvent(user.email, user.firstName || "", user.lastName || "");
-      }
-
-      void server.services.telemetry.sendPostHogEvents({
-        event: PostHogEventTypes.UserSignedUp,
-        distinctId: user.username ?? "",
-        properties: {
-          username: user.username,
-          email: user.email ?? "",
-          attributionSource: req.body.attributionSource
-        }
-      });
-
-      void res.setCookie("jid", refreshToken, {
-        httpOnly: true,
-        path: "/",
-        sameSite: "strict",
-        secure: appCfg.HTTPS_ENABLED
-      });
-
-      addAuthOriginDomainCookie(res);
-
-      return { message: "Successfully set up account", user, token: accessToken, organizationId };
-    }
-  });
-
-  server.route({
-    url: "/complete-account/invite",
-    method: "POST",
-    config: {
-      rateLimit: authRateLimit
-    },
-    schema: {
-      body: z.object({
-        email: z.string().email().trim(),
-        password: z.string(),
-        firstName: z.string().trim(),
-        lastName: z.string().trim().optional(),
-        tokenMetadata: z.string().optional()
-      }),
-      response: {
-        200: z.object({
-          message: z.string(),
-          user: UsersSchema,
+          user: SanitizedUserSchema,
           token: z.string()
         })
       }
@@ -195,34 +130,73 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
       if (!userAgent) throw new Error("user agent header is required");
       const appCfg = getConfig();
 
-      const { user, accessToken, refreshToken } = await server.services.signup.completeAccountInvite({
-        ...req.body,
-        ip: req.realIp,
-        userAgent,
-        authorization: req.headers.authorization as string
-      });
+      const { user, accessToken, refreshToken, authMethod, organizationId, isInvitedUser } =
+        await server.services.signup.completeAccount({
+          ...req.body,
+          ip: req.realIp,
+          userAgent,
+          authorization: req.headers.authorization as string
+        });
 
       if (user.email) {
         void server.services.telemetry.sendLoopsEvent(user.email, user.firstName || "", user.lastName || "");
+        void server.services.telemetry.sendHubSpotSignupEvent(
+          user.email,
+          isInvitedUser ? "invite" : authMethod,
+          user.firstName || "",
+          user.lastName || "",
+          req.body.hubspotUtk
+        );
       }
 
+      const bodyAttributionSource = "attributionSource" in req.body ? req.body.attributionSource : undefined;
       void server.services.telemetry.sendPostHogEvents({
         event: PostHogEventTypes.UserSignedUp,
         distinctId: user.username ?? "",
+        ...(organizationId ? { organizationId } : {}),
         properties: {
           username: user.username,
           email: user.email ?? "",
-          attributionSource: "Team Invite"
+          attributionSource: isInvitedUser ? "Team Invite" : bodyAttributionSource,
+          signupMethod: isInvitedUser ? "invite" : authMethod
         }
       });
 
+      if (organizationId) {
+        void server.services.telemetry.sendPostHogEvents({
+          event: PostHogEventTypes.OrganizationCreated,
+          distinctId: user.username ?? "",
+          organizationId,
+          properties: {
+            name: "organizationName" in req.body ? (req.body.organizationName as string) : ""
+          }
+        });
+      }
+
+      const signupDistinctId = user.username ?? user.email ?? "";
+      if (signupDistinctId) {
+        void server.services.telemetry.identifyUser(
+          signupDistinctId,
+          {
+            email: user.email ?? undefined,
+            username: user.username,
+            userId: user.id,
+            firstName: user.firstName ?? undefined,
+            lastName: user.lastName ?? undefined,
+            isEmailVerified: user.isEmailVerified ?? undefined,
+            isMfaEnabled: user.isMfaEnabled ?? undefined,
+            superAdmin: user.superAdmin ?? undefined
+          },
+          { skipDedup: true }
+        );
+      }
+
       void res.setCookie("jid", refreshToken, {
         httpOnly: true,
-        path: "/",
+        path: "/api",
         sameSite: "strict",
         secure: appCfg.HTTPS_ENABLED
       });
-      // TODO(akhilmhdh-pg): add telemetry service
 
       addAuthOriginDomainCookie(res);
 

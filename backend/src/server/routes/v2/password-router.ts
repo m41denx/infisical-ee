@@ -15,6 +15,7 @@ export const registerPasswordRouter = async (server: FastifyZodProvider) => {
       rateLimit: authRateLimit
     },
     schema: {
+      operationId: "resetPassword",
       body: z.object({
         newPassword: z.string().trim()
       })
@@ -24,7 +25,9 @@ export const registerPasswordRouter = async (server: FastifyZodProvider) => {
       await server.services.password.resetPasswordV2({
         type: ResetPasswordV2Type.Recovery,
         newPassword: req.body.newPassword,
-        userId: token.userId
+        userId: token.userId,
+        recoveryTokenJti: token.jti,
+        recoveryTokenExpiresAt: token.exp
       });
     }
   });
@@ -33,6 +36,7 @@ export const registerPasswordRouter = async (server: FastifyZodProvider) => {
     method: "POST",
     url: "/user/password-reset",
     schema: {
+      operationId: "resetUserPassword",
       body: z.object({
         oldPassword: z.string().trim(),
         newPassword: z.string().trim()
@@ -54,14 +58,14 @@ export const registerPasswordRouter = async (server: FastifyZodProvider) => {
 
       void res.cookie("jid", "", {
         httpOnly: true,
-        path: "/",
+        path: "/api",
         sameSite: "strict",
         secure: appCfg.HTTPS_ENABLED
       });
 
       void res.cookie("infisical-project-assume-privileges", "", {
         httpOnly: true,
-        path: "/",
+        path: "/api",
         sameSite: "strict",
         secure: appCfg.HTTPS_ENABLED,
         maxAge: 0
@@ -69,7 +73,7 @@ export const registerPasswordRouter = async (server: FastifyZodProvider) => {
 
       void res.cookie("aod", "", {
         httpOnly: false,
-        path: "/",
+        path: "/api",
         sameSite: "lax",
         secure: appCfg.HTTPS_ENABLED,
         maxAge: 0

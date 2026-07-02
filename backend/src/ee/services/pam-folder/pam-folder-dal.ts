@@ -1,4 +1,5 @@
 import { Knex } from "knex";
+import RE2 from "re2";
 
 import { TDbClient } from "@app/db";
 import { TableName } from "@app/db/schemas";
@@ -44,7 +45,10 @@ export const pamFolderDALFactory = (db: TDbClient) => {
 
       if (search) {
         // escape special characters (`%`, `_`) and the escape character itself (`\`)
-        const escapedSearch = search.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+        const escapedSearch = search
+          .replace(new RE2(/\\/g), "\\\\")
+          .replace(new RE2(/%/g), "\\%")
+          .replace(new RE2(/_/g), "\\_");
         void query.whereRaw(`??.?? ILIKE ? ESCAPE '\\'`, [TableName.PamFolder, "name", `%${escapedSearch}%`]);
       }
 
@@ -71,23 +75,29 @@ export const pamFolderDALFactory = (db: TDbClient) => {
   const findByPath = async (projectId: string, path: string, tx?: Knex) => {
     try {
       const dbInstance = tx || db.replicaNode();
+
+      const folders = await dbInstance(TableName.PamFolder)
+        .where(`${TableName.PamFolder}.projectId`, projectId)
+        .select(selectAllTableCols(TableName.PamFolder));
+
       const pathSegments = path.split("/").filter(Boolean);
+      if (pathSegments.length === 0) {
+        return undefined;
+      }
+
+      const foldersByParentId = new Map<string | null, typeof folders>();
+      for (const folder of folders) {
+        const children = foldersByParentId.get(folder.parentId ?? null) ?? [];
+        children.push(folder);
+        foldersByParentId.set(folder.parentId ?? null, children);
+      }
 
       let parentId: string | null = null;
-      let currentFolder: Awaited<ReturnType<typeof orm.findOne>> | undefined;
+      let currentFolder: (typeof folders)[0] | undefined;
 
-      for await (const segment of pathSegments) {
-        const query = dbInstance(TableName.PamFolder)
-          .where(`${TableName.PamFolder}.projectId`, projectId)
-          .where(`${TableName.PamFolder}.name`, segment);
-
-        if (parentId) {
-          void query.where(`${TableName.PamFolder}.parentId`, parentId);
-        } else {
-          void query.whereNull(`${TableName.PamFolder}.parentId`);
-        }
-
-        currentFolder = await query.first();
+      for (const segment of pathSegments) {
+        const childFolders: typeof folders = foldersByParentId.get(parentId) || [];
+        currentFolder = childFolders.find((folder) => folder.name === segment);
 
         if (!currentFolder) {
           return undefined;

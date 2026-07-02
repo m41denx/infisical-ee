@@ -18,7 +18,9 @@ export const dynamicSecretKeys = {
   }: Pick<TListDynamicSecretDTO, "path" | "environmentSlug" | "projectSlug">) =>
     [{ projectSlug, environmentSlug, path }, "dynamic-secrets"] as const,
   details: ({ path, environmentSlug, projectSlug, name }: TDetailsDynamicSecretDTO) =>
-    [{ projectSlug, path, environmentSlug, name }, "dynamic-secret-details"] as const
+    [{ projectSlug, path, environmentSlug, name }, "dynamic-secret-details"] as const,
+  sshCaPublicKey: (dynamicSecretId: string) =>
+    [{ dynamicSecretId }, "dynamic-secret-ssh-ca-public-key"] as const
 };
 
 export const useGetDynamicSecrets = ({
@@ -99,6 +101,102 @@ export const useGetDynamicSecretProviderData = ({
   });
 };
 
+export const useGetIbmApiConnectOrgs = ({
+  instanceUrl,
+  apiKey,
+  clientId,
+  clientSecret,
+  enabled
+}: {
+  instanceUrl: string;
+  apiKey: string;
+  clientId: string;
+  clientSecret: string;
+  enabled: boolean;
+}) => {
+  return useQuery({
+    queryKey: ["ibm-api-connect-orgs", instanceUrl, apiKey, clientId, clientSecret],
+    queryFn: async () => {
+      const { data } = await apiRequest.post<{ name: string; title: string; id: string }[]>(
+        "/api/v1/dynamic-secrets/ibm-api-connect/orgs",
+        { instanceUrl, apiKey, clientId, clientSecret }
+      );
+      return data;
+    },
+    enabled
+  });
+};
+
+export const useGetIbmApiConnectOrgCatalogs = ({
+  instanceUrl,
+  apiKey,
+  clientId,
+  clientSecret,
+  orgId,
+  enabled
+}: {
+  instanceUrl: string;
+  apiKey: string;
+  clientId: string;
+  clientSecret: string;
+  orgId: string;
+  enabled: boolean;
+}) => {
+  return useQuery({
+    queryKey: ["ibm-api-connect-org-catalogs", instanceUrl, apiKey, clientId, clientSecret, orgId],
+    queryFn: async () => {
+      const { data } = await apiRequest.post<{ name: string; title: string; id: string }[]>(
+        `/api/v1/dynamic-secrets/ibm-api-connect/orgs/${orgId}/catalogs`,
+        { instanceUrl, apiKey, clientId, clientSecret }
+      );
+      return data;
+    },
+    enabled
+  });
+};
+
+export const useGetIbmApiConnectOrgApps = ({
+  instanceUrl,
+  apiKey,
+  clientId,
+  clientSecret,
+  orgId,
+  catalogId,
+  enabled
+}: {
+  instanceUrl: string;
+  apiKey: string;
+  clientId: string;
+  clientSecret: string;
+  orgId: string;
+  catalogId: string;
+  enabled: boolean;
+}) => {
+  return useQuery({
+    queryKey: [
+      "ibm-api-connect-org-apps",
+      instanceUrl,
+      apiKey,
+      clientId,
+      clientSecret,
+      orgId,
+      catalogId
+    ],
+    queryFn: async () => {
+      const { data } = await apiRequest.post<
+        { name: string; title: string; id: string; consumerOrgId: string }[]
+      >(`/api/v1/dynamic-secrets/ibm-api-connect/orgs/${orgId}/catalogs/${catalogId}/apps`, {
+        instanceUrl,
+        apiKey,
+        clientId,
+        clientSecret
+      });
+      return data;
+    },
+    enabled
+  });
+};
+
 export const useGetDynamicSecretsOfAllEnv = ({
   path,
   projectSlug,
@@ -151,4 +249,23 @@ export const useGetDynamicSecretsOfAllEnv = ({
   );
 
   return { dynamicSecrets, isDynamicSecretPresentInEnv, dynamicSecretNames };
+};
+
+export const useGetSshCaPublicKey = ({
+  dynamicSecretId,
+  enabled = true
+}: {
+  dynamicSecretId: string;
+  enabled?: boolean;
+}) => {
+  return useQuery({
+    queryKey: dynamicSecretKeys.sshCaPublicKey(dynamicSecretId),
+    enabled: Boolean(dynamicSecretId) && enabled,
+    queryFn: async () => {
+      const { data } = await apiRequest.get<{ caPublicKey: string }>(
+        `/api/v1/dynamic-secrets/ssh-ca-public-key/${dynamicSecretId}`
+      );
+      return data.caPublicKey;
+    }
+  });
 };

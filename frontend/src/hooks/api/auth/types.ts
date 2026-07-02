@@ -1,6 +1,8 @@
 export type GetAuthTokenAPI = {
   token: string;
+  refreshToken?: string;
   organizationId?: string;
+  subOrganizationId?: string;
 };
 
 export enum UserEncryptionVersion {
@@ -73,6 +75,11 @@ export type Login2Res = {
   tag?: string;
 };
 
+export type OauthTokenExchangeRes = Login2Res & {
+  isMfaEnabled?: boolean;
+  mfaMethod?: MfaMethod;
+};
+
 export type LoginV3Res = {
   accessToken: string;
   mfaEnabled: boolean;
@@ -82,26 +89,29 @@ export type LoginLDAPDTO = {
   organizationSlug: string;
   username: string;
   password: string;
+  callbackPort?: number;
 };
 
 export type LoginLDAPRes = {
   nextUrl: string;
 };
 
-export type CompleteAccountDTO = {
-  email: string;
-  firstName: string;
-  lastName: string;
-  password: string;
-  tokenMetadata?: string;
-};
-
-export type CompleteAccountSignupDTO = CompleteAccountDTO & {
-  providerAuthToken?: string;
-  attributionSource?: string;
-  organizationName: string;
-  useDefaultOrg?: boolean;
-};
+export type CompleteAccountSignupDTO =
+  | {
+      type: "email";
+      email: string;
+      firstName: string;
+      lastName: string;
+      password: string;
+      attributionSource?: string;
+      organizationName?: string;
+      hubspotUtk?: string;
+    }
+  | {
+      type: "alias";
+      code: string;
+      hubspotUtk?: string;
+    };
 
 export type VerifySignupInviteDTO = {
   email: string;
@@ -148,5 +158,6 @@ export enum UserAgentType {
 
 export enum MfaMethod {
   EMAIL = "email",
-  TOTP = "totp"
+  TOTP = "totp",
+  WEBAUTHN = "webauthn"
 }

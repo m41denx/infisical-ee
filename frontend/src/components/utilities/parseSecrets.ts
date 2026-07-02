@@ -68,11 +68,21 @@ export function parseDotEnv(src: ArrayBuffer | string) {
 
 export const parseJson = (src: ArrayBuffer | string) => {
   const file = src.toString();
-  const formatedData: Record<string, string> = JSON.parse(file);
+  const formatedData = JSON.parse(file);
   const env: Record<string, { value: string; comments: string[] }> = {};
-  Object.keys(formatedData).forEach((key) => {
-    if (typeof formatedData[key] === "string") {
-      env[key] = { value: formatedData[key], comments: [] };
+  if (formatedData === null || typeof formatedData !== "object" || Array.isArray(formatedData)) {
+    return env;
+  }
+  const data = formatedData as Record<string, unknown>;
+  Object.keys(data).forEach((key) => {
+    const val = data[key];
+    if (val === null || val === undefined) {
+      return;
+    }
+    if (typeof val === "object") {
+      env[key] = { value: JSON.stringify(val), comments: [] };
+    } else {
+      env[key] = { value: String(val), comments: [] };
     }
   });
   return env;
@@ -166,11 +176,14 @@ export function parseYaml(src: ArrayBuffer | string) {
   return result;
 }
 
-function detectSeparator(csvContent: string): string {
-  const firstLine = csvContent.split("\n")[0];
-  const separators = [",", ";", "\t", "|"];
+export type CsvDelimiter = "," | ";" | "\t" | "|";
 
-  const counts = separators.map((sep) => ({
+const CSV_DELIMITERS: readonly CsvDelimiter[] = [",", ";", "\t", "|"];
+
+function detectSeparator(csvContent: string): CsvDelimiter {
+  const firstLine = csvContent.split("\n")[0];
+
+  const counts = CSV_DELIMITERS.map((sep) => ({
     separator: sep,
     count: (firstLine.match(new RegExp(`\\${sep}`, "g")) || []).length
   }));
@@ -180,7 +193,10 @@ function detectSeparator(csvContent: string): string {
   return detected.count > 0 ? detected.separator : ",";
 }
 
-export function parseCsvToMatrix(src: ArrayBuffer | string): string[][] {
+export function parseCsvToMatrix(src: ArrayBuffer | string): {
+  matrix: string[][];
+  delimiter: CsvDelimiter;
+} {
   let csvContent: string;
   if (typeof src === "string") {
     csvContent = src;
@@ -189,37 +205,45 @@ export function parseCsvToMatrix(src: ArrayBuffer | string): string[][] {
   }
 
   const separator = detectSeparator(csvContent);
-  const lines = csvContent.replace(/\r\n?/g, "\n").split("\n");
+  const normalized = csvContent.replace(/\r\n?/g, "\n");
   const matrix: string[][] = [];
 
-  lines.forEach((line) => {
-    if (line.trim() !== "") {
-      const cells: string[] = [];
-      let currentCell = "";
-      let inQuote = false;
+  let cells: string[] = [];
+  let currentCell = "";
+  let inQuote = false;
 
-      for (let i = 0; i < line.length; i += 1) {
-        const char = line[i];
-        const nextChar = line[i + 1];
+  for (let i = 0; i < normalized.length; i += 1) {
+    const char = normalized[i];
+    const nextChar = normalized[i + 1];
 
-        if (char === '"') {
-          if (inQuote && nextChar === '"') {
-            currentCell += '"';
-            i += 1;
-          } else {
-            inQuote = !inQuote;
-          }
-        } else if (char === separator && !inQuote) {
-          cells.push(currentCell.trim());
-          currentCell = "";
-        } else {
-          currentCell += char;
-        }
+    if (char === '"') {
+      if (inQuote && nextChar === '"') {
+        currentCell += '"';
+        i += 1;
+      } else {
+        inQuote = !inQuote;
       }
+    } else if (char === separator && !inQuote) {
       cells.push(currentCell.trim());
+      currentCell = "";
+    } else if (char === "\n" && !inQuote) {
+      cells.push(currentCell.trim());
+      if (cells.some((c) => c !== "")) {
+        matrix.push(cells);
+      }
+      cells = [];
+      currentCell = "";
+    } else {
+      currentCell += char;
+    }
+  }
+
+  if (currentCell.length > 0 || cells.length > 0) {
+    cells.push(currentCell.trim());
+    if (cells.some((c) => c !== "")) {
       matrix.push(cells);
     }
-  });
+  }
 
-  return matrix;
+  return { matrix, delimiter: separator };
 }

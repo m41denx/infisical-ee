@@ -54,6 +54,61 @@ export const SECRET_ROTATION_MAP: Record<
     name: "Redis Credentials",
     image: "Redis.png",
     size: 50
+  },
+  [SecretRotation.MongoDBCredentials]: {
+    name: "MongoDB Credentials",
+    image: "MongoDB.png",
+    size: 50
+  },
+  [SecretRotation.DatabricksServicePrincipalSecret]: {
+    name: "Databricks Service Principal",
+    image: "Databricks.png",
+    size: 50
+  },
+  [SecretRotation.UnixLinuxLocalAccount]: {
+    name: "Unix/Linux Local Account",
+    image: "SSH.png",
+    size: 50
+  },
+  [SecretRotation.DbtServiceToken]: {
+    name: "DBT Service Token",
+    image: "DBT.png",
+    size: 50
+  },
+  [SecretRotation.WindowsLocalAccount]: {
+    name: "Windows Local Account",
+    image: "Windows.png",
+    size: 50
+  },
+  [SecretRotation.OpenRouterApiKey]: {
+    name: "OpenRouter API Key",
+    image: "OpenRouter.png",
+    size: 50
+  },
+  [SecretRotation.HpIloLocalAccount]: {
+    name: "HP iLO Local Account",
+    image: "SSH.png",
+    size: 50
+  },
+  [SecretRotation.SupabaseApiKey]: {
+    name: "Supabase API Key",
+    image: "Supabase.png",
+    size: 50
+  },
+  [SecretRotation.SalesforceOauthCredentials]: {
+    name: "Salesforce OAuth Credentials",
+    image: "Salesforce.png",
+    size: 50
+  },
+  [SecretRotation.DatadogApplicationKeySecret]: {
+    name: "Datadog Application Key",
+    image: "DatadogWhite.png",
+    size: 50
+  },
+  [SecretRotation.ConvexAccessKey]: {
+    name: "Convex Access Key",
+    image: "Convex.png",
+    size: 50
   }
 };
 
@@ -67,7 +122,18 @@ export const SECRET_ROTATION_CONNECTION_MAP: Record<SecretRotation, AppConnectio
   [SecretRotation.LdapPassword]: AppConnection.LDAP,
   [SecretRotation.AwsIamUserSecret]: AppConnection.AWS,
   [SecretRotation.OktaClientSecret]: AppConnection.Okta,
-  [SecretRotation.RedisCredentials]: AppConnection.Redis
+  [SecretRotation.RedisCredentials]: AppConnection.Redis,
+  [SecretRotation.MongoDBCredentials]: AppConnection.MongoDB,
+  [SecretRotation.DatabricksServicePrincipalSecret]: AppConnection.Databricks,
+  [SecretRotation.UnixLinuxLocalAccount]: AppConnection.SSH,
+  [SecretRotation.DbtServiceToken]: AppConnection.Dbt,
+  [SecretRotation.WindowsLocalAccount]: AppConnection.SMB,
+  [SecretRotation.OpenRouterApiKey]: AppConnection.OpenRouter,
+  [SecretRotation.HpIloLocalAccount]: AppConnection.SSH,
+  [SecretRotation.SupabaseApiKey]: AppConnection.Supabase,
+  [SecretRotation.SalesforceOauthCredentials]: AppConnection.Salesforce,
+  [SecretRotation.DatadogApplicationKeySecret]: AppConnection.Datadog,
+  [SecretRotation.ConvexAccessKey]: AppConnection.Convex
 };
 
 // if a rotation can potentially have downtime due to rotating a single credential set this to false
@@ -81,7 +147,18 @@ export const IS_ROTATION_DUAL_CREDENTIALS: Record<SecretRotation, boolean> = {
   [SecretRotation.LdapPassword]: false,
   [SecretRotation.AwsIamUserSecret]: true,
   [SecretRotation.OktaClientSecret]: true,
-  [SecretRotation.RedisCredentials]: true
+  [SecretRotation.RedisCredentials]: true,
+  [SecretRotation.MongoDBCredentials]: true,
+  [SecretRotation.DatabricksServicePrincipalSecret]: true,
+  [SecretRotation.UnixLinuxLocalAccount]: false,
+  [SecretRotation.DbtServiceToken]: true,
+  [SecretRotation.WindowsLocalAccount]: false,
+  [SecretRotation.OpenRouterApiKey]: true,
+  [SecretRotation.HpIloLocalAccount]: false,
+  [SecretRotation.SupabaseApiKey]: true,
+  [SecretRotation.SalesforceOauthCredentials]: true,
+  [SecretRotation.DatadogApplicationKeySecret]: true,
+  [SecretRotation.ConvexAccessKey]: true
 };
 
 export const getRotateAtLocal = ({ hours, minutes }: TSecretRotationV2["rotateAtUtc"]) => {

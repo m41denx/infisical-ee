@@ -3,6 +3,7 @@ import { TProjectPermission } from "@app/lib/types";
 export type TLoginKubernetesAuthDTO = {
   identityId: string;
   jwt: string;
+  organizationSlug?: string;
 };
 
 export enum IdentityKubernetesAuthTokenReviewMode {
@@ -13,13 +14,15 @@ export enum IdentityKubernetesAuthTokenReviewMode {
 export type TAttachKubernetesAuthDTO = {
   identityId: string;
   kubernetesHost: string | null;
-  caCert: string;
+  caCert?: string;
+  verifyTlsCertificate?: boolean;
   tokenReviewerJwt?: string;
   tokenReviewMode: IdentityKubernetesAuthTokenReviewMode;
   allowedNamespaces: string;
   allowedNames: string;
   allowedAudience: string;
   gatewayId?: string | null;
+  gatewayPoolId?: string | null;
   accessTokenTTL: number;
   accessTokenMaxTTL: number;
   accessTokenNumUsesLimit: number;
@@ -31,12 +34,14 @@ export type TUpdateKubernetesAuthDTO = {
   identityId: string;
   kubernetesHost?: string | null;
   caCert?: string;
+  verifyTlsCertificate?: boolean;
   tokenReviewerJwt?: string | null;
   tokenReviewMode?: IdentityKubernetesAuthTokenReviewMode;
   allowedNamespaces?: string;
   allowedNames?: string;
   allowedAudience?: string;
   gatewayId?: string | null;
+  gatewayPoolId?: string | null;
   accessTokenTTL?: number;
   accessTokenMaxTTL?: number;
   accessTokenNumUsesLimit?: number;

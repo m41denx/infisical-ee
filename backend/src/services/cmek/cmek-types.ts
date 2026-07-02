@@ -13,6 +13,7 @@ export type TCreateCmekDTO = {
   description?: string;
   encryptionAlgorithm: TCmekKeyEncryptionAlgorithm;
   keyUsage: KmsKeyUsage;
+  isExportable?: boolean;
 };
 
 export type TUpdabteCmekByIdDTO = {
@@ -51,6 +52,33 @@ export type TCmekListSigningAlgorithmsDTO = {
 
 export type TCmekGetPublicKeyDTO = {
   keyId: string;
+};
+
+export type TCmekGetPrivateKeyDTO = {
+  keyId: string;
+};
+
+export type TCmekBulkGetPrivateKeysDTO = {
+  keyIds: string[];
+};
+
+export type TCmekBulkImportKeyEntry = {
+  name: string;
+  algorithm: TCmekKeyEncryptionAlgorithm;
+  keyUsage: KmsKeyUsage;
+  keyMaterial: string;
+  isExportable?: boolean;
+};
+
+export type TCmekBulkImportKeysDTO = {
+  projectId: string;
+  keys: TCmekBulkImportKeyEntry[];
+};
+
+export type TCmekBulkImportKeysResult = {
+  keys: { id: string; name: string }[];
+  errors: { name: string; message: string }[];
+  projectId: string;
 };
 
 export type TCmekSignDTO = {

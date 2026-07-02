@@ -2,7 +2,7 @@
 import net from "node:net";
 
 import quicDefault, * as quicModule from "@infisical/quic";
-import axios from "axios";
+import { isAxiosError } from "axios";
 import https from "https";
 
 import { crypto } from "@app/lib/crypto/cryptography";
@@ -392,17 +392,17 @@ export const withGatewayProxy = async <T>(
   callback: (port: number, httpsAgent?: https.Agent) => Promise<T>,
   options: IGatewayProxyOptions
 ): Promise<T> => {
-  const { relayHost, relayPort, targetHost, targetPort, tlsOptions, identityId, orgId, protocol, httpsAgent } = options;
+  const { targetHost, targetPort, relayDetails, protocol, httpsAgent } = options;
 
   // Setup the proxy server
   const { port, cleanup, getProxyError } = await setupProxyServer({
     targetHost,
     targetPort,
-    relayPort,
-    relayHost,
-    tlsOptions,
-    identityId,
-    orgId,
+    relayPort: relayDetails.relayPort,
+    relayHost: relayDetails.relayHost,
+    tlsOptions: relayDetails.tlsOptions,
+    identityId: relayDetails.identityId,
+    orgId: relayDetails.orgId,
     protocol,
     httpsAgent
   });
@@ -417,7 +417,7 @@ export const withGatewayProxy = async <T>(
     }
     logger.error(err, "Failed to do gateway");
     let errorMessage = proxyErrorMessage || (err as Error)?.message;
-    if (axios.isAxiosError(err) && (err.response?.data as { message?: string })?.message) {
+    if (isAxiosError(err) && (err.response?.data as { message?: string })?.message) {
       errorMessage = (err.response?.data as { message: string }).message;
     }
 

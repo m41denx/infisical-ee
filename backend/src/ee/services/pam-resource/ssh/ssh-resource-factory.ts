@@ -14,7 +14,11 @@ import {
   TPamResourceFactoryValidateAccountCredentials
 } from "../pam-resource-types";
 import { SSHAuthMethod } from "./ssh-resource-enums";
-import { TSSHAccountCredentials, TSSHResourceConnectionDetails } from "./ssh-resource-types";
+import {
+  TSSHAccountCredentials,
+  TSSHResourceConnectionDetails,
+  TSSHResourceInternalMetadata
+} from "./ssh-resource-types";
 
 const EXTERNAL_REQUEST_TIMEOUT = 10 * 1000;
 
@@ -28,7 +32,11 @@ export const executeWithGateway = async <T>(
   operation: (proxyPort: number) => Promise<T>
 ): Promise<T> => {
   const { connectionDetails, gatewayId } = config;
-  const [targetHost] = await verifyHostInputValidity(connectionDetails.host, true);
+  const [targetHost] = await verifyHostInputValidity({
+    host: connectionDetails.host,
+    isGateway: true,
+    isDynamicSecret: false
+  });
   const platformConnectionDetails = await gatewayV2Service.getPlatformConnectionDetailsByGatewayId({
     gatewayId,
     targetHost,
@@ -52,14 +60,17 @@ export const executeWithGateway = async <T>(
   );
 };
 
-export const sshResourceFactory: TPamResourceFactory<TSSHResourceConnectionDetails, TSSHAccountCredentials> = (
-  resourceType,
-  connectionDetails,
-  gatewayId,
-  gatewayV2Service
-) => {
+export const sshResourceFactory: TPamResourceFactory<
+  TSSHResourceConnectionDetails,
+  TSSHAccountCredentials,
+  TSSHResourceInternalMetadata
+> = (resourceType, connectionDetails, gatewayId, gatewayV2Service, _projectId, resourceInternalMetadata) => {
   const validateConnection = async () => {
     try {
+      if (!gatewayId) {
+        throw new BadRequestError({ message: "Gateway ID is required" });
+      }
+
       await executeWithGateway({ connectionDetails, gatewayId, resourceType }, gatewayV2Service, async (proxyPort) => {
         return new Promise<void>((resolve, reject) => {
           const client = new Client();
@@ -131,6 +142,10 @@ export const sshResourceFactory: TPamResourceFactory<TSSHResourceConnectionDetai
     credentials
   ) => {
     try {
+      if (!gatewayId) {
+        throw new BadRequestError({ message: "Gateway ID is required" });
+      }
+
       await executeWithGateway({ connectionDetails, gatewayId, resourceType }, gatewayV2Service, async (proxyPort) => {
         return new Promise<void>((resolve, reject) => {
           const client = new Client();
@@ -182,6 +197,24 @@ export const sshResourceFactory: TPamResourceFactory<TSSHResourceConnectionDetai
                 privateKey: credentials.privateKey,
                 tryKeyboard: false
               });
+              break;
+            case SSHAuthMethod.Certificate:
+              // We cant fully validate the connection since ssh2 doesn't support cert auth
+              if (!resourceInternalMetadata) {
+                reject(
+                  new BadRequestError({
+                    message:
+                      "SSH CA is not configured for this resource. Please set up the CA first using the SSH CA setup script."
+                  })
+                );
+                return;
+              }
+
+              logger.info(
+                { username: credentials.username },
+                "[SSH Resource Factory] Certificate auth - CA is configured, skipping connection validation"
+              );
+              resolve();
               break;
             default:
               reject(new Error(`Unsupported SSH auth method: ${(credentials as TSSHAccountCredentials).authMethod}`));

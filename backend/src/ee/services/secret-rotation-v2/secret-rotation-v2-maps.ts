@@ -11,7 +11,18 @@ export const SECRET_ROTATION_NAME_MAP: Record<SecretRotation, string> = {
   [SecretRotation.AwsIamUserSecret]: "AWS IAM User Secret",
   [SecretRotation.LdapPassword]: "LDAP Password",
   [SecretRotation.OktaClientSecret]: "Okta Client Secret",
-  [SecretRotation.RedisCredentials]: "Redis Credentials"
+  [SecretRotation.RedisCredentials]: "Redis Credentials",
+  [SecretRotation.MongoDBCredentials]: "MongoDB Credentials",
+  [SecretRotation.DatabricksServicePrincipalSecret]: "Databricks Service Principal Secret",
+  [SecretRotation.UnixLinuxLocalAccount]: "Unix/Linux Local Account",
+  [SecretRotation.DbtServiceToken]: "DBT Service Token",
+  [SecretRotation.WindowsLocalAccount]: "Windows Local Account",
+  [SecretRotation.OpenRouterApiKey]: "OpenRouter API Key",
+  [SecretRotation.HpIloLocalAccount]: "HP iLO Local Account",
+  [SecretRotation.SupabaseApiKey]: "Supabase API Key",
+  [SecretRotation.SalesforceOauthCredentials]: "Salesforce OAuth Credentials",
+  [SecretRotation.DatadogApplicationKeySecret]: "Datadog Application Key",
+  [SecretRotation.ConvexAccessKey]: "Convex Access Key"
 };
 
 export const SECRET_ROTATION_CONNECTION_MAP: Record<SecretRotation, AppConnection> = {
@@ -24,5 +35,16 @@ export const SECRET_ROTATION_CONNECTION_MAP: Record<SecretRotation, AppConnectio
   [SecretRotation.AwsIamUserSecret]: AppConnection.AWS,
   [SecretRotation.LdapPassword]: AppConnection.LDAP,
   [SecretRotation.OktaClientSecret]: AppConnection.Okta,
-  [SecretRotation.RedisCredentials]: AppConnection.Redis
+  [SecretRotation.RedisCredentials]: AppConnection.Redis,
+  [SecretRotation.MongoDBCredentials]: AppConnection.MongoDB,
+  [SecretRotation.DatabricksServicePrincipalSecret]: AppConnection.Databricks,
+  [SecretRotation.UnixLinuxLocalAccount]: AppConnection.SSH,
+  [SecretRotation.DbtServiceToken]: AppConnection.Dbt,
+  [SecretRotation.WindowsLocalAccount]: AppConnection.SMB,
+  [SecretRotation.OpenRouterApiKey]: AppConnection.OpenRouter,
+  [SecretRotation.HpIloLocalAccount]: AppConnection.SSH,
+  [SecretRotation.SupabaseApiKey]: AppConnection.Supabase,
+  [SecretRotation.SalesforceOauthCredentials]: AppConnection.Salesforce,
+  [SecretRotation.DatadogApplicationKeySecret]: AppConnection.Datadog,
+  [SecretRotation.ConvexAccessKey]: AppConnection.Convex
 };

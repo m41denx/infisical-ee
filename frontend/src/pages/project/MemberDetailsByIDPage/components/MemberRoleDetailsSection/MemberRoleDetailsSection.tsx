@@ -1,33 +1,56 @@
-import { faFolder, faPencil, faTrash } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useMemo } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { format, formatDistance } from "date-fns";
-import { twMerge } from "tailwind-merge";
+import { ClockAlertIcon, ClockIcon, EllipsisIcon, PencilIcon } from "lucide-react";
+import picomatch from "picomatch";
 
 import { createNotification } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
+import { DeleteActionModal, Lottie, Modal, ModalContent } from "@app/components/v2";
 import {
-  DeleteActionModal,
-  EmptyState,
+  Badge,
+  Button,
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
   IconButton,
-  Modal,
-  ModalContent,
   Table,
-  TableContainer,
-  TableSkeleton,
-  Tag,
-  TBody,
-  Td,
-  Th,
-  THead,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
   Tooltip,
-  Tr
-} from "@app/components/v2";
-import { ProjectPermissionActions, ProjectPermissionSub, useProject, useUser } from "@app/context";
+  TooltipContent,
+  TooltipTrigger
+} from "@app/components/v3/generic";
+import {
+  ProjectPermissionActions,
+  ProjectPermissionSub,
+  useProject,
+  useProjectPermission,
+  useUser
+} from "@app/context";
+import { getProjectBaseURL } from "@app/helpers/project";
 import { formatProjectRoleName } from "@app/helpers/roles";
 import { usePopUp } from "@app/hooks";
 import { useUpdateUserWorkspaceRole } from "@app/hooks/api";
+import { ProjectType } from "@app/hooks/api/projects/types";
 import { TProjectRole } from "@app/hooks/api/roles/types";
 import { TWorkspaceUser } from "@app/hooks/api/types";
+import { canModifyByGrantConditions, getMemberAssignRoleConditions } from "@app/lib/fn/permission";
 
 import { MemberRoleModify } from "./MemberRoleModify";
 
@@ -44,7 +67,27 @@ export const MemberRoleDetailsSection = ({
 }: Props) => {
   const { user } = useUser();
   const userId = user?.id;
-  const { projectId } = useProject();
+  const { projectId, currentProject } = useProject();
+  const { permission } = useProjectPermission();
+  const navigate = useNavigate();
+
+  const assignRoleConditions = useMemo(
+    () => getMemberAssignRoleConditions(permission),
+    [permission]
+  );
+
+  const canModifyMemberRoles = useMemo(() => {
+    const memberEmail = membershipDetails?.user?.email;
+    if (!memberEmail) return false;
+
+    return canModifyByGrantConditions({
+      targetValue: memberEmail,
+      allowed: assignRoleConditions?.emails,
+      forbidden: assignRoleConditions?.forbiddenEmails,
+      isMatch: (value, pattern) => picomatch.isMatch(value, pattern)
+    });
+  }, [assignRoleConditions, membershipDetails?.user?.email]);
+
   const { popUp, handlePopUpOpen, handlePopUpToggle, handlePopUpClose } = usePopUp([
     "deleteRole",
     "modifyRole"
@@ -52,12 +95,14 @@ export const MemberRoleDetailsSection = ({
   const { mutateAsync: updateUserWorkspaceRole } = useUpdateUserWorkspaceRole();
 
   const isOwnProjectMembershipDetails = userId === membershipDetails?.user?.id;
+  const isCertManager = currentProject?.type === ProjectType.CertificateManager;
 
   const handleRoleDelete = async () => {
     const { id } = popUp?.deleteRole?.data as TProjectRole;
     const updatedRoles = membershipDetails?.roles?.filter((el) => el.id !== id);
     await updateUserWorkspaceRole({
       projectId,
+      projectType: currentProject?.type,
       roles: updatedRoles.map(
         ({
           role,
@@ -82,137 +127,233 @@ export const MemberRoleDetailsSection = ({
               })
         })
       ),
-      membershipId: membershipDetails.id
+      membershipId: isCertManager ? membershipDetails.user.id : membershipDetails.id
     });
     createNotification({ type: "success", text: "Successfully removed role" });
     handlePopUpClose("deleteRole");
   };
 
+  const hasRoles = Boolean(membershipDetails?.roles.length);
+
   return (
-    <div className="mb-4 w-full rounded-lg border border-mineshaft-600 bg-mineshaft-900 p-4">
-      <div className="flex items-center justify-between border-b border-mineshaft-400 pb-4">
-        <h3 className="text-lg font-medium text-mineshaft-100">Project Roles</h3>
-        {!isOwnProjectMembershipDetails && membershipDetails?.status !== "invited" && (
-          <ProjectPermissionCan
-            I={ProjectPermissionActions.Edit}
-            a={ProjectPermissionSub.Member}
-            renderTooltip
-            allowedLabel="Edit Role(s)"
-          >
-            {(isAllowed) => (
-              <IconButton
-                ariaLabel="copy icon"
-                variant="plain"
-                className="group relative"
-                onClick={() => {
-                  handlePopUpOpen("modifyRole");
-                }}
-                isDisabled={!isAllowed}
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>{isCertManager ? "Roles" : "Project Roles"}</CardTitle>
+          <CardDescription>Manage roles assigned to this user</CardDescription>
+          {!isOwnProjectMembershipDetails && hasRoles && (
+            <CardAction>
+              <ProjectPermissionCan
+                I={ProjectPermissionActions.Edit}
+                a={ProjectPermissionSub.Member}
               >
-                <FontAwesomeIcon icon={faPencil} />
-              </IconButton>
-            )}
-          </ProjectPermissionCan>
-        )}
-      </div>
-      <div className="py-4">
-        <TableContainer>
-          <Table>
-            <THead>
-              <Tr>
-                <Th>Role</Th>
-                <Th>Duration</Th>
-                <Th className="w-5" />
-              </Tr>
-            </THead>
-            <TBody>
-              {isMembershipDetailsLoading && (
-                <TableSkeleton columns={3} innerKey="user-project-memberships" />
-              )}
-              {!isMembershipDetailsLoading &&
-                membershipDetails?.roles?.map((roleDetails) => {
-                  const isTemporary = roleDetails?.isTemporary;
-                  const isExpired =
-                    roleDetails.isTemporary &&
-                    new Date() > new Date(roleDetails.temporaryAccessEndTime || "");
-
-                  let text = "Permanent";
-                  let toolTipText = "Non-Expiring Access";
-                  if (roleDetails.isTemporary) {
-                    if (isExpired) {
-                      text = "Access Expired";
-                      toolTipText = "Timed Access Expired";
-                    } else {
-                      text = formatDistance(
-                        new Date(roleDetails.temporaryAccessEndTime || ""),
-                        new Date()
-                      );
-                      toolTipText = `Until ${format(
-                        new Date(roleDetails.temporaryAccessEndTime || ""),
-                        "yyyy-MM-dd hh:mm:ss aaa"
-                      )}`;
-                    }
-                  }
-
-                  return (
-                    <Tr className="group h-10" key={`user-project-membership-${roleDetails?.id}`}>
-                      <Td className="capitalize">
-                        {roleDetails.role === "custom"
-                          ? roleDetails.customRoleName
-                          : formatProjectRoleName(roleDetails.role)}
-                      </Td>
-                      <Td>
-                        <Tooltip asChild={false} content={toolTipText}>
-                          <Tag
-                            className={twMerge(
-                              "capitalize",
-                              isTemporary && "text-primary",
-                              isExpired && "text-red-600"
-                            )}
-                          >
-                            {text}
-                          </Tag>
-                        </Tooltip>
-                      </Td>
-                      <Td>
-                        <div className="opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-                          <ProjectPermissionCan
-                            I={ProjectPermissionActions.Edit}
-                            a={ProjectPermissionSub.Member}
-                            renderTooltip
-                            allowedLabel="Remove Role"
-                          >
-                            {(isAllowed) => (
-                              <IconButton
-                                colorSchema="danger"
-                                ariaLabel="copy icon"
-                                variant="plain"
-                                className="group relative"
-                                isDisabled={!isAllowed || isOwnProjectMembershipDetails}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handlePopUpOpen("deleteRole", {
-                                    id: roleDetails?.id,
-                                    slug: roleDetails?.customRoleName || roleDetails?.role
-                                  });
-                                }}
-                              >
-                                <FontAwesomeIcon icon={faTrash} />
-                              </IconButton>
-                            )}
-                          </ProjectPermissionCan>
-                        </div>
-                      </Td>
-                    </Tr>
+                {(isAllowed) => {
+                  const isEditDisabled = !isAllowed || !canModifyMemberRoles;
+                  const button = (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => {
+                        handlePopUpOpen("modifyRole");
+                      }}
+                      isDisabled={isEditDisabled}
+                    >
+                      <PencilIcon />
+                      Edit Roles
+                    </Button>
                   );
-                })}
-            </TBody>
-          </Table>
-          {!isMembershipDetailsLoading && !membershipDetails?.roles?.length && (
-            <EmptyState title="This user has no roles" icon={faFolder} />
+                  return isEditDisabled ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-block">{button}</span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        You don&apos;t have permission to edit this user&apos;s roles
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    button
+                  );
+                }}
+              </ProjectPermissionCan>
+            </CardAction>
           )}
-        </TableContainer>
-      </div>
+        </CardHeader>
+        <CardContent>
+          {
+            /* eslint-disable-next-line no-nested-ternary */
+            isMembershipDetailsLoading ? (
+              // scott: todo proper loader
+              <div className="flex h-40 w-full items-center justify-center">
+                <Lottie icon="infisical_loading_white" isAutoPlay className="w-16" />
+              </div>
+            ) : hasRoles ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-1/2">Role</TableHead>
+                    <TableHead className="w-1/2">Duration</TableHead>
+                    {!isOwnProjectMembershipDetails && <TableHead className="w-5" />}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {membershipDetails?.roles?.map((roleDetails) => {
+                    const isTemporary = roleDetails?.isTemporary;
+                    const isExpired =
+                      roleDetails.isTemporary &&
+                      new Date() > new Date(roleDetails.temporaryAccessEndTime || "");
+
+                    let text = "Permanent";
+                    let toolTipText = "Non-Expiring Access";
+                    if (roleDetails.isTemporary) {
+                      if (isExpired) {
+                        text = "Access Expired";
+                        toolTipText = "Timed Access Expired";
+                      } else {
+                        text = formatDistance(
+                          new Date(roleDetails.temporaryAccessEndTime || ""),
+                          new Date()
+                        );
+                        toolTipText = `Until ${format(
+                          new Date(roleDetails.temporaryAccessEndTime || ""),
+                          "yyyy-MM-dd hh:mm:ss aaa"
+                        )}`;
+                      }
+                    }
+
+                    return (
+                      <TableRow
+                        className={`group h-10 ${isCertManager ? "" : "cursor-pointer"}`}
+                        key={`user-project-identity-${roleDetails?.id}`}
+                        onClick={
+                          isCertManager
+                            ? undefined
+                            : () =>
+                                navigate({
+                                  to: `${getProjectBaseURL(currentProject.type)}/roles/$roleSlug`,
+                                  params: {
+                                    projectId: currentProject.id,
+                                    roleSlug:
+                                      roleDetails.role === "custom"
+                                        ? roleDetails.customRoleSlug
+                                        : roleDetails.role
+                                  }
+                                })
+                        }
+                      >
+                        <TableCell className="max-w-0 truncate">
+                          {roleDetails.role === "custom"
+                            ? roleDetails.customRoleName
+                            : formatProjectRoleName(roleDetails.role)}
+                        </TableCell>
+                        <TableCell>
+                          {isTemporary ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge
+                                  className="capitalize"
+                                  variant={isExpired ? "danger" : "warning"}
+                                >
+                                  {isExpired ? <ClockAlertIcon /> : <ClockIcon />}
+                                  {text}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>{toolTipText}</TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            text
+                          )}
+                        </TableCell>
+                        {!isOwnProjectMembershipDetails && (
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <IconButton
+                                  size="xs"
+                                  variant="ghost"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <EllipsisIcon />
+                                </IconButton>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <ProjectPermissionCan
+                                  I={ProjectPermissionActions.Edit}
+                                  a={ProjectPermissionSub.Member}
+                                >
+                                  {(isAllowed) => (
+                                    <DropdownMenuItem
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handlePopUpOpen("deleteRole", {
+                                          id: roleDetails?.id,
+                                          slug: roleDetails?.customRoleName || roleDetails?.role
+                                        });
+                                      }}
+                                      isDisabled={!isAllowed || !canModifyMemberRoles}
+                                      variant="danger"
+                                    >
+                                      Remove Role
+                                    </DropdownMenuItem>
+                                  )}
+                                </ProjectPermissionCan>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            ) : (
+              <Empty className="border">
+                <EmptyHeader>
+                  <EmptyTitle>This user doesn&apos;t have any roles</EmptyTitle>
+                  <EmptyDescription>Give this user one or more roles</EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <ProjectPermissionCan
+                    I={ProjectPermissionActions.Edit}
+                    a={ProjectPermissionSub.Member}
+                  >
+                    {(isAllowed) => {
+                      const isEditDisabled =
+                        !isAllowed || isOwnProjectMembershipDetails || !canModifyMemberRoles;
+                      const button = (
+                        <Button
+                          variant="project"
+                          size="xs"
+                          onClick={() => {
+                            handlePopUpOpen("modifyRole");
+                          }}
+                          isDisabled={isEditDisabled}
+                        >
+                          <PencilIcon />
+                          Edit Roles
+                        </Button>
+                      );
+                      return isEditDisabled ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-block">{button}</span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            You don&apos;t have permission to edit this user&apos;s roles
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        button
+                      );
+                    }}
+                  </ProjectPermissionCan>
+                </EmptyContent>
+              </Empty>
+            )
+          }
+        </CardContent>
+      </Card>
+
       <DeleteActionModal
         isOpen={popUp.deleteRole.isOpen}
         deleteKey="remove"
@@ -234,6 +375,6 @@ export const MemberRoleDetailsSection = ({
           />
         </ModalContent>
       </Modal>
-    </div>
+    </>
   );
 };

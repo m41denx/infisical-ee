@@ -1,31 +1,48 @@
+import { Knex } from "knex";
+
 import {
   AccessScope,
+  OrgMembershipRole,
   OrgMembershipStatus,
   ProjectMembershipRole,
   TemporaryPermissionMode,
   TMembershipRolesInsert
 } from "@app/db/schemas";
+import { TEmailDomainDALFactory } from "@app/ee/services/email-domain/email-domain-dal";
 import { TUserGroupMembershipDALFactory } from "@app/ee/services/group/user-group-membership-dal";
 import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
+import { TOidcConfigDALFactory } from "@app/ee/services/oidc/oidc-config-dal";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
+import { TSamlConfigDALFactory } from "@app/ee/services/saml-config/saml-config-dal";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { groupBy } from "@app/lib/fn";
 import { ms } from "@app/lib/ms";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { SearchResourceOperators } from "@app/lib/search-resource/search";
+import { isDisposableEmail, sanitizeEmail, validateEmail } from "@app/lib/validator";
 
 import { TAdditionalPrivilegeDALFactory } from "../additional-privilege/additional-privilege-dal";
+import { TApprovalPolicyDALFactory } from "../approval-policy/approval-policy-dal";
 import { AuthMethod } from "../auth/auth-type";
 import { TAuthTokenServiceFactory } from "../auth-token/auth-token-service";
+import { TApplicationMembershipCleanupServiceFactory } from "../membership/application-membership-cleanup-service";
 import { TMembershipRoleDALFactory } from "../membership/membership-role-dal";
 import { TOrgDALFactory } from "../org/org-dal";
 import { deleteOrgMembershipsFn } from "../org/org-fns";
+import { isCustomOrgRole } from "../org/org-role-fns";
+import { ApplicationMemberKind } from "../pki-application/pki-application-types";
+import { TProjectAccessRequestDALFactory } from "../project/project-access-request-dal";
 import { TProjectDALFactory } from "../project/project-dal";
 import { TProjectKeyDALFactory } from "../project-key/project-key-dal";
 import { TRoleDALFactory } from "../role/role-dal";
 import { TSmtpService } from "../smtp/smtp-service";
+import { getServerCfg } from "../super-admin/super-admin-service";
+import { LoginMethod } from "../super-admin/super-admin-types";
 import { TUserDALFactory } from "../user/user-dal";
 import { TUserAliasDALFactory } from "../user-alias/user-alias-dal";
 import { TMembershipUserDALFactory } from "./membership-user-dal";
+import { assertWillRetainOrgAdmin } from "./membership-user-fns";
 import {
   TCreateMembershipUserDTO,
   TDeleteMembershipUserDTO,
@@ -33,7 +50,6 @@ import {
   TListMembershipUserDTO,
   TUpdateMembershipUserDTO
 } from "./membership-user-types";
-import { newNamespaceMembershipUserFactory } from "./namespace/namespace-membership-user-factory";
 import { newOrgMembershipUserFactory } from "./org/org-membership-user-factory";
 import { newProjectMembershipUserFactory } from "./project/project-membership-user-factory";
 
@@ -45,7 +61,11 @@ type TMembershipUserServiceFactoryDep = {
   userDAL: TUserDALFactory;
   permissionService: Pick<
     TPermissionServiceFactory,
-    "getProjectPermission" | "getProjectPermissionByRoles" | "getOrgPermission"
+    | "getProjectPermission"
+    | "getProjectPermissionByRoles"
+    | "getOrgPermission"
+    | "getOrgPermissionByRoles"
+    | "getResourcePermission"
   >;
   licenseService: TLicenseServiceFactory;
   projectKeyDAL: TProjectKeyDALFactory;
@@ -55,6 +75,15 @@ type TMembershipUserServiceFactoryDep = {
   userGroupMembershipDAL: TUserGroupMembershipDALFactory;
   projectDAL: TProjectDALFactory;
   additionalPrivilegeDAL: TAdditionalPrivilegeDALFactory;
+  projectAccessRequestDAL: TProjectAccessRequestDALFactory;
+  applicationMembershipCleanupService: Pick<
+    TApplicationMembershipCleanupServiceFactory,
+    "cleanupActorApplicationMemberships"
+  >;
+  approvalPolicyDAL: Pick<TApprovalPolicyDALFactory, "deleteUserStepApproversInProjects">;
+  emailDomainDAL: Pick<TEmailDomainDALFactory, "find">;
+  oidcConfigDAL: Pick<TOidcConfigDALFactory, "findOne">;
+  samlConfigDAL: Pick<TSamlConfigDALFactory, "findOne">;
 };
 
 export type TMembershipUserServiceFactory = ReturnType<typeof membershipUserServiceFactory>;
@@ -73,7 +102,13 @@ export const membershipUserServiceFactory = ({
   tokenService,
   userGroupMembershipDAL,
   projectDAL,
-  additionalPrivilegeDAL
+  additionalPrivilegeDAL,
+  projectAccessRequestDAL,
+  applicationMembershipCleanupService,
+  approvalPolicyDAL,
+  emailDomainDAL,
+  oidcConfigDAL,
+  samlConfigDAL
 }: TMembershipUserServiceFactoryDep) => {
   const scopeFactory = {
     [AccessScope.Organization]: newOrgMembershipUserFactory({
@@ -84,50 +119,56 @@ export const membershipUserServiceFactory = ({
       tokenService,
       userDAL,
       userGroupMembershipDAL,
-      membershipUserDAL
+      membershipUserDAL,
+      emailDomainDAL,
+      oidcConfigDAL,
+      samlConfigDAL
     }),
-    [AccessScope.Namespace]: newNamespaceMembershipUserFactory({}),
     [AccessScope.Project]: newProjectMembershipUserFactory({
       orgDAL,
       permissionService,
       membershipUserDAL,
       projectDAL,
-      smtpService
+      smtpService,
+      userDAL,
+      projectAccessRequestDAL
     })
   };
 
   const $getUsers = async (usernames: string[]) => {
     const existingUsers = await userDAL.find({ $in: { username: usernames } });
     if (existingUsers.length !== usernames.length) {
-      const newUserEmails = usernames.filter(
-        (inviteeEmail) => !existingUsers.find((el) => el.username === inviteeEmail)
-      );
+      const newUserEmails = usernames
+        .filter((inviteeEmail) => !existingUsers.find((el) => el.username === inviteeEmail))
+        .map((el) => el.toLowerCase());
+
+      const invalidEmails = newUserEmails.filter((el) => {
+        try {
+          validateEmail(el);
+          return false;
+        } catch (err) {
+          return true;
+        }
+      });
+      if (invalidEmails.length > 0) {
+        throw new BadRequestError({ message: `Invalid emails: ${invalidEmails.join(", ")}` });
+      }
+
       await userDAL.transaction(async (tx) => {
         for await (const inviteeEmail of newUserEmails) {
-          const usersByUsername = await userDAL.findUserByUsername(inviteeEmail, tx);
-          let inviteeUser =
-            usersByUsername?.length > 1
-              ? usersByUsername.find((el) => el.username === inviteeEmail)
-              : usersByUsername?.[0];
-
+          let inviteeUser = await userDAL.findOne({ username: inviteeEmail }, tx);
           // if the user doesn't exist we create the user with the email
           if (!inviteeUser) {
-            // TODO(carlos): will be removed once the function receives usernames instead of emails
-            const usersByEmail = await userDAL.findUserByEmail(inviteeEmail, tx);
-            if (usersByEmail?.length === 1) {
-              [inviteeUser] = usersByEmail;
-            } else {
-              inviteeUser = await userDAL.create(
-                {
-                  isAccepted: false,
-                  email: inviteeEmail,
-                  username: inviteeEmail,
-                  authMethods: [AuthMethod.EMAIL],
-                  isGhost: false
-                },
-                tx
-              );
-            }
+            inviteeUser = await userDAL.create(
+              {
+                isAccepted: false,
+                email: inviteeEmail,
+                username: inviteeEmail,
+                authMethods: [AuthMethod.EMAIL],
+                isGhost: false
+              },
+              tx
+            );
           }
 
           existingUsers.push(inviteeUser);
@@ -157,13 +198,41 @@ export const membershipUserServiceFactory = ({
     const { scopeData, data } = dto;
     const factory = scopeFactory[scopeData.scope];
 
-    const hasNoPermanentRole = data.roles.every((el) => el.isTemporary);
+    const orgDetails = await requestMemoize(requestMemoKeys.orgFindById(dto.permission.orgId), () =>
+      orgDAL.findById(dto.permission.orgId)
+    );
+
+    // If roles array is empty and scope is Organization, use org's default role
+    let rolesToUse = data.roles;
+    if (data.roles.length === 0 && scopeData.scope === AccessScope.Organization) {
+      const defaultMembershipRole = orgDetails.defaultMembershipRole || OrgMembershipRole.NoAccess;
+
+      let defaultRole: string;
+      if (isCustomOrgRole(defaultMembershipRole)) {
+        const customRoles = await roleDAL.find({
+          id: defaultMembershipRole,
+          orgId: dto.permission.orgId
+        });
+        if (customRoles.length === 0) {
+          throw new NotFoundError({ message: "Default custom role not found" });
+        }
+        defaultRole = customRoles[0].slug;
+      } else {
+        defaultRole = defaultMembershipRole;
+      }
+
+      rolesToUse = [{ isTemporary: false, role: defaultRole }];
+      // Expose resolved roles to onCreateMembershipUserGuard's boundary check
+      data.roles = rolesToUse;
+    }
+
+    const hasNoPermanentRole = rolesToUse.every((el) => el.isTemporary);
     if (hasNoPermanentRole) {
       throw new BadRequestError({
         message: "User must have at least one permanent role"
       });
     }
-    const isInvalidTemporaryRole = data.roles.some((el) => {
+    const isInvalidTemporaryRole = rolesToUse.some((el) => {
       if (el.isTemporary) {
         if (!el.temporaryAccessStartTime || !el.temporaryRange) {
           return true;
@@ -177,8 +246,15 @@ export const membershipUserServiceFactory = ({
       });
     }
 
+    const isEmailInvalid = await isDisposableEmail(data.usernames);
+    if (isEmailInvalid) {
+      throw new BadRequestError({
+        message: "Disposable emails are not allowed"
+      });
+    }
     const scopeDatabaseFields = factory.getScopeDatabaseFields(dto.scopeData);
-    const users = await $getUsers(dto.data.usernames);
+    const sanitizedEmails = dto.data.usernames.map((el) => sanitizeEmail(el));
+    const users = await $getUsers(sanitizedEmails);
     const existingMemberships = await membershipUserDAL.find({
       scope: scopeData.scope,
       ...scopeDatabaseFields,
@@ -188,18 +264,34 @@ export const membershipUserServiceFactory = ({
     });
 
     if (existingMemberships.length === users.length) return { memberships: [] };
+    const isSubOrganization = Boolean(orgDetails.rootOrgId);
+
+    const serverCfg = await getServerCfg();
+    const isEmailLoginEnabled =
+      !serverCfg.enabledLoginMethods || serverCfg.enabledLoginMethods.includes(LoginMethod.EMAIL);
 
     const newMembershipUsers = users.filter((user) => !existingMemberships?.find((el) => el.actorUserId === user.id));
     await factory.onCreateMembershipUserGuard(dto, newMembershipUsers);
-    const newMemberships = newMembershipUsers.map((user) => ({
-      scope: scopeData.scope,
-      ...scopeDatabaseFields,
-      actorUserId: user.id,
-      status: scopeData.scope === AccessScope.Organization ? OrgMembershipStatus.Invited : undefined,
-      inviteEmail: scopeData.scope === AccessScope.Organization ? user.email : undefined
-    }));
+    const newMemberships = newMembershipUsers.map((user) => {
+      let status: OrgMembershipStatus | undefined;
+      if (scopeData.scope === AccessScope.Organization) {
+        if (isSubOrganization || !isEmailLoginEnabled) {
+          status = OrgMembershipStatus.Accepted;
+        } else {
+          status = OrgMembershipStatus.Invited;
+        }
+      }
 
-    const customInputRoles = data.roles.filter((el) => factory.isCustomRole(el.role));
+      return {
+        scope: scopeData.scope,
+        ...scopeDatabaseFields,
+        actorUserId: user.id,
+        status,
+        inviteEmail: status === OrgMembershipStatus.Invited ? user.email : undefined
+      };
+    });
+
+    const customInputRoles = rolesToUse.filter((el) => factory.isCustomRole(el.role));
     const hasCustomRole = customInputRoles.length > 0;
     if (hasCustomRole) {
       const plan = await licenseService.getPlan(scopeData.orgId);
@@ -228,7 +320,7 @@ export const membershipUserServiceFactory = ({
 
       const roleDocs: TMembershipRolesInsert[] = [];
       docs.forEach((membership) => {
-        data.roles.forEach((membershipRole) => {
+        rolesToUse.forEach((membershipRole) => {
           const isCustomRole = Boolean(customRolesGroupBySlug?.[membershipRole.role]?.[0]);
           if (membershipRole.isTemporary) {
             const relativeTimeInMs = membershipRole.temporaryRange ? ms(membershipRole.temporaryRange) : null;
@@ -313,6 +405,10 @@ export const membershipUserServiceFactory = ({
         message: "User doesn't have membership"
       });
 
+    const newIsActive = typeof data.isActive === "undefined" ? existingMembership.isActive : data.isActive;
+    const newRolesHavePermanentAdmin =
+      newIsActive && data.roles.some((r) => r.role === OrgMembershipRole.Admin && !r.isTemporary);
+
     const scopeField = factory.getScopeField(dto.scopeData);
     const customRoles = hasCustomRole
       ? await roleDAL.find({
@@ -327,6 +423,15 @@ export const membershipUserServiceFactory = ({
     const customRolesGroupBySlug = groupBy(customRoles, ({ slug }) => slug);
 
     const membershipDoc = await membershipUserDAL.transaction(async (tx) => {
+      if (!newRolesHavePermanentAdmin && scopeData.scope === AccessScope.Organization) {
+        await assertWillRetainOrgAdmin({
+          scopeOrgId: scopeData.orgId,
+          excludeMembershipIds: [existingMembership.id],
+          dal: membershipUserDAL,
+          tx
+        });
+      }
+
       const doc =
         typeof data?.isActive === "undefined"
           ? existingMembership
@@ -380,7 +485,7 @@ export const membershipUserServiceFactory = ({
     return { membership: membershipDoc };
   };
 
-  const deleteMembership = async (dto: TDeleteMembershipUserDTO) => {
+  const deleteMembership = async (dto: TDeleteMembershipUserDTO, externalTx?: Knex) => {
     const { scopeData } = dto;
     const factory = scopeFactory[scopeData.scope];
 
@@ -402,8 +507,10 @@ export const membershipUserServiceFactory = ({
         message: "You can't delete your own membership"
       });
 
-    const membershipDoc = await membershipUserDAL.transaction(async (tx) => {
+    const performDelete = async (tx: Knex) => {
       if (dto.scopeData.scope === AccessScope.Organization) {
+        // Org-scope last-admin guard runs inside deleteOrgMembershipsFn's transaction so the
+        // advisory lock and count are race-safe with the delete itself.
         const [doc] = await deleteOrgMembershipsFn({
           orgMembershipIds: [existingMembership.id],
           orgId: dto.permission.orgId,
@@ -415,7 +522,8 @@ export const membershipUserServiceFactory = ({
           membershipUserDAL,
           userGroupMembershipDAL,
           membershipRoleDAL,
-          additionalPrivilegeDAL
+          additionalPrivilegeDAL,
+          approvalPolicyDAL
         });
         return doc;
       }
@@ -428,12 +536,25 @@ export const membershipUserServiceFactory = ({
           },
           tx
         );
+
+        await applicationMembershipCleanupService.cleanupActorApplicationMemberships(
+          {
+            projectId: dto.scopeData.projectId,
+            actorKind: ApplicationMemberKind.User,
+            actorId: dto.selector.userId
+          },
+          tx
+        );
       }
 
       await membershipRoleDAL.delete({ membershipId: existingMembership.id }, tx);
       const doc = await membershipUserDAL.deleteById(existingMembership.id, tx);
       return doc;
-    });
+    };
+
+    const membershipDoc = externalTx
+      ? await performDelete(externalTx)
+      : await membershipUserDAL.transaction(performDelete);
     return { membership: membershipDoc };
   };
 
@@ -479,7 +600,9 @@ export const membershipUserServiceFactory = ({
 
     await factory.onListMembershipUserGuard(dto);
 
-    const organizationDetails = await orgDAL.findById(dto.scopeData.orgId);
+    const organizationDetails = await requestMemoize(requestMemoKeys.orgFindById(dto.scopeData.orgId), () =>
+      orgDAL.findById(dto.scopeData.orgId)
+    );
     if (!organizationDetails.rootOrgId) return { users: [] };
 
     const users = await membershipUserDAL.listAvailableUsers(organizationDetails.id, organizationDetails.rootOrgId);

@@ -21,7 +21,7 @@ export const projectMembershipDALFactory = (db: TDbClient) => {
         .whereNotNull(`${TableName.Membership}.actorUserId`)
         .join(TableName.Project, `${TableName.Membership}.scopeProjectId`, `${TableName.Project}.id`)
         .join(TableName.Users, `${TableName.Membership}.actorUserId`, `${TableName.Users}.id`)
-        .join<TMemberships>(db(TableName.Membership).as("orgMembership"), (qb) => {
+        .leftJoin<TMemberships>(db(TableName.Membership).as("orgMembership"), (qb) => {
           qb.on(`${TableName.Users}.id`, "=", `orgMembership.actorUserId`)
             .andOn(`orgMembership.scopeOrgId`, "=", `${TableName.Project}.orgId`)
             .andOn("orgMembership.scope", db.raw("?", [AccessScope.Organization]));
@@ -105,7 +105,7 @@ export const projectMembershipDALFactory = (db: TDbClient) => {
             // public key is not used anymore as well
             publicKey: "",
             isGhost,
-            isOrgMembershipActive: isActive
+            isOrgMembershipActive: isActive ?? true
           },
           project: {
             id: projectId,
@@ -182,11 +182,6 @@ export const projectMembershipDALFactory = (db: TDbClient) => {
         .where({ [`${TableName.Membership}.scope` as "scope"]: AccessScope.Project })
         .whereNotNull(`${TableName.Membership}.actorUserId`)
         .join(TableName.Users, `${TableName.Membership}.actorUserId`, `${TableName.Users}.id`)
-        .join<TUserEncryptionKeys>(
-          TableName.UserEncryptionKey,
-          `${TableName.UserEncryptionKey}.userId`,
-          `${TableName.Users}.id`
-        )
         .select(
           selectAllTableCols(TableName.Membership),
           db.ref("id").withSchema(TableName.Users).as("userId"),
@@ -214,6 +209,7 @@ export const projectMembershipDALFactory = (db: TDbClient) => {
         .join(TableName.Users, `${TableName.Membership}.actorUserId`, `${TableName.Users}.id`)
         .where(`${TableName.Users}.id`, userId)
         .where(`${TableName.Project}.orgId`, orgId)
+        .whereNull(`${TableName.Project}.deleteAfter`)
         .join(TableName.MembershipRole, `${TableName.MembershipRole}.membershipId`, `${TableName.Membership}.id`)
         .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
         .select(
@@ -310,7 +306,8 @@ export const projectMembershipDALFactory = (db: TDbClient) => {
         .join(TableName.Users, `${TableName.Membership}.actorUserId`, `${TableName.Users}.id`)
         .whereIn(`${TableName.Users}.id`, userIds)
         .where(`${TableName.Project}.orgId`, orgId)
-        .join<TUserEncryptionKeys>(
+        .whereNull(`${TableName.Project}.deleteAfter`)
+        .leftJoin<TUserEncryptionKeys>(
           TableName.UserEncryptionKey,
           `${TableName.UserEncryptionKey}.userId`,
           `${TableName.Users}.id`
@@ -404,11 +401,34 @@ export const projectMembershipDALFactory = (db: TDbClient) => {
     }
   };
 
+  const findProjectMembershipsByGroupIds = async (orgId: string, groupIds: string[]) => {
+    try {
+      const docs = await db
+        .replicaNode()(TableName.Membership)
+        .where({ [`${TableName.Membership}.scope` as "scope"]: AccessScope.Project })
+        .whereNotNull(`${TableName.Membership}.actorGroupId`)
+        .whereIn(`${TableName.Membership}.actorGroupId`, groupIds)
+        .join(TableName.Project, `${TableName.Membership}.scopeProjectId`, `${TableName.Project}.id`)
+        .where(`${TableName.Project}.orgId`, orgId)
+        .whereNull(`${TableName.Project}.deleteAfter`)
+        .select(
+          db.ref("id").withSchema(TableName.Membership),
+          db.ref("actorGroupId").withSchema(TableName.Membership).as("groupId"),
+          db.ref("id").as("projectId").withSchema(TableName.Project)
+        );
+
+      return docs;
+    } catch (error) {
+      throw new DatabaseError({ error, name: "Find project memberships by group ids" });
+    }
+  };
+
   return {
     findAllProjectMembers,
     findProjectGhostUser,
     findMembershipsByUsername,
     findProjectMembershipsByUserId,
-    findProjectMembershipsByUserIds
+    findProjectMembershipsByUserIds,
+    findProjectMembershipsByGroupIds
   };
 };

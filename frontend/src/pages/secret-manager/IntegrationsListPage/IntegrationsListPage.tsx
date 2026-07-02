@@ -1,7 +1,5 @@
 import { Helmet } from "react-helmet";
 import { useTranslation } from "react-i18next";
-import { faWarning } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
@@ -14,11 +12,11 @@ import {
   useProject
 } from "@app/context";
 import { ProjectPermissionSecretSyncActions } from "@app/context/ProjectPermissionContext/types";
-import { useGetWorkspaceIntegrations } from "@app/hooks/api";
 import { ProjectType } from "@app/hooks/api/projects/types";
 import { IntegrationsListPageTabs } from "@app/types/integrations";
 
 import {
+  AppConnectionsTab,
   FrameworkIntegrationTab,
   InfrastructureIntegrationTab,
   NativeIntegrationsTab,
@@ -26,28 +24,20 @@ import {
 } from "./components";
 
 export const IntegrationsListPage = () => {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { currentOrg } = useOrganization();
   const { currentProject } = useProject();
-  const { t } = useTranslation();
 
   const { selectedTab } = useSearch({
     from: ROUTE_PATHS.SecretManager.IntegrationsListPage.id
   });
 
-  const { data: integrations } = useGetWorkspaceIntegrations(currentProject.id);
-  const hasNativeIntegrations = Boolean(integrations?.length);
-
   const updateSelectedTab = (tab: string) => {
     navigate({
-      to: ROUTE_PATHS.SecretManager.IntegrationsListPage.path,
-      search: {
-        selectedTab: tab as IntegrationsListPageTabs
-      },
-      params: {
-        projectId: currentProject.id,
-        orgId: currentOrg.id
-      }
+      to: "/organizations/$orgId/projects/secret-management/$projectId/integrations",
+      params: { orgId: currentOrg.id, projectId: currentProject.id },
+      search: { selectedTab: tab as IntegrationsListPageTabs }
     });
   };
 
@@ -66,8 +56,11 @@ export const IntegrationsListPage = () => {
             title="Project Integrations"
             description="Manage integrations with third-party services."
           />
-          <Tabs orientation="vertical" value={selectedTab} onValueChange={updateSelectedTab}>
+          <Tabs value={selectedTab} onValueChange={updateSelectedTab}>
             <TabList>
+              <Tab variant="project" value={IntegrationsListPageTabs.AppConnections}>
+                App Connections
+              </Tab>
               <Tab variant="project" value={IntegrationsListPageTabs.SecretSyncs}>
                 Secret Syncs
               </Tab>
@@ -77,12 +70,28 @@ export const IntegrationsListPage = () => {
               <Tab variant="project" value={IntegrationsListPageTabs.InfrastructureIntegrations}>
                 Infrastructure Integrations
               </Tab>
-              {hasNativeIntegrations && (
-                <Tab variant="project" value={IntegrationsListPageTabs.NativeIntegrations}>
-                  Native Integrations
-                </Tab>
-              )}
+              <Tab variant="project" value={IntegrationsListPageTabs.NativeIntegrations}>
+                Native Integrations
+              </Tab>
             </TabList>
+            <TabPanel value={IntegrationsListPageTabs.AppConnections}>
+              <AppConnectionsTab />
+            </TabPanel>
+            <TabPanel value={IntegrationsListPageTabs.FrameworkIntegrations}>
+              <FrameworkIntegrationTab />
+            </TabPanel>
+            <TabPanel value={IntegrationsListPageTabs.InfrastructureIntegrations}>
+              <InfrastructureIntegrationTab />
+            </TabPanel>
+            <TabPanel value={IntegrationsListPageTabs.NativeIntegrations}>
+              <ProjectPermissionCan
+                renderGuardBanner
+                I={ProjectPermissionActions.Read}
+                a={ProjectPermissionSub.Integrations}
+              >
+                <NativeIntegrationsTab />
+              </ProjectPermissionCan>
+            </TabPanel>
             <TabPanel value={IntegrationsListPageTabs.SecretSyncs}>
               <ProjectPermissionCan
                 renderGuardBanner
@@ -92,53 +101,6 @@ export const IntegrationsListPage = () => {
                 <SecretSyncsTab />
               </ProjectPermissionCan>
             </TabPanel>
-            <TabPanel value={IntegrationsListPageTabs.FrameworkIntegrations}>
-              <FrameworkIntegrationTab />
-            </TabPanel>
-            <TabPanel value={IntegrationsListPageTabs.InfrastructureIntegrations}>
-              <InfrastructureIntegrationTab />
-            </TabPanel>
-            {hasNativeIntegrations && (
-              <TabPanel value={IntegrationsListPageTabs.NativeIntegrations}>
-                <div className="mb-4 flex items-start rounded-md border border-yellow-600/75 bg-yellow-900/20 px-3 py-2">
-                  <div className="flex text-sm text-yellow-100">
-                    <FontAwesomeIcon icon={faWarning} className="mt-1 mr-2 text-yellow-600" />
-                    <div>
-                      <p className="font-medium">
-                        We&apos;re moving Native Integrations to{" "}
-                        <a
-                          href="https://infisical.com/docs/integrations/secret-syncs/overview"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline underline-offset-2 hover:text-mineshaft-100"
-                        >
-                          Secret Syncs
-                        </a>
-                        .
-                      </p>
-                      <p className="mt-0.5 text-yellow-100/80">
-                        If the integration you need isn&apos;t available in the Secret Syncs menu,
-                        please get in touch with us at{" "}
-                        <a
-                          href="mailto:team@infisical.com"
-                          className="underline underline-offset-2 hover:text-mineshaft-100"
-                        >
-                          team@infisical.com
-                        </a>
-                        .
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <ProjectPermissionCan
-                  renderGuardBanner
-                  I={ProjectPermissionActions.Read}
-                  a={ProjectPermissionSub.Integrations}
-                >
-                  <NativeIntegrationsTab />
-                </ProjectPermissionCan>
-              </TabPanel>
-            )}
           </Tabs>
         </div>
       </div>

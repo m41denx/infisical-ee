@@ -3,6 +3,7 @@ import { Knex } from "knex";
 import { TDbClient } from "@app/db";
 import { TableName, TDynamicSecrets } from "@app/db/schemas";
 import { DatabaseError } from "@app/lib/errors";
+import { sanitizeSqlLikeString } from "@app/lib/fn";
 import {
   buildFindFilter,
   ormify,
@@ -33,6 +34,36 @@ export interface TDynamicSecretDALFactory extends Omit<TOrmify<TableName.Dynamic
     filter: TFindFilter<TDynamicSecrets>,
     arg?: TFindOpt<TDynamicSecrets>
   ) => Promise<TDynamicSecretWithMetadata[]>;
+  findByGatewayId: (
+    gatewayId: string,
+    tx?: Knex
+  ) => Promise<
+    Array<{
+      id: string;
+      name: string;
+      folderId: string;
+      projectId: string;
+      projectName: string;
+      environmentSlug: string;
+    }>
+  >;
+  countByGatewayId: (gatewayId: string, tx?: Knex) => Promise<number>;
+  findByGatewayPoolId: (
+    gatewayPoolId: string,
+    tx?: Knex
+  ) => Promise<
+    Array<{
+      id: string;
+      name: string;
+      type: string;
+      folderId: string;
+      projectId: string;
+      projectName: string;
+      environmentSlug: string;
+    }>
+  >;
+  countByGatewayPoolId: (gatewayPoolId: string, tx?: Knex) => Promise<number>;
+  countByProject: (projectId: string, tx?: Knex) => Promise<number>;
 }
 
 export const dynamicSecretDALFactory = (db: TDbClient): TDynamicSecretDALFactory => {
@@ -64,7 +95,7 @@ export const dynamicSecretDALFactory = (db: TDbClient): TDynamicSecretDALFactory
           mapper: ({ metadataKey, metadataValue, metadataId }) => ({
             id: metadataId,
             key: metadataKey,
-            value: metadataValue
+            value: metadataValue || ""
           })
         }
       ]
@@ -109,7 +140,7 @@ export const dynamicSecretDALFactory = (db: TDbClient): TDynamicSecretDALFactory
           mapper: ({ metadataKey, metadataValue, metadataId }) => ({
             id: metadataId,
             key: metadataKey,
-            value: metadataValue
+            value: metadataValue || ""
           })
         }
       ]
@@ -128,7 +159,7 @@ export const dynamicSecretDALFactory = (db: TDbClient): TDynamicSecretDALFactory
         .whereIn("folderId", folderIds)
         .where((bd) => {
           if (search) {
-            void bd.whereILike(`${TableName.DynamicSecret}.name`, `%${search}%`);
+            void bd.whereILike(`${TableName.DynamicSecret}.name`, `%${sanitizeSqlLikeString(search)}%`);
           }
         })
         .leftJoin(
@@ -137,7 +168,11 @@ export const dynamicSecretDALFactory = (db: TDbClient): TDynamicSecretDALFactory
           `${TableName.DynamicSecret}.id`
         )
         .leftJoin(TableName.SecretFolder, `${TableName.SecretFolder}.id`, `${TableName.DynamicSecret}.folderId`)
-        .leftJoin(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
+        .leftJoin(TableName.Environment, function joinActiveEnvForFolder() {
+          this.on(`${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`).andOnNull(
+            `${TableName.Environment}.deleteAfter`
+          );
+        })
         .select(
           selectAllTableCols(TableName.DynamicSecret),
           db.ref("slug").withSchema(TableName.Environment).as("environment"),
@@ -170,7 +205,7 @@ export const dynamicSecretDALFactory = (db: TDbClient): TDynamicSecretDALFactory
             mapper: ({ metadataKey, metadataValue, metadataId }) => ({
               id: metadataId,
               key: metadataKey,
-              value: metadataValue
+              value: metadataValue || ""
             })
           }
         ]
@@ -182,5 +217,88 @@ export const dynamicSecretDALFactory = (db: TDbClient): TDynamicSecretDALFactory
     }
   };
 
-  return { ...orm, listDynamicSecretsByFolderIds, findOne, findWithMetadata };
+  const findByGatewayId = async (gatewayId: string, tx?: Knex) => {
+    const docs = await (tx || db.replicaNode())(TableName.DynamicSecret)
+      .join(TableName.SecretFolder, `${TableName.DynamicSecret}.folderId`, `${TableName.SecretFolder}.id`)
+      .join(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
+      .whereNull(`${TableName.Environment}.deleteAfter`)
+      .join(TableName.Project, `${TableName.Environment}.projectId`, `${TableName.Project}.id`)
+      .where(`${TableName.DynamicSecret}.gatewayV2Id`, gatewayId)
+      .select(
+        db.ref("id").withSchema(TableName.DynamicSecret),
+        db.ref("name").withSchema(TableName.DynamicSecret),
+        db.ref("folderId").withSchema(TableName.DynamicSecret),
+        db.ref("projectId").withSchema(TableName.Environment),
+        db.ref("name").withSchema(TableName.Project).as("projectName"),
+        db.ref("slug").withSchema(TableName.Environment).as("environmentSlug")
+      );
+
+    return docs;
+  };
+
+  const countByGatewayId = async (gatewayId: string, tx?: Knex) => {
+    const result = await (tx || db.replicaNode())(TableName.DynamicSecret)
+      .where(`${TableName.DynamicSecret}.gatewayV2Id`, gatewayId)
+      .count("id")
+      .first();
+
+    return parseInt(String(result?.count || "0"), 10);
+  };
+
+  const findByGatewayPoolId = async (gatewayPoolId: string, tx?: Knex) => {
+    const docs = await (tx || db.replicaNode())(TableName.DynamicSecret)
+      .join(TableName.SecretFolder, `${TableName.DynamicSecret}.folderId`, `${TableName.SecretFolder}.id`)
+      .join(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
+      .whereNull(`${TableName.Environment}.deleteAfter`)
+      .join(TableName.Project, `${TableName.Environment}.projectId`, `${TableName.Project}.id`)
+      .where(`${TableName.DynamicSecret}.gatewayPoolId`, gatewayPoolId)
+      .select(
+        db.ref("id").withSchema(TableName.DynamicSecret),
+        db.ref("name").withSchema(TableName.DynamicSecret),
+        db.ref("type").withSchema(TableName.DynamicSecret),
+        db.ref("folderId").withSchema(TableName.DynamicSecret),
+        db.ref("projectId").withSchema(TableName.Environment),
+        db.ref("name").withSchema(TableName.Project).as("projectName"),
+        db.ref("slug").withSchema(TableName.Environment).as("environmentSlug")
+      );
+
+    return docs;
+  };
+
+  const countByGatewayPoolId = async (gatewayPoolId: string, tx?: Knex) => {
+    const result = await (tx || db.replicaNode())(TableName.DynamicSecret)
+      .where(`${TableName.DynamicSecret}.gatewayPoolId`, gatewayPoolId)
+      .count("id")
+      .first();
+
+    return parseInt(String(result?.count || "0"), 10);
+  };
+
+  const countByProject = async (projectId: string, tx?: Knex) => {
+    try {
+      const result = await (tx || db.replicaNode())(TableName.DynamicSecret)
+        .join(TableName.SecretFolder, `${TableName.DynamicSecret}.folderId`, `${TableName.SecretFolder}.id`)
+        .join(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
+        .where(`${TableName.Environment}.projectId`, projectId)
+        .whereNull(`${TableName.Environment}.deleteAfter`)
+        .count("* as count")
+        .first();
+
+      return Number((result as { count?: string | number })?.count ?? 0);
+    } catch (error) {
+      throw new DatabaseError({ error, name: "Count by Project - Dynamic Secret" });
+    }
+  };
+
+  return {
+    ...orm,
+    listDynamicSecretsByFolderIds,
+    findOne,
+    findWithMetadata,
+    findByGatewayId,
+    countByGatewayId,
+    findByGatewayPoolId,
+    countByGatewayPoolId,
+    countByProject
+  };
 };

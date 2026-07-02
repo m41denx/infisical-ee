@@ -5,6 +5,7 @@ import { OrderByDirection, OrgServiceActor, TDynamicSecretWithMetadata, TProject
 import { ResourceMetadataDTO } from "@app/services/resource-metadata/resource-metadata-schema";
 import { SecretsOrderBy } from "@app/services/secret/secret-types";
 
+import { TApiConnectApp, TApiConnectResource, TIbmApiConnectBaseCredentials } from "./providers/ibm-api-connect";
 import { DynamicSecretProviderSchema } from "./providers/models";
 
 // various status for dynamic secret that happens in background
@@ -54,6 +55,10 @@ export type TDetailsDynamicSecretDTO = {
   projectSlug: string;
 } & Omit<TProjectPermission, "projectId">;
 
+export type TGetSshCaPublicKeyDTO = {
+  dynamicSecretId: string;
+} & Omit<TProjectPermission, "projectId">;
+
 export type ListDynamicSecretsFilters = {
   offset?: number;
   limit?: number;
@@ -86,11 +91,28 @@ export type TGetDynamicSecretsCountDTO = Omit<TListDynamicSecretsDTO, "projectSl
 };
 
 export type TDynamicSecretServiceFactory = {
-  create: (arg: TCreateDynamicSecretDTO) => Promise<TDynamicSecrets>;
-  updateByName: (arg: TUpdateDynamicSecretDTO) => Promise<TDynamicSecrets>;
-  deleteByName: (arg: TDeleteDynamicSecretDTO) => Promise<TDynamicSecrets>;
-  getDetails: (arg: TDetailsDynamicSecretDTO) => Promise<TDynamicSecretWithMetadata>;
-  listDynamicSecretsByEnv: (arg: TListDynamicSecretsDTO) => Promise<TDynamicSecretWithMetadata[]>;
+  create: (
+    arg: TCreateDynamicSecretDTO
+  ) => Promise<TDynamicSecrets & { projectId: string; environment: string; secretPath: string }>;
+  updateByName: (arg: TUpdateDynamicSecretDTO) => Promise<{
+    dynamicSecret: TDynamicSecrets;
+    updatedFields: string[];
+    projectId: string;
+    environment: string;
+    secretPath: string;
+  }>;
+  deleteByName: (
+    arg: TDeleteDynamicSecretDTO
+  ) => Promise<TDynamicSecrets & { projectId: string; environment: string; secretPath: string }>;
+  getDetails: (
+    arg: TDetailsDynamicSecretDTO
+  ) => Promise<TDynamicSecretWithMetadata & { projectId: string; environment: string; secretPath: string }>;
+  listDynamicSecretsByEnv: (arg: TListDynamicSecretsDTO) => Promise<{
+    dynamicSecrets: Array<TDynamicSecretWithMetadata>;
+    environment: string;
+    secretPath: string;
+    projectId: string;
+  }>;
   listDynamicSecretsByEnvs: (
     arg: TListDynamicSecretsMultiEnvDTO
   ) => Promise<Array<TDynamicSecretWithMetadata & { environment: string }>>;
@@ -103,8 +125,16 @@ export type TDynamicSecretServiceFactory = {
       email: string;
     }[]
   >;
+  fetchIbmApiConnectOrgs: (arg: TIbmApiConnectBaseCredentials) => Promise<TApiConnectResource[]>;
+  fetchIbmApiConnectOrgCatalogs: (
+    arg: TIbmApiConnectBaseCredentials & { orgId: string }
+  ) => Promise<TApiConnectResource[]>;
+  fetchIbmApiConnectOrgApps: (
+    arg: TIbmApiConnectBaseCredentials & { orgId: string; catalogId: string }
+  ) => Promise<TApiConnectApp[]>;
   listDynamicSecretsByFolderIds: (
     arg: TListDynamicSecretsByFolderMappingsDTO,
     actor: OrgServiceActor
   ) => Promise<Array<TDynamicSecretWithMetadata & { environment: string; path: string }>>;
+  getSshCaPublicKey: (arg: TGetSshCaPublicKeyDTO) => Promise<{ caPublicKey: string }>;
 };

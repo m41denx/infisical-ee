@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { Controller, FieldValues, useFieldArray, useForm } from "react-hook-form";
-import { faInfoCircle, faQuestionCircle, faTrash } from "@fortawesome/free-solid-svg-icons";
+import { faQuestionCircle, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
 import ms from "ms";
 import { z } from "zod";
 
@@ -22,20 +21,23 @@ import {
   TextArea,
   Tooltip
 } from "@app/components/v2";
-import { useOrgPermission } from "@app/context";
+import { GatewayPicker } from "@app/components/v3/platform/GatewayPicker";
+import { ProjectPermissionSub, useProject } from "@app/context";
 import { OrgPermissionSubjects } from "@app/context/OrgPermissionContext";
 import { OrgGatewayPermissionActions } from "@app/context/OrgPermissionContext/types";
-import { OrgMembershipRole } from "@app/helpers/roles";
-import { gatewaysQueryKeys, useCreateDynamicSecret } from "@app/hooks/api";
+import { useCanUseProjectAppConnectionImport } from "@app/hooks";
+import { useCreateDynamicSecret } from "@app/hooks/api";
+import { useListAvailableAppConnections } from "@app/hooks/api/appConnections";
+import { AppConnection } from "@app/hooks/api/appConnections/enums";
 import {
   DynamicSecretProviders,
   KubernetesDynamicSecretCredentialType
 } from "@app/hooks/api/dynamicSecret/types";
-import { useGetVaultExternalMigrationConfigs } from "@app/hooks/api/migration/queries";
 import { VaultKubernetesRole } from "@app/hooks/api/migration/types";
 import { ProjectEnv } from "@app/hooks/api/types";
 import { slugSchema } from "@app/lib/schemas";
 
+import { LoadFromVaultBanner } from "./components/LoadFromVaultBanner";
 import { VaultKubernetesImportModal } from "./VaultKubernetesImportModal";
 
 enum RoleType {
@@ -67,6 +69,7 @@ const formSchema = z
         clusterToken: z.string().trim().optional(),
         ca: z.string().optional(),
         sslEnabled: z.boolean().default(false),
+        sslRejectUnauthorized: z.boolean().default(true),
         credentialType: z.literal(KubernetesDynamicSecretCredentialType.Static),
         serviceAccountName: z.string().trim().min(1),
         namespace: z
@@ -78,6 +81,7 @@ const formSchema = z
             "Namespace must be a single value, not a comma-separated list"
           ),
         gatewayId: z.string().optional(),
+        gatewayPoolId: z.string().optional(),
         audiences: z.array(z.string().trim().min(1)),
         authMethod: z.nativeEnum(AuthMethod).default(AuthMethod.Api)
       }),
@@ -86,6 +90,7 @@ const formSchema = z
         clusterToken: z.string().trim().optional(),
         ca: z.string().optional(),
         sslEnabled: z.boolean().default(false),
+        sslRejectUnauthorized: z.boolean().default(true),
         credentialType: z.literal(KubernetesDynamicSecretCredentialType.Dynamic),
         namespace: z
           .string()
@@ -96,6 +101,7 @@ const formSchema = z
             return namespaces.length > 0 && namespaces.every((ns) => ns.length > 0);
           }, "Must be a valid comma-separated list of namespace values"),
         gatewayId: z.string().optional(),
+        gatewayPoolId: z.string().optional(),
         audiences: z.array(z.string().trim().min(1)),
         roleType: z.nativeEnum(RoleType),
         role: z.string().trim().min(1),
@@ -125,11 +131,15 @@ const formSchema = z
     usernameTemplate: z.string().trim().optional()
   })
   .superRefine((data, ctx) => {
-    if (data.provider.authMethod === AuthMethod.Gateway && !data.provider.gatewayId) {
+    if (
+      data.provider.authMethod === AuthMethod.Gateway &&
+      !data.provider.gatewayId &&
+      !data.provider.gatewayPoolId
+    ) {
       ctx.addIssue({
         path: ["provider.gatewayId"],
         code: z.ZodIssueCode.custom,
-        message: "When auth method is set to Gateway, a gateway must be selected"
+        message: "When auth method is set to Gateway, a gateway or gateway pool must be selected"
       });
     }
     if (data.provider.authMethod === AuthMethod.Api) {
@@ -171,6 +181,16 @@ export const KubernetesInputForm = ({
 }: Props) => {
   const [isVaultImportModalOpen, setIsVaultImportModalOpen] = useState(false);
 
+  const { projectId } = useProject();
+  const canUseAppConnectionImport = useCanUseProjectAppConnectionImport(
+    ProjectPermissionSub.Secrets
+  );
+  const { data: vaultAppConnections = [] } = useListAvailableAppConnections(
+    AppConnection.HCVault,
+    projectId,
+    { enabled: canUseAppConnectionImport }
+  );
+
   const {
     control,
     formState: { isSubmitting },
@@ -185,6 +205,7 @@ export const KubernetesInputForm = ({
         clusterToken: "",
         ca: "",
         sslEnabled: false,
+        sslRejectUnauthorized: true,
         serviceAccountName: "",
         namespace: "",
         credentialType: KubernetesDynamicSecretCredentialType.Static,
@@ -202,11 +223,8 @@ export const KubernetesInputForm = ({
   });
 
   const createDynamicSecret = useCreateDynamicSecret();
-  const { data: gateways, isPending: isGatewaysLoading } = useQuery(gatewaysQueryKeys.list());
-  const { data: vaultConfigs = [] } = useGetVaultExternalMigrationConfigs();
-  const hasVaultConnection = vaultConfigs.some((config) => config.connectionId);
-  const { hasOrgRole } = useOrgPermission();
-  const isOrgAdmin = hasOrgRole(OrgMembershipRole.Admin);
+  const providerGatewayId = watch("provider.gatewayId");
+  const providerGatewayPoolId = watch("provider.gatewayPoolId");
 
   const sslEnabled = watch("provider.sslEnabled");
   const credentialType = watch("provider.credentialType");
@@ -308,38 +326,7 @@ export const KubernetesInputForm = ({
   return (
     <form onSubmit={handleSubmit(handleCreateDynamicSecret)} autoComplete="off">
       <div>
-        {hasVaultConnection && (
-          <div className="mb-4 flex items-center justify-between rounded-md border border-primary-400/30 bg-primary/10 px-3 py-2.5">
-            <div className="flex items-center gap-2 text-sm">
-              <FontAwesomeIcon icon={faInfoCircle} className="text-primary" />
-              <span className="text-mineshaft-200">Load values from HashiCorp Vault</span>
-            </div>
-            <Tooltip
-              content={
-                !isOrgAdmin
-                  ? "Only organization admins can import configurations from HashiCorp Vault"
-                  : undefined
-              }
-            >
-              <Button
-                variant="outline_bg"
-                size="xs"
-                type="button"
-                onClick={() => setIsVaultImportModalOpen(true)}
-                isDisabled={!isOrgAdmin}
-                leftIcon={
-                  <img
-                    src="/images/integrations/Vault.png"
-                    alt="HashiCorp Vault"
-                    className="h-4 w-4"
-                  />
-                }
-              >
-                Load from Vault
-              </Button>
-            </Tooltip>
-          </div>
-        )}
+        <LoadFromVaultBanner onClick={() => setIsVaultImportModalOpen(true)} />
 
         <div className="flex items-center space-x-2">
           <div className="grow">
@@ -404,48 +391,30 @@ export const KubernetesInputForm = ({
                     a={OrgPermissionSubjects.Gateway}
                   >
                     {(isAllowed) => (
-                      <Controller
-                        control={control}
-                        name="provider.gatewayId"
-                        defaultValue=""
-                        render={({ field: { value, onChange }, fieldState: { error } }) => (
-                          <FormControl
-                            isError={Boolean(error?.message)}
-                            errorText={error?.message}
-                            label="Gateway"
-                          >
-                            <Tooltip
-                              isDisabled={isAllowed}
-                              content="Restricted access. You don't have permission to attach gateways to resources."
-                            >
-                              <div>
-                                <Select
-                                  isDisabled={!isAllowed}
-                                  value={value}
-                                  onValueChange={onChange}
-                                  className="w-full border border-mineshaft-500"
-                                  dropdownContainerClassName="max-w-none"
-                                  isLoading={isGatewaysLoading}
-                                  placeholder="Default: Internet Gateway"
-                                  position="popper"
-                                >
-                                  <SelectItem
-                                    value={null as unknown as string}
-                                    onClick={() => onChange(undefined)}
-                                  >
-                                    Internet Gateway
-                                  </SelectItem>
-                                  {gateways?.map((el) => (
-                                    <SelectItem value={el.id} key={el.id}>
-                                      {el.name}
-                                    </SelectItem>
-                                  ))}
-                                </Select>
-                              </div>
-                            </Tooltip>
-                          </FormControl>
-                        )}
-                      />
+                      <FormControl label="Gateway">
+                        <Tooltip
+                          isDisabled={isAllowed}
+                          content="Restricted access. You don't have permission to attach gateways to resources."
+                        >
+                          <div>
+                            <GatewayPicker
+                              isDisabled={!isAllowed}
+                              value={{
+                                gatewayId: providerGatewayId ?? null,
+                                gatewayPoolId: providerGatewayPoolId ?? null
+                              }}
+                              onChange={({ gatewayId: newGwId, gatewayPoolId: newPoolId }) => {
+                                setValue("provider.gatewayId", newGwId ?? undefined, {
+                                  shouldDirty: true
+                                });
+                                setValue("provider.gatewayPoolId", newPoolId ?? undefined, {
+                                  shouldDirty: true
+                                });
+                              }}
+                            />
+                          </div>
+                        </Tooltip>
+                      </FormControl>
                     )}
                   </OrgPermissionCan>
                 </div>
@@ -533,6 +502,41 @@ export const KubernetesInputForm = ({
                             placeholder="-----BEGIN CERTIFICATE----- ..."
                             isDisabled={!sslEnabled}
                           />
+                        </FormControl>
+                      )}
+                    />
+                    <Controller
+                      name="provider.sslRejectUnauthorized"
+                      control={control}
+                      render={({ field: { value, onChange }, fieldState: { error } }) => (
+                        <FormControl isError={Boolean(error?.message)} errorText={error?.message}>
+                          <Switch
+                            className="bg-mineshaft-400/50 shadow-inner data-[state=checked]:bg-green/80"
+                            id="ssl-reject-unauthorized"
+                            thumbClassName="bg-mineshaft-800"
+                            isChecked={value}
+                            onCheckedChange={onChange}
+                          >
+                            <p className="w-full">
+                              SSL Reject Unauthorized
+                              <Tooltip
+                                className="max-w-md"
+                                content={
+                                  <p>
+                                    If enabled, the server certificate will be verified against the
+                                    list of supplied CAs. Disable this option if you are using a
+                                    self-signed certificate.
+                                  </p>
+                                }
+                              >
+                                <FontAwesomeIcon
+                                  icon={faQuestionCircle}
+                                  size="sm"
+                                  className="ml-1"
+                                />
+                              </Tooltip>
+                            </p>
+                          </Switch>
                         </FormControl>
                       )}
                     />
@@ -763,6 +767,7 @@ export const KubernetesInputForm = ({
       <VaultKubernetesImportModal
         isOpen={isVaultImportModalOpen}
         onOpenChange={setIsVaultImportModalOpen}
+        appConnections={vaultAppConnections}
         onImport={handleVaultImport}
       />
     </form>

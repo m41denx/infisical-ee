@@ -1,7 +1,36 @@
 export enum WebhookType {
   GENERAL = "general",
-  SLACK = "slack"
+  SLACK = "slack",
+  MICROSOFT_TEAMS = "microsoft-teams"
 }
+
+export enum WebhookEvent {
+  SecretModified = "secrets.modified",
+  SecretRotationFailed = "secrets.rotation-failed",
+  HoneyTokenTriggered = "honey-token.triggered"
+}
+
+export type TWebhookEventMetadata = {
+  label: string;
+  description: string;
+};
+
+export const WEBHOOK_EVENTS = Object.values(WebhookEvent) as WebhookEvent[];
+
+export const WEBHOOK_EVENT_METADATA: Record<WebhookEvent, TWebhookEventMetadata> = {
+  [WebhookEvent.SecretRotationFailed]: {
+    label: "Secret Rotation Failed",
+    description: "Triggered when a secret rotation fails"
+  },
+  [WebhookEvent.SecretModified]: {
+    label: "Secret Modified",
+    description: "Triggered when secrets are modified"
+  },
+  [WebhookEvent.HoneyTokenTriggered]: {
+    label: "Honey Token Triggered",
+    description: "Triggered when a honey token is activated"
+  }
+};
 
 export type TWebhook = {
   id: string;
@@ -18,6 +47,7 @@ export type TWebhook = {
   lastStatus: "success" | "failed";
   lastRunErrorMessage?: string;
   isDisabled: boolean;
+  eventsFilter: { eventName: WebhookEvent }[];
   createdAt: string;
   updatedAt: string;
 };
@@ -29,12 +59,14 @@ export type TCreateWebhookDto = {
   webhookSecretKey?: string;
   secretPath: string;
   type: WebhookType;
+  eventsFilter?: { eventName: WebhookEvent }[];
 };
 
 export type TUpdateWebhookDto = {
   webhookId: string;
   projectId: string;
   isDisabled?: boolean;
+  eventsFilter?: { eventName: WebhookEvent }[];
 };
 
 export type TDeleteWebhookDto = {

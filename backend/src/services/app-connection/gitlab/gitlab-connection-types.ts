@@ -53,4 +53,6 @@ export type TGitLabRefreshTokenCredentials = {
 export interface TGitLabGroup {
   id: string;
   name: string;
+  fullName: string;
+  fullPath: string;
 }

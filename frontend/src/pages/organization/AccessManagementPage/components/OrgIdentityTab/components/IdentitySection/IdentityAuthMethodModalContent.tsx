@@ -4,9 +4,23 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
-import { FormControl, Select, SelectItem, Tooltip } from "@app/components/v2";
-import { Badge } from "@app/components/v3";
+import {
+  Badge,
+  Field,
+  FieldError,
+  FieldLabel,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from "@app/components/v3";
+import { MAX_IDENTITY_ACCESS_TOKEN_TTL_FALLBACK } from "@app/helpers/identityAuthSchemas";
 import { IdentityAuthMethod } from "@app/hooks/api/identities";
+import { useFetchServerStatus } from "@app/hooks/api/serverDetails";
 import { UsePopUpState } from "@app/hooks/usePopUp";
 
 import { IdentityAliCloudAuthForm } from "./IdentityAliCloudAuthForm";
@@ -18,6 +32,7 @@ import { IdentityKubernetesAuthForm } from "./IdentityKubernetesAuthForm";
 import { IdentityLdapAuthForm } from "./IdentityLdapAuthForm";
 import { IdentityOciAuthForm } from "./IdentityOciAuthForm";
 import { IdentityOidcAuthForm } from "./IdentityOidcAuthForm";
+import { IdentitySpiffeAuthForm } from "./IdentitySpiffeAuthForm";
 import { IdentityTlsCertAuthForm } from "./IdentityTlsCertAuthForm";
 import { IdentityTokenAuthForm } from "./IdentityTokenAuthForm";
 import { IdentityUniversalAuthForm } from "./IdentityUniversalAuthForm";
@@ -37,6 +52,8 @@ type Props = {
   };
   initialAuthMethod: IdentityAuthMethod;
   setSelectedAuthMethod: (authMethod: IdentityAuthMethod) => void;
+  isUpdate: boolean;
+  onSubmittingChange: (isSubmitting: boolean) => void;
 };
 
 type TRevokeMethods = {
@@ -58,7 +75,8 @@ const identityAuthMethods = [
   {
     label: "JWT Auth",
     value: IdentityAuthMethod.JWT_AUTH
-  }
+  },
+  { label: "SPIFFE Auth", value: IdentityAuthMethod.SPIFFE_AUTH }
 ];
 
 const schema = z
@@ -75,7 +93,9 @@ export const IdentityAuthMethodModalContent = ({
   handlePopUpToggle,
   identity,
   initialAuthMethod,
-  setSelectedAuthMethod
+  setSelectedAuthMethod,
+  isUpdate,
+  onSubmittingChange
 }: Props) => {
   const { control, watch } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -101,6 +121,10 @@ export const IdentityAuthMethodModalContent = ({
 
   const watchedAuthMethod = watch("authMethod");
 
+  const { data: serverStatus } = useFetchServerStatus();
+  const maxAccessTokenTTL =
+    serverStatus?.maxIdentityAccessTokenTTL ?? MAX_IDENTITY_ACCESS_TOKEN_TTL_FALLBACK;
+
   const identityAuthMethodData = {
     identityId: identity.id,
     name: identity.name,
@@ -123,6 +147,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -132,6 +159,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -142,6 +172,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -152,6 +185,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -162,6 +198,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -172,6 +211,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -182,6 +224,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -192,6 +237,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -202,6 +250,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -212,6 +263,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -222,6 +276,9 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     },
@@ -232,6 +289,22 @@ export const IdentityAuthMethodModalContent = ({
           identityId={identityAuthMethodData.identityId}
           handlePopUpOpen={handlePopUpOpen}
           handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
+        />
+      )
+    },
+
+    [IdentityAuthMethod.SPIFFE_AUTH]: {
+      render: () => (
+        <IdentitySpiffeAuthForm
+          identityId={identityAuthMethodData.identityId}
+          handlePopUpOpen={handlePopUpOpen}
+          handlePopUpToggle={handlePopUpToggle}
+          maxAccessTokenTTL={maxAccessTokenTTL}
+          isUpdate={isUpdate}
+          onSubmittingChange={onSubmittingChange}
         />
       )
     }
@@ -249,43 +322,54 @@ export const IdentityAuthMethodModalContent = ({
         control={control}
         name="authMethod"
         defaultValue={IdentityAuthMethod.UNIVERSAL_AUTH}
-        render={({ field: { onChange, ...field }, fieldState: { error } }) => (
-          <FormControl label="Auth Method" errorText={error?.message} isError={Boolean(error)}>
+        render={({ field: { onChange, value }, fieldState: { error } }) => (
+          <Field className="mb-2">
+            <FieldLabel htmlFor="auth-method">Auth Method</FieldLabel>
             <Select
-              isDisabled={isSelectedAuthAlreadyConfigured}
-              defaultValue={field.value}
-              {...field}
-              onValueChange={(e) => {
-                if (!isAlreadyConfigured(e as IdentityAuthMethod)) {
-                  setSelectedAuthMethod(e as IdentityAuthMethod);
-                  onChange(e);
+              value={value}
+              disabled={isSelectedAuthAlreadyConfigured}
+              onValueChange={(next) => {
+                if (!isAlreadyConfigured(next as IdentityAuthMethod)) {
+                  setSelectedAuthMethod(next as IdentityAuthMethod);
+                  onChange(next);
                 }
               }}
-              className="w-full"
             >
-              {identityAuthMethods.map(({ label, value }) => {
-                const alreadyConfigured = isAlreadyConfigured(value);
-                return (
-                  <Tooltip
-                    key={`auth-method-${value}`}
-                    content="Authentication method already configured"
-                    isDisabled={!alreadyConfigured}
-                  >
+              <SelectTrigger id="auth-method" className="w-full" isError={Boolean(error)}>
+                <SelectValue placeholder="Select auth method" />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                {identityAuthMethods.map(({ label, value: methodValue }) => {
+                  const alreadyConfigured = isAlreadyConfigured(methodValue);
+                  const item = (
                     <SelectItem
-                      isDisabled={alreadyConfigured}
-                      value={String(value || "")}
                       key={label}
+                      disabled={alreadyConfigured}
+                      value={String(methodValue || "")}
                     >
-                      {label}{" "}
-                      {alreadyConfigured && !isSelectedAuthAlreadyConfigured && (
-                        <Badge variant="info">Configured</Badge>
-                      )}
+                      <span className="flex items-center gap-2">
+                        {label}
+                        {alreadyConfigured && !isSelectedAuthAlreadyConfigured && (
+                          <Badge variant="info">Configured</Badge>
+                        )}
+                      </span>
                     </SelectItem>
-                  </Tooltip>
-                );
-              })}
+                  );
+                  return alreadyConfigured ? (
+                    <Tooltip key={`auth-method-${methodValue}`}>
+                      <TooltipTrigger asChild>{item}</TooltipTrigger>
+                      <TooltipContent side="right">
+                        Authentication method already configured
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    item
+                  );
+                })}
+              </SelectContent>
             </Select>
-          </FormControl>
+            <FieldError>{error?.message}</FieldError>
+          </Field>
         )}
       />
       {selectedMethodItem?.render ? selectedMethodItem.render() : <div />}

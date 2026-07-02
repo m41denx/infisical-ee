@@ -3,14 +3,18 @@ import { WorkflowIntegrationPlatform } from "../workflowIntegrations/types";
 import { TListProjectIdentitiesDTO, TSearchProjectsDTO } from "./types";
 
 export const projectKeys = {
-  getProjectById: (projectId: string) => ["projects", { projectId }] as const,
+  allProjectQueries: () => ["projects"] as const,
+  getProjectById: (projectId: string) =>
+    [...projectKeys.allProjectQueries(), { projectId }] as const,
   getProjectSecrets: (projectId: string) => [{ projectId }, "project-secrets"] as const,
   getProjectIndexStatus: (projectId: string) => [{ projectId }, "project-index-status"] as const,
   getProjectUpgradeStatus: (projectId: string) => [{ projectId }, "project-upgrade-status"],
   getProjectMemberships: (orgId: string) => [{ orgId }, "project-memberships"],
   getProjectAuthorization: (projectId: string) => [{ projectId }, "project-authorizations"],
   getProjectIntegrations: (projectId: string) => [{ projectId }, "project-integrations"],
-  getAllUserProjects: () => ["projects"] as const,
+  getAllUserProjects: () => [...projectKeys.allProjectQueries()] as const,
+  getMyPendingProjectAccessRequests: () =>
+    [...projectKeys.allProjectQueries(), "my-pending-access-requests"] as const,
   getProjectAuditLogs: (projectId: string) => [{ projectId }, "project-audit-logs"] as const,
   getProjectUsers: (
     projectId: string,
@@ -19,6 +23,10 @@ export const projectKeys = {
   ) => [{ projectId, includeGroupMembers, roles }, "project-users"] as const,
   getProjectUserDetails: (projectId: string, membershipId: string) =>
     [{ projectId, membershipId }, "project-user-details"] as const,
+  getMembershipPermissionAudit: (projectId: string, membershipId: string) =>
+    [{ projectId, membershipId }, "membership-permission-audit"] as const,
+  getIdentityPermissionAudit: (projectId: string, identityId: string) =>
+    [{ projectId, identityId }, "identity-permission-audit"] as const,
   getProjectIdentityMemberships: (projectId: string) =>
     [{ projectId }, "project-identity-memberships"] as const,
   getProjectIdentityMembershipDetails: (projectId: string, identityId: string) =>
@@ -28,7 +36,8 @@ export const projectKeys = {
   // allows invalidation using above key without knowing params
   getProjectIdentityMembershipsWithParams: ({ projectId, ...params }: TListProjectIdentitiesDTO) =>
     [...projectKeys.getProjectIdentityMemberships(projectId), params] as const,
-  searchProject: (dto: TSearchProjectsDTO) => ["search-projects", dto] as const,
+  searchProject: (dto: TSearchProjectsDTO) =>
+    [...projectKeys.allProjectQueries(), "search-projects", dto] as const,
   getProjectGroupMemberships: (projectId: string) => [{ projectId }, "project-groups"] as const,
   getProjectGroupMembershipDetails: (projectId: string, groupId: string) =>
     [{ projectId, groupId }, "project-group-membership-details"] as const,
@@ -44,7 +53,28 @@ export const projectKeys = {
     limit,
     friendlyName,
     commonName,
-    forPkiSync
+    forPkiSync,
+    search,
+    status,
+    profileIds,
+    fromDate,
+    toDate,
+    metadataFilter,
+    extendedKeyUsage,
+    keyAlgorithm,
+    signatureAlgorithm,
+    keySizes,
+    caIds,
+    enrollmentTypes,
+    source,
+    notAfterFrom,
+    notAfterTo,
+    notBeforeFrom,
+    notBeforeTo,
+    applicationId,
+    applicationIds,
+    sortBy,
+    sortOrder
   }: {
     projectId: string;
     offset: number;
@@ -52,10 +82,58 @@ export const projectKeys = {
     friendlyName?: string;
     commonName?: string;
     forPkiSync?: boolean;
+    search?: string;
+    status?: string | string[];
+    profileIds?: string[];
+    fromDate?: Date;
+    toDate?: Date;
+    metadataFilter?: Array<{ key: string; value?: string }>;
+    extendedKeyUsage?: string;
+    keyAlgorithm?: string | string[];
+    signatureAlgorithm?: string;
+    keySizes?: number[];
+    caIds?: string[];
+    enrollmentTypes?: string[];
+    source?: string | string[];
+    notAfterFrom?: Date;
+    notAfterTo?: Date;
+    notBeforeFrom?: Date;
+    notBeforeTo?: Date;
+    applicationId?: string;
+    applicationIds?: string[];
+    sortBy?: string;
+    sortOrder?: "asc" | "desc";
   }) =>
     [
       ...projectKeys.forProjectCertificates(projectId),
-      { offset, limit, friendlyName, commonName, forPkiSync }
+      {
+        offset,
+        limit,
+        friendlyName,
+        commonName,
+        forPkiSync,
+        search,
+        status,
+        profileIds,
+        fromDate,
+        toDate,
+        metadataFilter,
+        extendedKeyUsage,
+        keyAlgorithm,
+        signatureAlgorithm,
+        keySizes,
+        caIds,
+        enrollmentTypes,
+        source,
+        notAfterFrom,
+        notAfterTo,
+        notBeforeFrom,
+        notBeforeTo,
+        applicationId,
+        applicationIds,
+        sortBy,
+        sortOrder
+      }
     ] as const,
   getProjectPkiAlerts: (projectId: string) => [{ projectId }, "project-pki-alerts"] as const,
   getProjectPkiSubscribers: (projectId: string) =>

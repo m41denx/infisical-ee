@@ -1,17 +1,26 @@
 import { AccessScopeData, TemporaryPermissionMode } from "@app/db/schemas";
-import { OrgServiceActor } from "@app/lib/types";
+import { OrderByDirection, OrgServiceActor } from "@app/lib/types";
+
+export enum OrgGroupsOrderBy {
+  Name = "name",
+  Slug = "slug",
+  Role = "role"
+}
+
+export type TMembershipGroupGuardReturn = {
+  group: { id: string; name: string };
+};
 
 export interface TMembershipGroupScopeFactory {
-  onCreateMembershipGroupGuard: (arg: TCreateMembershipGroupDTO) => Promise<void>;
+  onCreateMembershipGroupGuard: (arg: TCreateMembershipGroupDTO) => Promise<TMembershipGroupGuardReturn>;
 
-  onUpdateMembershipGroupGuard: (arg: TUpdateMembershipGroupDTO) => Promise<void>;
-  onDeleteMembershipGroupGuard: (arg: TDeleteMembershipGroupDTO) => Promise<void>;
+  onUpdateMembershipGroupGuard: (arg: TUpdateMembershipGroupDTO) => Promise<TMembershipGroupGuardReturn>;
+  onDeleteMembershipGroupGuard: (arg: TDeleteMembershipGroupDTO) => Promise<TMembershipGroupGuardReturn>;
   onListMembershipGroupGuard: (arg: TListMembershipGroupDTO) => Promise<void>;
   onGetMembershipGroupByGroupIdGuard: (arg: TGetMembershipGroupByGroupIdDTO) => Promise<void>;
-  getScopeField: (scope: AccessScopeData) => { key: "orgId" | "namespaceId" | "projectId"; value: string };
+  getScopeField: (scope: AccessScopeData) => { key: "orgId" | "projectId"; value: string };
   getScopeDatabaseFields: (scope: AccessScopeData) => {
     scopeOrgId: string;
-    scopeNamespaceId?: string | null;
     scopeProjectId?: string | null;
   };
   isCustomRole: (role: string) => boolean;
@@ -57,8 +66,10 @@ export type TListMembershipGroupDTO = {
   data: {
     limit?: number;
     offset?: number;
-    groupName?: string;
+    search?: string;
     roles?: string[];
+    orderBy?: OrgGroupsOrderBy;
+    orderDirection?: OrderByDirection;
   };
 };
 

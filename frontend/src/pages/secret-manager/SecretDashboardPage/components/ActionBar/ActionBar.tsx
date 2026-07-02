@@ -1,4 +1,4 @@
-import { TypeOptions } from "react-toastify";
+import { useMemo } from "react";
 import { subject } from "@casl/ability";
 import {
   faAngleDown,
@@ -29,7 +29,7 @@ import FileSaver from "file-saver";
 import { twMerge } from "tailwind-merge";
 
 import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
-import { createNotification } from "@app/components/notifications";
+import { createNotification, type NotificationType } from "@app/components/notifications";
 import { ProjectPermissionCan } from "@app/components/permissions";
 import { CreateSecretRotationV2Modal } from "@app/components/secret-rotations-v2";
 import {
@@ -50,12 +50,18 @@ import {
   ModalContent,
   Tooltip
 } from "@app/components/v2";
-import { Badge } from "@app/components/v3";
+import {
+  Badge,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from "@app/components/v3";
 import {
   ProjectPermissionActions,
   ProjectPermissionDynamicSecretActions,
   ProjectPermissionSub,
-  useOrgPermission,
   useProject,
   useProjectPermission,
   useSubscription
@@ -65,8 +71,7 @@ import {
   ProjectPermissionSecretActions,
   ProjectPermissionSecretRotationActions
 } from "@app/context/ProjectPermissionContext/types";
-import { OrgMembershipRole } from "@app/helpers/roles";
-import { usePopUp } from "@app/hooks";
+import { useCanUseProjectAppConnectionImport, usePopUp } from "@app/hooks";
 import {
   useCreateFolder,
   useCreateSecretBatch,
@@ -74,16 +79,15 @@ import {
   useMoveSecrets,
   useUpdateSecretBatch
 } from "@app/hooks/api";
+import { useListAvailableAppConnections } from "@app/hooks/api/appConnections";
+import { AppConnection } from "@app/hooks/api/appConnections/enums";
 import {
   dashboardKeys,
   fetchDashboardProjectSecretsByKeys
 } from "@app/hooks/api/dashboard/queries";
 import { UsedBySecretSyncs } from "@app/hooks/api/dashboard/types";
-import {
-  useGetVaultExternalMigrationConfigs,
-  useImportVaultSecrets
-} from "@app/hooks/api/migration";
-import { VaultImportStatus } from "@app/hooks/api/migration/types";
+import { useImportVaultSecrets } from "@app/hooks/api/migration";
+import { ExternalMigrationImportStatus } from "@app/hooks/api/migration/types";
 import { secretApprovalRequestKeys } from "@app/hooks/api/secretApprovalRequest/queries";
 import { PendingAction } from "@app/hooks/api/secretFolders/types";
 import { fetchProjectSecrets, secretKeys } from "@app/hooks/api/secrets/queries";
@@ -201,12 +205,31 @@ export const ActionBar = ({
   const selectedSecrets = useSelectedSecrets();
   const { reset: resetSelectedSecret } = useSelectedSecretActions();
   const isMultiSelectActive = Boolean(Object.keys(selectedSecrets).length);
+  const isManagedSecretSelected = Object.values(selectedSecrets).some(
+    (secret) => secret.isRotatedSecret || secret.isHoneyTokenSecret
+  );
+  const isHoneyTokenSelected = Object.values(selectedSecrets).some(
+    (secret) => secret.isHoneyTokenSecret
+  );
 
   const { permission } = useProjectPermission();
-  const { data: vaultConfigs = [] } = useGetVaultExternalMigrationConfigs();
-  const hasVaultConnection = vaultConfigs.some((config) => config.connectionId);
-  const { hasOrgRole } = useOrgPermission();
-  const isOrgAdmin = hasOrgRole(OrgMembershipRole.Admin);
+  const vaultSecretSubject = useMemo(
+    () =>
+      subject(ProjectPermissionSub.Secrets, {
+        environment,
+        secretPath,
+        secretName: "*",
+        secretTags: ["*"]
+      }),
+    [environment, secretPath]
+  );
+  const canUseAppConnectionImport = useCanUseProjectAppConnectionImport(vaultSecretSubject);
+  const { data: vaultAppConnections = [] } = useListAvailableAppConnections(
+    AppConnection.HCVault,
+    projectId,
+    { enabled: canUseAppConnectionImport }
+  );
+  const hasVaultConnection = vaultAppConnections.length > 0;
 
   const handleFolderCreate = async (folderName: string, description: string | null) => {
     if (isBatchMode) {
@@ -352,7 +375,7 @@ export const ActionBar = ({
       });
 
       let notificationMessage = "";
-      let notificationType: TypeOptions = "info";
+      let notificationType: NotificationType = "info";
 
       if (isDestinationUpdated && isSourceUpdated) {
         notificationMessage = "Successfully moved selected secrets";
@@ -643,8 +666,10 @@ export const ActionBar = ({
       queryClient.invalidateQueries({
         queryKey: secretApprovalRequestKeys.count({ projectId })
       });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
 
-      // Close the modal and show notification
       handlePopUpClose("confirmUpload");
       createNotification({
         type: "success",
@@ -661,24 +686,35 @@ export const ActionBar = ({
     }
   };
 
-  const handleVaultImport = async (vaultPath: string, namespace: string) => {
-    const result = await importVaultSecrets({
+  const handleVaultImport = async (
+    vaultPaths: string[],
+    namespace: string,
+    connectionId: string
+  ) => {
+    const { status } = await importVaultSecrets({
       projectId,
       environment,
       secretPath,
       vaultNamespace: namespace,
-      vaultSecretPath: vaultPath
+      vaultSecretPaths: vaultPaths,
+      connectionId
     });
 
-    if (result.status === VaultImportStatus.ApprovalRequired) {
+    if (status === ExternalMigrationImportStatus.ApprovalRequired) {
       createNotification({
         type: "info",
-        text: "Secret change request created successfully. Awaiting approval."
+        text:
+          vaultPaths.length > 1
+            ? `Secret change request created for ${vaultPaths.length} Vault paths. Awaiting approval.`
+            : "Secret change request created successfully. Awaiting approval."
       });
     } else {
       createNotification({
         type: "success",
-        text: "Successfully imported secrets from HashiCorp Vault"
+        text:
+          vaultPaths.length > 1
+            ? `Successfully imported secrets from ${vaultPaths.length} HashiCorp Vault paths`
+            : "Successfully imported secrets from HashiCorp Vault"
       });
     }
   };
@@ -1099,33 +1135,25 @@ export const ActionBar = ({
                     })}
                   >
                     {(isAllowed) => (
-                      <Tooltip
-                        content={
-                          !isOrgAdmin
-                            ? "Only organization admins can import secrets from HashiCorp Vault"
-                            : undefined
+                      <Button
+                        leftIcon={
+                          <img
+                            src="/images/integrations/Vault.png"
+                            alt="HashiCorp Vault"
+                            className="h-4 w-4"
+                          />
                         }
+                        onClick={() => {
+                          handlePopUpOpen("importFromVault");
+                          handlePopUpClose("misc");
+                        }}
+                        isDisabled={!isAllowed}
+                        variant="outline_bg"
+                        className="h-10 text-left"
+                        isFullWidth
                       >
-                        <Button
-                          leftIcon={
-                            <img
-                              src="/images/integrations/Vault.png"
-                              alt="HashiCorp Vault"
-                              className="h-4 w-4"
-                            />
-                          }
-                          onClick={() => {
-                            handlePopUpOpen("importFromVault");
-                            handlePopUpClose("misc");
-                          }}
-                          isDisabled={!isAllowed || !isOrgAdmin}
-                          variant="outline_bg"
-                          className="h-10 text-left"
-                          isFullWidth
-                        >
-                          Add from HashiCorp Vault
-                        </Button>
-                      </Tooltip>
+                        Add from HashiCorp Vault
+                      </Button>
                     )}
                   </ProjectPermissionCan>
                 )}
@@ -1166,7 +1194,7 @@ export const ActionBar = ({
                 leftIcon={<FontAwesomeIcon icon={faAnglesRight} />}
                 className="ml-4"
                 onClick={() => handlePopUpOpen("moveSecrets")}
-                isDisabled={!isAllowed}
+                isDisabled={!isAllowed || isHoneyTokenSelected}
                 size="xs"
               >
                 Move
@@ -1191,7 +1219,7 @@ export const ActionBar = ({
                 leftIcon={<FontAwesomeIcon icon={faTrash} />}
                 className="ml-2"
                 onClick={() => handlePopUpOpen("bulkDeleteSecrets")}
-                isDisabled={!isAllowed}
+                isDisabled={!isAllowed || isManagedSecretSelected}
                 size="xs"
               >
                 Delete
@@ -1228,14 +1256,18 @@ export const ActionBar = ({
         isOpen={popUp.addSecretRotation.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("addSecretRotation", isOpen)}
       />
-      <Modal
-        isOpen={popUp.addFolder.isOpen}
+      <Dialog
+        open={popUp.addFolder.isOpen}
         onOpenChange={(isOpen) => handlePopUpToggle("addFolder", isOpen)}
       >
-        <ModalContent title="Create Folder">
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add Folder</DialogTitle>
+            <DialogDescription>Add a new folder to organize your secrets.</DialogDescription>
+          </DialogHeader>
           <FolderForm onCreateFolder={handleFolderCreate} />
-        </ModalContent>
-      </Modal>
+        </DialogContent>
+      </Dialog>
       <DeleteActionModal
         isOpen={popUp.bulkDeleteSecrets.isOpen}
         deleteKey="delete"
@@ -1257,6 +1289,10 @@ export const ActionBar = ({
         popUp={popUp}
         handlePopUpToggle={handlePopUpToggle}
         onMoveApproved={handleSecretsMove}
+        secretsToMove={Object.values(selectedSecrets).map((s) => ({ id: s.id, key: s.key }))}
+        environment={environment}
+        secretPath={secretPath}
+        projectId={projectId}
       />
       <ReplicateFolderFromBoard
         isOpen={popUp.replicateFolder.isOpen}
@@ -1353,6 +1389,7 @@ export const ActionBar = ({
         onOpenChange={(isOpen) => handlePopUpToggle("importFromVault", isOpen)}
         environment={environment}
         secretPath={secretPath}
+        appConnections={vaultAppConnections}
         onImport={handleVaultImport}
       />
     </>

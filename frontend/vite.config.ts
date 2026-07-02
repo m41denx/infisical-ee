@@ -48,8 +48,31 @@ export default defineConfig(({ mode }) => {
         output: {
           entryFileNames: `assets/[name]-${version}-[hash].js`,
           chunkFileNames: `assets/[name]-${version}-[hash].js`,
-          assetFileNames: `assets/[name]-${version}-[hash].[ext]`
+          assetFileNames: `assets/[name]-${version}-[hash].[ext]`,
+          // recharts/d3 has circular dependencies so we ensure
+          // they remain in the same chunk so that the import resolution
+          // doesn't lead to uninitailized import sequences
+          manualChunks(id) {
+            if (
+              id.includes("node_modules/recharts") ||
+              id.includes("node_modules/d3-") ||
+              id.includes("node_modules/victory-vendor")
+            ) {
+              return "recharts";
+            }
+
+            return undefined;
+          }
         }
+      }
+    },
+    experimental: {
+      renderBuiltUrl(filename, { hostType }) {
+        if (hostType === "js") {
+          return { runtime: `window.__toCdnUrl(${JSON.stringify(filename)})` };
+        }
+
+        return { relative: true };
       }
     },
     plugins: [

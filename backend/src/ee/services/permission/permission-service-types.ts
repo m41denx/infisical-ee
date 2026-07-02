@@ -1,12 +1,13 @@
-import { MongoAbility } from "@casl/ability";
+import { MongoAbility, RawRuleOf } from "@casl/ability";
+import { PackRule } from "@casl/ability/extra";
 import { MongoQuery } from "@ucast/mongo2js";
-import { Knex } from "knex";
 
-import { ActionProjectType, OrganizationActionScope, TMemberships } from "@app/db/schemas";
+import { ActionProjectType, OrganizationActionScope, ResourceType, TMemberships } from "@app/db/schemas";
 import { ActorAuthMethod, ActorType } from "@app/services/auth/auth-type";
 
 import { OrgPermissionSet } from "./org-permission";
 import { ProjectPermissionSet } from "./project-permission";
+import { ResourcePermissionSet } from "./resource-permission";
 
 export type TBuildProjectPermissionDTO = {
   permissions?: unknown;
@@ -34,6 +35,47 @@ export type TGetProjectPermissionArg = {
   actionProjectType: ActionProjectType;
 };
 
+export type TGetResourcePermissionArg = {
+  actor: ActorType;
+  actorId: string;
+  projectId: string;
+  resourceType: ResourceType;
+  resourceId: string;
+  actorAuthMethod: ActorAuthMethod;
+  actorOrgId?: string;
+};
+
+export type TGetMembershipPermissionAuditArg = {
+  actor: ActorType;
+  actorId: string;
+  actorAuthMethod: ActorAuthMethod;
+  actorOrgId: string;
+  projectId: string;
+  targetUserId: string;
+};
+
+export type TGetIdentityPermissionAuditArg = {
+  actor: ActorType;
+  actorId: string;
+  actorAuthMethod: ActorAuthMethod;
+  actorOrgId: string;
+  projectId: string;
+  targetIdentityId: string;
+};
+
+export type TPermissionAuditSource = {
+  id: string;
+  type: "role" | "group_role" | "additional_privilege";
+  name: string;
+  slug?: string;
+  groupId?: string;
+  groupName?: string;
+  isTemporary: boolean;
+  temporaryAccessStartTime?: string;
+  temporaryAccessEndTime?: string;
+  permissions: PackRule<RawRuleOf<MongoAbility<ProjectPermissionSet>>>[];
+};
+
 export type TGetOrgPermissionArg = {
   actor: ActorType;
   actorId: string;
@@ -58,6 +100,13 @@ export type TPermissionServiceFactory = {
     permission: MongoAbility<ProjectPermissionSet, MongoQuery>;
     memberships: Array<TMemberships & { roles: { role: string; customRoleSlug?: string | null }[] }>;
     hasRole: (role: string) => boolean;
+    hasProjectEnforcement: (check: "enforceEncryptedSecretManagerSecretMetadata") => boolean;
+  }>;
+  getResourcePermission: (arg: TGetResourcePermissionArg) => Promise<{
+    permission: MongoAbility<ResourcePermissionSet, MongoQuery>;
+    memberships: Array<TMemberships & { roles: { role: string; customRoleSlug?: string | null }[] }>;
+    hasRole: (role: string) => boolean;
+    isImplicitAdmin: boolean;
   }>;
   getProjectPermissions: (
     projectId: string,
@@ -67,16 +116,19 @@ export type TPermissionServiceFactory = {
       permission: MongoAbility<ProjectPermissionSet, MongoQuery>;
       id: string;
       name: string;
+      membershipId: string;
     }[];
     identityPermissions: {
       permission: MongoAbility<ProjectPermissionSet, MongoQuery>;
       id: string;
       name: string;
+      membershipId: string;
     }[];
     groupPermissions: {
       permission: MongoAbility<ProjectPermissionSet, MongoQuery>;
       id: string;
       name: string;
+      membershipId: string;
     }[];
   }>;
   getOrgPermissionByRoles: (
@@ -104,10 +156,10 @@ export type TPermissionServiceFactory = {
       permission: MongoAbility<ProjectPermissionSet, MongoQuery>;
       role?: {
         name: string;
-        id: string;
-        createdAt: Date;
-        updatedAt: Date;
         slug: string;
+        id?: string;
+        createdAt?: Date;
+        updatedAt?: Date;
         permissions?: unknown;
         description?: string | null | undefined;
       };
@@ -122,5 +174,10 @@ export type TPermissionServiceFactory = {
     projectId: string;
     checkPermissions: ProjectPermissionSet;
   }) => Promise<boolean>;
-  invalidateProjectPermissionCache: (projectId: string, tx?: Knex) => Promise<void>;
+  getMembershipPermissionAudit: (arg: TGetMembershipPermissionAuditArg) => Promise<{
+    sources: TPermissionAuditSource[];
+  }>;
+  getIdentityPermissionAudit: (arg: TGetIdentityPermissionAuditArg) => Promise<{
+    sources: TPermissionAuditSource[];
+  }>;
 };

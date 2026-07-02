@@ -3,11 +3,28 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 
+import { UpgradePlanModal } from "@app/components/license/UpgradePlanModal";
 import { createNotification } from "@app/components/notifications";
-import { Button, FormControl, Input, Modal, ModalContent, Spinner } from "@app/components/v2";
-import { useOrganization } from "@app/context";
+import {
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  Input,
+  PageLoader
+} from "@app/components/v3";
+import { useOrganization, useSubscription } from "@app/context";
 import { useCreateOrgRole, useGetOrgRole } from "@app/hooks/api";
 import { TOrgRole } from "@app/hooks/api/roles/types";
+import { usePopUp } from "@app/hooks/usePopUp";
 import { slugSchema } from "@app/lib/schemas";
 
 type Props = {
@@ -43,10 +60,22 @@ const Content = ({ role, onClose }: ContentProps) => {
     resolver: zodResolver(schema)
   });
 
+  const { subscription } = useSubscription();
+  const {
+    popUp: upgradePlanPopUp,
+    handlePopUpOpen: handleUpgradePlanPopUpOpen,
+    handlePopUpToggle: handleUpgradePlanPopUpToggle
+  } = usePopUp(["upgradePlan"] as const);
+
   const createRole = useCreateOrgRole();
   const navigate = useNavigate();
 
   const handleDuplicateRole = async (form: FormData) => {
+    if (subscription && !subscription?.rbac) {
+      handleUpgradePlanPopUpOpen("upgradePlan");
+      return;
+    }
+
     const newRole = await createRole.mutateAsync({
       orgId: role.orgId,
       permissions: role.permissions,
@@ -70,52 +99,69 @@ const Content = ({ role, onClose }: ContentProps) => {
   };
 
   return (
-    <form onSubmit={handleSubmit(handleDuplicateRole)}>
-      <Controller
-        control={control}
-        defaultValue=""
-        name="name"
-        render={({ field, fieldState: { error } }) => (
-          <FormControl label="Name" isError={Boolean(error)} errorText={error?.message} isRequired>
-            <Input {...field} placeholder="Billing Team" />
-          </FormControl>
-        )}
+    <>
+      <form onSubmit={handleSubmit(handleDuplicateRole)}>
+        <FieldGroup>
+          <Controller
+            control={control}
+            defaultValue=""
+            name="name"
+            render={({ field, fieldState: { error } }) => (
+              <Field>
+                <FieldLabel htmlFor="name">Name</FieldLabel>
+                <Input id="name" placeholder="Billing Team" isError={Boolean(error)} {...field} />
+                <FieldError>{error?.message}</FieldError>
+              </Field>
+            )}
+          />
+          <Controller
+            control={control}
+            defaultValue=""
+            name="slug"
+            render={({ field, fieldState: { error } }) => (
+              <Field>
+                <FieldLabel htmlFor="slug">Slug</FieldLabel>
+                <Input id="slug" placeholder="billing" isError={Boolean(error)} {...field} />
+                <FieldError>{error?.message}</FieldError>
+              </Field>
+            )}
+          />
+          <Controller
+            control={control}
+            defaultValue=""
+            name="description"
+            render={({ field, fieldState: { error } }) => (
+              <Field>
+                <FieldLabel htmlFor="description">Description (optional)</FieldLabel>
+                <Input
+                  id="description"
+                  placeholder="To manage billing"
+                  isError={Boolean(error)}
+                  {...field}
+                />
+                <FieldError>{error?.message}</FieldError>
+              </Field>
+            )}
+          />
+        </FieldGroup>
+        <DialogFooter className="mt-6">
+          <DialogClose asChild>
+            <Button type="button" variant="ghost">
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button type="submit" variant="org" isPending={isSubmitting} isDisabled={isSubmitting}>
+            Duplicate Role
+          </Button>
+        </DialogFooter>
+      </form>
+      <UpgradePlanModal
+        isOpen={upgradePlanPopUp.upgradePlan.isOpen}
+        onOpenChange={(isOpen) => handleUpgradePlanPopUpToggle("upgradePlan", isOpen)}
+        text="Your current plan does not include custom roles. To unlock this feature, please upgrade to Infisical Enterprise plan."
+        isEnterpriseFeature
       />
-      <Controller
-        control={control}
-        defaultValue=""
-        name="slug"
-        render={({ field, fieldState: { error } }) => (
-          <FormControl label="Slug" isError={Boolean(error)} errorText={error?.message} isRequired>
-            <Input {...field} placeholder="billing" />
-          </FormControl>
-        )}
-      />
-      <Controller
-        control={control}
-        defaultValue=""
-        name="description"
-        render={({ field, fieldState: { error } }) => (
-          <FormControl label="Description" isError={Boolean(error)} errorText={error?.message}>
-            <Input {...field} placeholder="To manage billing" />
-          </FormControl>
-        )}
-      />
-      <div className="flex items-center">
-        <Button
-          className="mr-4"
-          size="sm"
-          type="submit"
-          isLoading={isSubmitting}
-          isDisabled={isSubmitting}
-        >
-          Duplicate Role
-        </Button>
-        <Button colorSchema="secondary" variant="plain" onClick={onClose}>
-          Cancel
-        </Button>
-      </div>
-    </form>
+    </>
   );
 };
 
@@ -127,25 +173,27 @@ export const DuplicateOrgRoleModal = ({ isOpen, onOpenChange, roleId }: Props) =
   if (!roleId) return null;
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange}>
-      <ModalContent
-        title="Duplicate Role"
-        subTitle="Duplicate this role to create a new role with the same permissions."
-      >
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Duplicate Role</DialogTitle>
+          <DialogDescription>
+            Duplicate this role to create a new role with the same permissions.
+          </DialogDescription>
+        </DialogHeader>
         {/* eslint-disable-next-line no-nested-ternary */}
         {isPending ? (
-          <div className="flex h-full flex-col items-center justify-center py-2.5">
-            <Spinner size="lg" className="text-mineshaft-500" />
-            <p className="mt-4 text-sm text-mineshaft-400">Loading Role...</p>
+          <div className="h-32">
+            <PageLoader lottieClassName="w-16" />
           </div>
         ) : role ? (
           <Content role={role!} onClose={() => onOpenChange(false)} />
         ) : (
-          <p className="w-full text-center text-red">
+          <p className="w-full text-center text-danger">
             Error: could not find role with slug &#34;{roleId}&#34;
           </p>
         )}
-      </ModalContent>
-    </Modal>
+      </DialogContent>
+    </Dialog>
   );
 };

@@ -1,11 +1,11 @@
 import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
 import { TRelayServiceFactory } from "@app/ee/services/relay/relay-service";
 import { getConfig } from "@app/lib/config/env";
+import { CronJobName, TCronJobFactory } from "@app/lib/cron/cron-job";
 import { logger } from "@app/lib/logger";
-import { QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue";
 
 type THealthAlertServiceFactoryDep = {
-  queueService: TQueueServiceFactory;
+  cronJob: TCronJobFactory;
   gatewayV2Service: Pick<TGatewayV2ServiceFactory, "healthcheckNotify">;
   relayService: Pick<TRelayServiceFactory, "healthcheckNotify">;
 };
@@ -13,50 +13,24 @@ type THealthAlertServiceFactoryDep = {
 export type THealthAlertServiceFactory = ReturnType<typeof healthAlertServiceFactory>;
 
 export const healthAlertServiceFactory = ({
-  queueService,
+  cronJob,
   gatewayV2Service,
   relayService
 }: THealthAlertServiceFactoryDep) => {
   const appCfg = getConfig();
 
-  const init = async () => {
-    if (appCfg.isSecondaryInstance) {
-      return;
-    }
-
-    await queueService.stopRepeatableJob(
-      QueueName.HealthAlert,
-      QueueJobs.HealthAlert,
-      { pattern: "*/5 * * * *", utc: true },
-      QueueName.HealthAlert // job id
-    );
-
-    await queueService.startPg<QueueName.HealthAlert>(
-      QueueJobs.HealthAlert,
-      async () => {
-        try {
-          logger.info(`${QueueName.HealthAlert}: health check alert task started`);
-          await gatewayV2Service.healthcheckNotify();
-          await relayService.healthcheckNotify();
-          logger.info(`${QueueName.HealthAlert}: health check alert task completed`);
-        } catch (error) {
-          logger.error(error, `${QueueName.HealthAlert}: health check alert failed`);
-          throw error;
-        }
-      },
-      {
-        batchSize: 1,
-        workerCount: 1,
-        pollingIntervalSeconds: 60
+  const init = () => {
+    cronJob.register({
+      name: CronJobName.HealthAlert,
+      pattern: "*/5 * * * *",
+      runHashTtlS: 60 * 60,
+      enabled: !appCfg.isSecondaryInstance,
+      handler: async () => {
+        logger.info("cron[health-alert]: health check task started");
+        await gatewayV2Service.healthcheckNotify();
+        await relayService.healthcheckNotify();
       }
-    );
-
-    await queueService.schedulePg(
-      QueueJobs.HealthAlert,
-      "*/5 * * * *", // Schedule to run every 5 minutes
-      undefined,
-      { tz: "UTC" }
-    );
+    });
   };
 
   return {

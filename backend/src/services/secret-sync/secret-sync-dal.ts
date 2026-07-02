@@ -14,8 +14,14 @@ type SecretSyncFindFilter = Parameters<typeof buildFindFilter<TSecretSyncs>>[0];
 const baseSecretSyncQuery = ({ filter, db, tx }: { db: TDbClient; filter?: SecretSyncFindFilter; tx?: Knex }) => {
   const query = (tx || db.replicaNode())(TableName.SecretSync)
     .leftJoin(TableName.SecretFolder, `${TableName.SecretSync}.folderId`, `${TableName.SecretFolder}.id`)
-    .leftJoin(TableName.Environment, `${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`)
+    .leftJoin(TableName.Environment, function joinActiveEnvForFolder() {
+      this.on(`${TableName.SecretFolder}.envId`, `${TableName.Environment}.id`).andOnNull(
+        `${TableName.Environment}.deleteAfter`
+      );
+    })
     .join(TableName.AppConnection, `${TableName.SecretSync}.connectionId`, `${TableName.AppConnection}.id`)
+    .join(TableName.Project, `${TableName.SecretSync}.projectId`, `${TableName.Project}.id`)
+    .whereNull(`${TableName.Project}.deleteAfter`)
     .select(selectAllTableCols(TableName.SecretSync))
     .select(
       // environment
@@ -31,7 +37,9 @@ const baseSecretSyncQuery = ({ filter, db, tx }: { db: TDbClient; filter?: Secre
       db.ref("description").withSchema(TableName.AppConnection).as("connectionDescription"),
       db.ref("version").withSchema(TableName.AppConnection).as("connectionVersion"),
       db.ref("gatewayId").withSchema(TableName.AppConnection).as("connectionGatewayId"),
+      db.ref("gatewayPoolId").withSchema(TableName.AppConnection).as("connectionGatewayPoolId"),
       db.ref("projectId").withSchema(TableName.AppConnection).as("connectionProjectId"),
+      db.ref("isAutoRotationEnabled").withSchema(TableName.AppConnection).as("connectionIsAutoRotationEnabled"),
       db.ref("createdAt").withSchema(TableName.AppConnection).as("connectionCreatedAt"),
       db.ref("updatedAt").withSchema(TableName.AppConnection).as("connectionUpdatedAt"),
       db
@@ -68,7 +76,9 @@ const expandSecretSync = (
     connectionVersion,
     connectionIsPlatformManagedCredentials,
     connectionGatewayId,
+    connectionGatewayPoolId,
     connectionProjectId,
+    connectionIsAutoRotationEnabled,
     ...el
   } = secretSync;
 
@@ -89,7 +99,9 @@ const expandSecretSync = (
       version: connectionVersion,
       isPlatformManagedCredentials: connectionIsPlatformManagedCredentials,
       gatewayId: connectionGatewayId,
-      projectId: connectionProjectId
+      gatewayPoolId: connectionGatewayPoolId,
+      projectId: connectionProjectId,
+      isAutoRotationEnabled: connectionIsAutoRotationEnabled
     },
     folder: folder
       ? {
@@ -204,6 +216,19 @@ export const secretSyncDALFactory = (
     }
   };
 
+  const updateAndReturnIds = async (
+    filter: Parameters<(typeof secretSyncOrm)["find"]>[0],
+    data: Parameters<(typeof secretSyncOrm)["update"]>[1],
+    tx?: Knex
+  ): Promise<string[]> => {
+    try {
+      const rows = await (tx || db)(TableName.SecretSync).where(buildFindFilter(filter)).update(data).returning("id");
+      return rows.map((r) => r.id);
+    } catch (error) {
+      throw new DatabaseError({ error, name: "Update And Return IDs - Secret Sync" });
+    }
+  };
+
   const findByDestinationAndOrgId = async (destination: string, orgId: string, tx?: Knex) => {
     try {
       const response = await (tx || db.replicaNode())(TableName.SecretSync)
@@ -218,5 +243,14 @@ export const secretSyncDALFactory = (
     }
   };
 
-  return { ...secretSyncOrm, findById, findOne, find, create, updateById, findByDestinationAndOrgId };
+  return {
+    ...secretSyncOrm,
+    findById,
+    findOne,
+    find,
+    create,
+    updateById,
+    updateAndReturnIds,
+    findByDestinationAndOrgId
+  };
 };

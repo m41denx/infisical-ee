@@ -5,7 +5,8 @@ import { WsTag } from "../tags/types";
 export enum ApprovalStatus {
   PENDING = "pending",
   APPROVED = "approved",
-  REJECTED = "rejected"
+  REJECTED = "rejected",
+  REVOKED = "revoked"
 }
 
 export enum CommitType {
@@ -20,7 +21,7 @@ export type TSecretApprovalSecChangeData = {
   secretKey: string;
   secretValue?: string;
   secretComment?: string;
-  skipMultilineEncoding?: boolean;
+  skipMultilineEncoding?: boolean | null;
   algorithm: "aes-256-gcm";
   keyEncoding: "utf8" | "base64";
   tags?: WsTag[];
@@ -35,6 +36,7 @@ export type TSecretApprovalSecChange = {
   secretValueHidden?: boolean;
   secretComment?: string;
   isRotatedSecret?: boolean;
+  isHoneyTokenSecret?: boolean;
   tags?: string[];
 };
 
@@ -62,6 +64,11 @@ export type TSecretApprovalRequest = {
   secretPath: string;
   hasMerged: boolean;
   status: "open" | "close";
+  // Set when the request was merged without satisfying the policy's required approvals.
+  bypassReason?: string | null;
+  // Commit message captured when changes are submitted through a point-in-time commit.
+  // Not set for secret edits routed directly through an approval policy.
+  commitMessage?: string | null;
   policy: Omit<TSecretApprovalPolicy, "approvers" | "bypassers"> & {
     approvers: {
       isOrgMembershipActive: boolean;
@@ -133,6 +140,7 @@ export type TUpdateSecretApprovalReviewStatusDTO = {
   status: ApprovalStatus;
   comment?: string;
   id: string;
+  projectId: string;
 };
 
 export type TUpdateSecretApprovalRequestStatusDTO = {

@@ -41,10 +41,18 @@ export class UnauthorizedError extends Error {
 
   error: unknown;
 
-  constructor({ name, error, message }: { message?: string; name?: string; error?: unknown } = {}) {
+  detail?: Record<string, unknown>;
+
+  constructor({
+    name,
+    error,
+    message,
+    detail
+  }: { message?: string; name?: string; error?: unknown; detail?: Record<string, unknown> } = {}) {
     super(message ?? "You are not allowed to access this resource");
     this.name = name || "UnauthorizedError";
     this.error = error;
+    this.detail = detail;
   }
 }
 
@@ -90,10 +98,23 @@ export class BadRequestError extends Error {
 
   error: unknown;
 
-  constructor({ name, error, message }: { message?: string; name?: string; error?: unknown }) {
+  details?: unknown;
+
+  constructor({
+    name,
+    error,
+    message,
+    details
+  }: {
+    message?: string;
+    name?: string;
+    error?: unknown;
+    details?: unknown;
+  }) {
     super(message ?? "The request is invalid");
     this.name = name || "BadRequest";
     this.error = error;
+    this.details = details;
   }
 }
 
@@ -139,14 +160,18 @@ export class ScimRequestError extends Error {
 
   error: unknown;
 
+  mutability?: string;
+
   constructor({
     name,
     error,
     detail,
-    status
+    status,
+    mutability
   }: {
     message?: string;
     name?: string;
+    mutability?: string;
     error?: unknown;
     detail: string;
     status: number;
@@ -157,6 +182,7 @@ export class ScimRequestError extends Error {
     this.error = error;
     this.detail = detail;
     this.status = status;
+    this.mutability = mutability;
   }
 }
 
@@ -181,5 +207,25 @@ export class CryptographyError extends Error {
     super(message || "Cryptographic operation failed");
     this.name = name || "CryptographyError";
     this.error = error;
+  }
+}
+
+export class PolicyViolationError extends Error {
+  name: string;
+
+  error: unknown;
+
+  details?: unknown;
+
+  constructor({
+    name,
+    error,
+    message,
+    details
+  }: { message?: string; name?: string; error?: unknown; details?: unknown } = {}) {
+    super(message || "A policy is in place for this resource");
+    this.name = name || "PolicyViolationError";
+    this.error = error;
+    this.details = details;
   }
 }

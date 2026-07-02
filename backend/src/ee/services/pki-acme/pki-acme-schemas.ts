@@ -1,13 +1,14 @@
 import { z } from "zod";
 
 export enum AcmeIdentifierType {
-  DNS = "dns"
+  DNS = "dns",
+  IP = "ip"
 }
 
 export enum AcmeOrderStatus {
   Pending = "pending",
-  Processing = "processing",
   Ready = "ready",
+  Processing = "processing",
   Valid = "valid",
   Invalid = "invalid"
 }
@@ -147,6 +148,7 @@ export const GetAcmeAuthorizationResponseSchema = z.object({
     type: z.string(),
     value: z.string()
   }),
+  wildcard: z.boolean().optional(),
   challenges: z.array(
     z.object({
       type: z.enum(Object.values(AcmeChallengeType) as [string, ...string[]]),

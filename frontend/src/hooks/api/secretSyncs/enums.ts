@@ -31,7 +31,19 @@ export enum SecretSync {
   Northflank = "northflank",
   Bitbucket = "bitbucket",
   LaravelForge = "laravel-forge",
-  Chef = "chef"
+  Chef = "chef",
+  OctopusDeploy = "octopus-deploy",
+  CircleCI = "circleci",
+  AzureEntraIdScim = "azure-entra-id-scim",
+  ExternalInfisical = "external-infisical",
+  OVH = "ovh",
+  Devin = "devin",
+  Ona = "ona",
+  TravisCI = "travis-ci",
+  Snowflake = "snowflake",
+  TriggerDev = "trigger-dev",
+  Qovery = "qovery",
+  Cloud66 = "cloud-66"
 }
 
 export enum SecretSyncStatus {

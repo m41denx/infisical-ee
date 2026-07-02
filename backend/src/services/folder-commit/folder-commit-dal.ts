@@ -10,6 +10,7 @@ import {
   TSecretVersionsV2
 } from "@app/db/schemas";
 import { DatabaseError, NotFoundError } from "@app/lib/errors";
+import { sanitizeSqlLikeString } from "@app/lib/fn";
 import { buildFindFilter, ormify, selectAllTableCols } from "@app/lib/knex";
 
 export type TFolderCommitDALFactory = ReturnType<typeof folderCommitDALFactory>;
@@ -63,7 +64,11 @@ export const folderCommitDALFactory = (db: TDbClient) => {
     try {
       const doc = await (tx || db.replicaNode())(TableName.FolderCommit)
         .where({ folderId })
-        .leftJoin(TableName.Environment, `${TableName.FolderCommit}.envId`, `${TableName.Environment}.id`)
+        .leftJoin(TableName.Environment, function joinActiveEnvForFolderCommit() {
+          this.on(`${TableName.FolderCommit}.envId`, `${TableName.Environment}.id`).andOnNull(
+            `${TableName.Environment}.deleteAfter`
+          );
+        })
         .where((qb) => {
           if (projectId) {
             void qb.where(`${TableName.Environment}.projectId`, "=", projectId);
@@ -378,11 +383,11 @@ export const folderCommitDALFactory = (db: TDbClient) => {
       const doc = await (tx || db.replicaNode())(TableName.FolderCommit)
         // eslint-disable-next-line @typescript-eslint/no-misused-promises
         .where(buildFindFilter({ id }, TableName.FolderCommit))
-        .leftJoin<TProjectEnvironments>(
-          TableName.Environment,
-          `${TableName.FolderCommit}.envId`,
-          `${TableName.Environment}.id`
-        )
+        .leftJoin<TProjectEnvironments>(TableName.Environment, function joinActiveEnvForFolderCommit() {
+          this.on(`${TableName.FolderCommit}.envId`, `${TableName.Environment}.id`).andOnNull(
+            `${TableName.Environment}.deleteAfter`
+          );
+        })
         .where((qb) => {
           if (projectId) {
             void qb.where(`${TableName.Environment}.projectId`, "=", projectId);
@@ -426,7 +431,7 @@ export const folderCommitDALFactory = (db: TDbClient) => {
       // Add search functionality
       if (search) {
         baseQuery = baseQuery.where((qb) => {
-          void qb.whereILike("message", `%${search}%`);
+          void qb.whereILike("message", `%${sanitizeSqlLikeString(search)}%`);
         });
       }
 

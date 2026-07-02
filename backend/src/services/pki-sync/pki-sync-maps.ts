@@ -6,12 +6,20 @@ export const PKI_SYNC_NAME_MAP: Record<PkiSync, string> = {
   [PkiSync.AzureKeyVault]: "Azure Key Vault",
   [PkiSync.AwsCertificateManager]: "AWS Certificate Manager",
   [PkiSync.AwsSecretsManager]: "AWS Secrets Manager",
-  [PkiSync.Chef]: "Chef"
+  [PkiSync.AwsElasticLoadBalancer]: "AWS Elastic Load Balancer",
+  [PkiSync.Chef]: "Chef",
+  [PkiSync.CloudflareCustomCertificate]: "Cloudflare Custom SSL Certificate",
+  [PkiSync.NetScaler]: "NetScaler",
+  [PkiSync.F5BigIp]: "F5 BIG-IP"
 };
 
 export const PKI_SYNC_CONNECTION_MAP: Record<PkiSync, AppConnection> = {
   [PkiSync.AzureKeyVault]: AppConnection.AzureKeyVault,
   [PkiSync.AwsCertificateManager]: AppConnection.AWS,
   [PkiSync.AwsSecretsManager]: AppConnection.AWS,
-  [PkiSync.Chef]: AppConnection.Chef
+  [PkiSync.AwsElasticLoadBalancer]: AppConnection.AWS,
+  [PkiSync.Chef]: AppConnection.Chef,
+  [PkiSync.CloudflareCustomCertificate]: AppConnection.Cloudflare,
+  [PkiSync.NetScaler]: AppConnection.NetScaler,
+  [PkiSync.F5BigIp]: AppConnection.F5BigIp
 };

@@ -1,7 +1,8 @@
 import json
+import logging
 import os
-
 import pathlib
+import shutil
 import typing
 from copy import deepcopy
 
@@ -9,7 +10,6 @@ import httpx
 from behave.runner import Context
 from dotenv import load_dotenv
 from faker import Faker
-import logging
 
 from features.steps.utils import clean_all_nock, restore_nock
 
@@ -20,9 +20,12 @@ BASE_URL = os.environ.get("INFISICAL_API_URL", "http://localhost:8080")
 PEBBLE_URL = os.environ.get("PEBBLE_URL", "https://pebble:14000/dir")
 PROJECT_ID = os.environ.get("PROJECT_ID")
 CERT_CA_ID = os.environ.get("CERT_CA_ID")
-CERT_TEMPLATE_ID = os.environ.get("CERT_TEMPLATE_ID")
+CERT_POLICY_ID = os.environ.get("CERT_POLICY_ID")
 AUTH_TOKEN = os.environ.get("INFISICAL_TOKEN")
 BOOTSTRAP_INFISICAL = int(os.environ.get("BOOTSTRAP_INFISICAL", 0))
+TECHNITIUM_URL = os.environ.get("TECHNITIUM_URL", "http://localhost:5380")
+TECHNITIUM_USER = os.environ.get("TECHNITIUM_USER", "admin")
+TECHNITIUM_PASSWORD = os.environ.get("TECHNITIUM_PASSWORD", "infisical")
 
 
 # Called mostly from a CI to setup the new Infisical instance to get it ready for BDD tests
@@ -70,20 +73,17 @@ def bootstrap_infisical(context: Context):
         auth_token = body["token"]
         headers = dict(authorization=f"Bearer {auth_token}")
 
-        project_slug = faker.slug()
-        resp = client.post(
-            "/api/v1/projects",
+        resp = client.get(
+            f"/api/v2/organizations/{org['id']}/workspaces",
             headers=headers,
-            json={
-                "projectName": project_slug,
-                "projectDescription": faker.paragraph(),
-                "template": "default",
-                "type": "cert-manager",
-            },
         )
         resp.raise_for_status()
-        body = resp.json()
-        project = body["project"]
+        workspaces = resp.json()["workspaces"]
+        if not workspaces:
+            raise RuntimeError(
+                "Expected an auto-provisioned Cert Manager project after admin signup"
+            )
+        project = workspaces[0]
 
         ca_slug = faker.slug()
         resp = client.post(
@@ -112,13 +112,13 @@ def bootstrap_infisical(context: Context):
         body = resp.json()
         ca = body
 
-        cert_template_slug = faker.slug()
+        cert_policy_slug = faker.slug()
         resp = client.post(
-            "/api/v1/cert-manager/certificate-templates",
+            "/api/v1/cert-manager/certificate-policies",
             headers=headers,
             json={
                 "projectId": project["id"],
-                "name": cert_template_slug,
+                "name": cert_policy_slug,
                 "description": "",
                 "subject": [{"type": "common_name", "allowed": ["*"]}],
                 "sans": [{"type": "dns_name", "allowed": ["*"]}],
@@ -170,14 +170,14 @@ def bootstrap_infisical(context: Context):
         )
         resp.raise_for_status()
         body = resp.json()
-        cert_template = body["certificateTemplate"]
+        cert_policy = body["certificatePolicy"]
 
     bootstrap_result = dict(
         org=org,
         user=user,
         project=project,
         ca=ca,
-        cert_template=cert_template,
+        cert_policy=cert_policy,
         auth_token=auth_token,
     )
     bootstrap_result_file.write_text(json.dumps(bootstrap_result))
@@ -188,24 +188,28 @@ def before_all(context: Context):
     base_vars = {
         "BASE_URL": BASE_URL,
         "PEBBLE_URL": PEBBLE_URL,
+        "TECHNITIUM_URL": TECHNITIUM_URL,
+        "TECHNITIUM_USER": TECHNITIUM_USER,
+        "TECHNITIUM_PASSWORD": TECHNITIUM_PASSWORD,
     }
     if BOOTSTRAP_INFISICAL:
         details = bootstrap_infisical(context)
         vars = base_vars | {
             "PROJECT_ID": details["project"]["id"],
             "CERT_CA_ID": details["ca"]["id"],
-            "CERT_TEMPLATE_ID": details["cert_template"]["id"],
+            "CERT_POLICY_ID": details["cert_policy"]["id"],
             "AUTH_TOKEN": details["auth_token"],
         }
     else:
         vars = base_vars | {
             "PROJECT_ID": PROJECT_ID,
             "CERT_CA_ID": CERT_CA_ID,
-            "CERT_TEMPLATE_ID": CERT_TEMPLATE_ID,
+            "CERT_POLICY_ID": CERT_POLICY_ID,
             "AUTH_TOKEN": AUTH_TOKEN,
         }
     context._initial_vars = vars
     context.http_client = httpx.Client(base_url=BASE_URL)
+    context.technitium_http_client = httpx.Client(base_url=TECHNITIUM_URL)
 
 
 def before_scenario(context: Context, scenario: typing.Any):
@@ -215,5 +219,9 @@ def before_scenario(context: Context, scenario: typing.Any):
 def after_scenario(context: Context, scenario: typing.Any):
     if hasattr(context, "web_server"):
         context.web_server.shutdown_and_server_close()
+    # Clean up SCEP temp directories
+    for work_dir in getattr(context, "_scep_work_dirs", []):
+        shutil.rmtree(work_dir, ignore_errors=True)
+    context._scep_work_dirs = []
     clean_all_nock(context)
     restore_nock(context)

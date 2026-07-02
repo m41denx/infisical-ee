@@ -6,6 +6,7 @@ import {
   faEdit,
   faEye,
   faEyeSlash,
+  faHandshake,
   faInfoCircle,
   faRotate,
   faXmark
@@ -24,7 +25,14 @@ import {
 } from "@app/context/ProjectPermissionContext/types";
 import { SECRET_ROTATION_MAP } from "@app/helpers/secretRotationsV2";
 import { useToggle } from "@app/hooks";
-import { SecretRotationStatus, TSecretRotationV2 } from "@app/hooks/api/secretRotationsV2";
+import {
+  SecretRotation,
+  SecretRotationStatus,
+  TSecretRotationV2
+} from "@app/hooks/api/secretRotationsV2";
+import { HpIloRotationMethod } from "@app/hooks/api/secretRotationsV2/types/hp-ilo-rotation";
+import { UnixLinuxLocalAccountRotationMethod } from "@app/hooks/api/secretRotationsV2/types/unix-linux-local-account-rotation";
+import { WindowsLocalAccountRotationMethod } from "@app/hooks/api/secretRotationsV2/types/windows-local-account-rotation";
 import { getExpandedRowStyle } from "@app/pages/secret-manager/OverviewPage/components/utils";
 
 import { SecretOverviewRotationSecretRow } from "./SecretOverviewRotationSecretRow";
@@ -38,6 +46,7 @@ type Props = {
   scrollOffset: number;
   onEdit: (secretRotation: TSecretRotationV2) => void;
   onRotate: (secretRotation: TSecretRotationV2) => void;
+  onReconcile: (secretRotation: TSecretRotationV2) => void;
   onViewGeneratedCredentials: (secretRotation: TSecretRotationV2) => void;
   onDelete: (secretRotation: TSecretRotationV2) => void;
 };
@@ -52,7 +61,8 @@ export const SecretOverviewSecretRotationRow = ({
   onEdit,
   onRotate,
   onViewGeneratedCredentials,
-  onDelete
+  onDelete,
+  onReconcile
 }: Props) => {
   const [isExpanded, setIsExpanded] = useToggle(false);
   const [isSecretVisible, setIsSecretVisible] = useToggle();
@@ -111,6 +121,16 @@ export const SecretOverviewSecretRotationRow = ({
 
           const { name: rotationType, image } = SECRET_ROTATION_MAP[type];
 
+          const showReconcileButton =
+            (secretRotation.type === SecretRotation.UnixLinuxLocalAccount &&
+              secretRotation.parameters.rotationMethod ===
+                UnixLinuxLocalAccountRotationMethod.LoginAsTarget) ||
+            (secretRotation.type === SecretRotation.WindowsLocalAccount &&
+              secretRotation.parameters.rotationMethod ===
+                WindowsLocalAccountRotationMethod.LoginAsTarget) ||
+            (secretRotation.type === SecretRotation.HpIloLocalAccount &&
+              secretRotation.parameters.rotationMethod === HpIloRotationMethod.LoginAsTarget);
+
           return (
             <Tr key={`secret-rotation-${slug}-${secretRotationName}`}>
               <Td
@@ -165,7 +185,10 @@ export const SecretOverviewSecretRotationRow = ({
                                 I={ProjectPermissionSecretRotationActions.ReadGeneratedCredentials}
                                 a={subject(ProjectPermissionSub.SecretRotation, {
                                   environment: environment.slug,
-                                  secretPath: folder.path
+                                  secretPath: folder.path,
+                                  ...(secretRotation.connectionId && {
+                                    connectionId: secretRotation.connectionId
+                                  })
                                 })}
                                 renderTooltip
                                 allowedLabel="View Generated Credentials"
@@ -186,7 +209,10 @@ export const SecretOverviewSecretRotationRow = ({
                                 I={ProjectPermissionSecretRotationActions.RotateSecrets}
                                 a={subject(ProjectPermissionSub.SecretRotation, {
                                   environment: environment.slug,
-                                  secretPath: folder.path
+                                  secretPath: folder.path,
+                                  ...(secretRotation.connectionId && {
+                                    connectionId: secretRotation.connectionId
+                                  })
                                 })}
                                 renderTooltip
                                 allowedLabel="Rotate Secrets"
@@ -203,11 +229,40 @@ export const SecretOverviewSecretRotationRow = ({
                                   </IconButton>
                                 )}
                               </ProjectPermissionCan>
+                              {showReconcileButton && (
+                                <ProjectPermissionCan
+                                  I={ProjectPermissionSecretRotationActions.RotateSecrets}
+                                  a={subject(ProjectPermissionSub.SecretRotation, {
+                                    environment: environment.slug,
+                                    secretPath: folder.path,
+                                    ...(secretRotation.connectionId && {
+                                      connectionId: secretRotation.connectionId
+                                    })
+                                  })}
+                                  renderTooltip
+                                  allowedLabel="Reconcile Secret"
+                                >
+                                  {(isAllowed) => (
+                                    <IconButton
+                                      ariaLabel="Reconcile secret"
+                                      variant="plain"
+                                      size="sm"
+                                      isDisabled={!isAllowed}
+                                      onClick={() => onReconcile(secretRotation)}
+                                    >
+                                      <FontAwesomeIcon icon={faHandshake} />
+                                    </IconButton>
+                                  )}
+                                </ProjectPermissionCan>
+                              )}
                               <ProjectPermissionCan
                                 I={ProjectPermissionSecretRotationActions.Edit}
                                 a={subject(ProjectPermissionSub.SecretRotation, {
                                   environment: environment.slug,
-                                  secretPath: folder.path
+                                  secretPath: folder.path,
+                                  ...(secretRotation.connectionId && {
+                                    connectionId: secretRotation.connectionId
+                                  })
                                 })}
                                 renderTooltip
                                 allowedLabel="Edit"
@@ -228,7 +283,10 @@ export const SecretOverviewSecretRotationRow = ({
                                 I={ProjectPermissionSecretRotationActions.Delete}
                                 a={subject(ProjectPermissionSub.SecretRotation, {
                                   environment: environment.slug,
-                                  secretPath: folder.path
+                                  secretPath: folder.path,
+                                  ...(secretRotation.connectionId && {
+                                    connectionId: secretRotation.connectionId
+                                  })
                                 })}
                                 renderTooltip
                                 allowedLabel="Delete"

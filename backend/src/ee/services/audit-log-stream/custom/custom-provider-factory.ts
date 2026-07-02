@@ -4,8 +4,13 @@ import { request } from "@app/lib/config/request";
 import { BadRequestError } from "@app/lib/errors";
 import { blockLocalAndPrivateIpAddresses } from "@app/lib/validator";
 
-import { AUDIT_LOG_STREAM_TIMEOUT } from "../../audit-log/audit-log-queue";
-import { TLogStreamFactoryStreamLog, TLogStreamFactoryValidateCredentials } from "../audit-log-stream-types";
+import { AUDIT_LOG_STREAM_BATCH_TIMEOUT, AUDIT_LOG_STREAM_TIMEOUT } from "../../audit-log/audit-log-queue";
+import {
+  TLogStreamFactoryBatchStreamLog,
+  TLogStreamFactoryGetProviderBatchLimit,
+  TLogStreamFactoryStreamLog,
+  TLogStreamFactoryValidateCredentials
+} from "../audit-log-stream-types";
 import { TCustomProviderCredentials } from "./custom-provider-types";
 
 export const CustomProviderFactory = () => {
@@ -30,7 +35,7 @@ export const CustomProviderFactory = () => {
         {
           headers: streamHeaders,
           timeout: AUDIT_LOG_STREAM_TIMEOUT,
-          signal: AbortSignal.timeout(AUDIT_LOG_STREAM_TIMEOUT)
+          maxRedirects: 0
         }
       )
       .catch((err) => {
@@ -38,6 +43,30 @@ export const CustomProviderFactory = () => {
       });
 
     return credentials;
+  };
+
+  const batchStreamLog: TLogStreamFactoryBatchStreamLog<TCustomProviderCredentials> = async ({
+    credentials,
+    auditLogs
+  }) => {
+    if (auditLogs.length === 0) return;
+
+    const { url, headers } = credentials;
+
+    await blockLocalAndPrivateIpAddresses(url);
+
+    const streamHeaders: RawAxiosRequestHeaders = { "Content-Type": "application/json" };
+
+    if (headers.length) {
+      headers.forEach(({ key, value }) => {
+        streamHeaders[key] = value;
+      });
+    }
+
+    await request.post(url, auditLogs, {
+      headers: streamHeaders,
+      timeout: AUDIT_LOG_STREAM_BATCH_TIMEOUT
+    });
   };
 
   const streamLog: TLogStreamFactoryStreamLog<TCustomProviderCredentials> = async ({ credentials, auditLog }) => {
@@ -55,13 +84,19 @@ export const CustomProviderFactory = () => {
 
     await request.post(url, auditLog, {
       headers: streamHeaders,
-      timeout: AUDIT_LOG_STREAM_TIMEOUT,
-      signal: AbortSignal.timeout(AUDIT_LOG_STREAM_TIMEOUT)
+      timeout: AUDIT_LOG_STREAM_TIMEOUT
     });
   };
 
+  const getProviderBatchLimit: TLogStreamFactoryGetProviderBatchLimit = () => ({
+    maxLogs: 400,
+    maxBytes: 700 * 1024
+  });
+
   return {
     validateCredentials,
-    streamLog
+    batchStreamLog,
+    streamLog,
+    getProviderBatchLimit
   };
 };

@@ -9,6 +9,7 @@ import {
 } from "@app/ee/services/permission/project-permission";
 import { crypto } from "@app/lib/crypto";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
+import { extractObjectFieldPaths } from "@app/lib/fn";
 import { OrderByDirection } from "@app/lib/types";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { KmsDataKey } from "@app/services/kms/kms-types";
@@ -19,12 +20,14 @@ import { TSecretFolderDALFactory } from "@app/services/secret-folder/secret-fold
 import { TDynamicSecretLeaseDALFactory } from "../dynamic-secret-lease/dynamic-secret-lease-dal";
 import { TDynamicSecretLeaseQueueServiceFactory } from "../dynamic-secret-lease/dynamic-secret-lease-queue";
 import { TGatewayDALFactory } from "../gateway/gateway-dal";
+import { TGatewayPoolServiceFactory } from "../gateway-pool/gateway-pool-service";
 import { TGatewayV2DALFactory } from "../gateway-v2/gateway-v2-dal";
 import { OrgPermissionGatewayActions, OrgPermissionSubjects } from "../permission/org-permission";
 import { TDynamicSecretDALFactory } from "./dynamic-secret-dal";
 import { DynamicSecretStatus, TDynamicSecretServiceFactory } from "./dynamic-secret-types";
 import { AzureEntraIDProvider } from "./providers/azure-entra-id";
-import { DynamicSecretProviders, TDynamicProviderFns } from "./providers/models";
+import { IbmApiConnectProvider } from "./providers/ibm-api-connect";
+import { DynamicSecretProviders, SshStoredSchema, TDynamicProviderFns } from "./providers/models";
 
 type TDynamicSecretServiceFactoryDep = {
   dynamicSecretDAL: TDynamicSecretDALFactory;
@@ -35,13 +38,45 @@ type TDynamicSecretServiceFactoryDep = {
     "pruneDynamicSecret" | "unsetLeaseRevocation"
   >;
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
-  folderDAL: Pick<TSecretFolderDALFactory, "findBySecretPath" | "findBySecretPathMultiEnv">;
+  folderDAL: Pick<
+    TSecretFolderDALFactory,
+    "findBySecretPath" | "findBySecretPathMultiEnv" | "findById" | "findSecretPathByFolderIds"
+  >;
   projectDAL: Pick<TProjectDALFactory, "findProjectBySlug">;
   permissionService: Pick<TPermissionServiceFactory, "getProjectPermission" | "getOrgPermission">;
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
   gatewayDAL: Pick<TGatewayDALFactory, "findOne" | "find">;
   gatewayV2DAL: Pick<TGatewayV2DALFactory, "findOne" | "find">;
+  gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveAttachableGatewayFromPool">;
   resourceMetadataDAL: Pick<TResourceMetadataDALFactory, "insertMany" | "delete">;
+};
+
+const getUpdatedFieldPaths = (
+  oldData: Record<string, unknown> | null | undefined,
+  newData: Record<string, unknown> | null | undefined
+): string[] => {
+  const updatedPaths = new Set<string>();
+
+  if (!newData || typeof newData !== "object") {
+    return [];
+  }
+
+  if (!oldData || typeof oldData !== "object") {
+    return [];
+  }
+
+  Object.keys(newData).forEach((key) => {
+    const oldValue = oldData?.[key];
+    const newValue = newData[key];
+
+    if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
+      // Extract paths from the new value
+      const paths = extractObjectFieldPaths(newValue, key);
+      paths.forEach((path) => updatedPaths.add(path));
+    }
+  });
+
+  return Array.from(updatedPaths).sort();
 };
 
 export const dynamicSecretServiceFactory = ({
@@ -56,6 +91,7 @@ export const dynamicSecretServiceFactory = ({
   kmsService,
   gatewayDAL,
   gatewayV2DAL,
+  gatewayPoolService,
   resourceMetadataDAL
 }: TDynamicSecretServiceFactoryDep): TDynamicSecretServiceFactory => {
   const create: TDynamicSecretServiceFactory["create"] = async ({
@@ -117,8 +153,28 @@ export const dynamicSecretServiceFactory = ({
     const selectedProvider = dynamicSecretProviders[provider.type];
     const inputs = await selectedProvider.validateProviderInputs(provider.inputs, { projectId });
 
+    if (
+      inputs &&
+      typeof inputs === "object" &&
+      "gatewayId" in inputs &&
+      inputs.gatewayId &&
+      "gatewayPoolId" in inputs &&
+      inputs.gatewayPoolId
+    ) {
+      throw new BadRequestError({ message: "Cannot specify both a gateway and a gateway pool" });
+    }
+
     let selectedGatewayId: string | null = null;
-    if (inputs && typeof inputs === "object" && "gatewayId" in inputs && inputs.gatewayId) {
+    let selectedGatewayPoolId: string | null = null;
+    if (inputs && typeof inputs === "object" && "gatewayPoolId" in inputs && inputs.gatewayPoolId) {
+      const gatewayPoolId = inputs.gatewayPoolId as string;
+      await gatewayPoolService.resolveAttachableGatewayFromPool({
+        poolId: gatewayPoolId,
+        orgId: actorOrgId,
+        actor: { type: actor, id: actorId, orgId: actorOrgId, authMethod: actorAuthMethod }
+      });
+      selectedGatewayPoolId = gatewayPoolId;
+    } else if (inputs && typeof inputs === "object" && "gatewayId" in inputs && inputs.gatewayId) {
       const gatewayId = inputs.gatewayId as string;
 
       const [gateway] = await gatewayDAL.find({ id: gatewayId, orgId: actorOrgId });
@@ -169,8 +225,9 @@ export const dynamicSecretServiceFactory = ({
           defaultTTL,
           folderId: folder.id,
           name,
-          gatewayId: isGatewayV1 ? selectedGatewayId : undefined,
-          gatewayV2Id: isGatewayV1 ? undefined : selectedGatewayId,
+          gatewayId: !selectedGatewayPoolId && isGatewayV1 ? selectedGatewayId : undefined,
+          gatewayV2Id: !selectedGatewayPoolId && !isGatewayV1 ? selectedGatewayId : undefined,
+          gatewayPoolId: selectedGatewayPoolId ?? undefined,
           usernameTemplate
         },
         tx
@@ -191,7 +248,13 @@ export const dynamicSecretServiceFactory = ({
       return cfg;
     });
 
-    return { ...dynamicSecretCfg, inputs };
+    return {
+      ...dynamicSecretCfg,
+      inputs,
+      projectId: project.id,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   const updateByName: TDynamicSecretServiceFactory["updateByName"] = async ({
@@ -278,11 +341,69 @@ export const dynamicSecretServiceFactory = ({
       secretManagerDecryptor({ cipherTextBlob: dynamicSecretCfg.encryptedInput }).toString()
     ) as object;
     const newInput = { ...decryptedStoredInput, ...(inputs || {}) };
+    // Mutual exclusion: reject if both gateway fields are set
+    if (
+      inputs &&
+      typeof inputs === "object" &&
+      "gatewayId" in inputs &&
+      inputs.gatewayId &&
+      "gatewayPoolId" in inputs &&
+      inputs.gatewayPoolId
+    ) {
+      throw new BadRequestError({ message: "Cannot specify both a gateway and a gateway pool" });
+    }
+    if (inputs && typeof inputs === "object") {
+      if ((inputs as Record<string, unknown>).gatewayId)
+        (newInput as Record<string, unknown>).gatewayPoolId = undefined;
+      else if ((inputs as Record<string, unknown>).gatewayPoolId)
+        (newInput as Record<string, unknown>).gatewayId = undefined;
+    }
+    const oldInput = await selectedProvider.validateProviderInputs(decryptedStoredInput, { projectId });
     const updatedInput = await selectedProvider.validateProviderInputs(newInput, { projectId });
 
-    let selectedGatewayId: string | null = null;
-    let isGatewayV1 = true;
-    if (updatedInput && typeof updatedInput === "object" && "gatewayId" in updatedInput && updatedInput?.gatewayId) {
+    const updatedFields = getUpdatedFieldPaths(
+      {
+        ...(oldInput as object),
+        maxTTL: dynamicSecretCfg.maxTTL,
+        defaultTTL: dynamicSecretCfg.defaultTTL,
+        name: dynamicSecretCfg.name,
+        usernameTemplate
+      },
+      {
+        ...(updatedInput as object),
+        maxTTL,
+        defaultTTL,
+        name: newName ?? name,
+        usernameTemplate
+      }
+    );
+
+    let selectedGatewayId: string | null = (newInput as Record<string, unknown>).gatewayId as string | null;
+    let selectedGatewayPoolId: string | null = (newInput as Record<string, unknown>).gatewayPoolId as string | null;
+    let isGatewayV1 = Boolean(dynamicSecretCfg.gatewayId);
+    const hasGatewayFieldInInput =
+      inputs && typeof inputs === "object" && ("gatewayId" in inputs || "gatewayPoolId" in inputs);
+    if (
+      inputs &&
+      typeof inputs === "object" &&
+      "gatewayPoolId" in inputs &&
+      inputs.gatewayPoolId &&
+      inputs.gatewayPoolId !== (decryptedStoredInput as Record<string, unknown>).gatewayPoolId
+    ) {
+      const { gatewayPoolId } = inputs;
+      await gatewayPoolService.resolveAttachableGatewayFromPool({
+        poolId: gatewayPoolId,
+        orgId: actorOrgId,
+        actor: { type: actor, id: actorId, orgId: actorOrgId, authMethod: actorAuthMethod }
+      });
+      selectedGatewayPoolId = gatewayPoolId;
+    } else if (
+      updatedInput &&
+      typeof updatedInput === "object" &&
+      "gatewayId" in updatedInput &&
+      updatedInput?.gatewayId
+    ) {
+      selectedGatewayPoolId = null;
       const gatewayId = updatedInput.gatewayId as string;
 
       const [gateway] = await gatewayDAL.find({ id: gatewayId, orgId: actorOrgId });
@@ -294,9 +415,7 @@ export const dynamicSecretServiceFactory = ({
         });
       }
 
-      if (!gateway) {
-        isGatewayV1 = false;
-      }
+      isGatewayV1 = Boolean(gateway);
 
       const { permission: orgPermission } = await permissionService.getOrgPermission({
         scope: OrganizationActionScope.Any,
@@ -328,8 +447,13 @@ export const dynamicSecretServiceFactory = ({
           defaultTTL,
           name: newName ?? name,
           status: null,
-          gatewayId: isGatewayV1 ? selectedGatewayId : null,
-          gatewayV2Id: isGatewayV1 ? null : selectedGatewayId,
+          ...(hasGatewayFieldInInput
+            ? {
+                gatewayId: !selectedGatewayPoolId && isGatewayV1 ? selectedGatewayId : null,
+                gatewayV2Id: !selectedGatewayPoolId && !isGatewayV1 ? selectedGatewayId : null,
+                gatewayPoolId: selectedGatewayPoolId
+              }
+            : {}),
           usernameTemplate
         },
         tx
@@ -357,7 +481,13 @@ export const dynamicSecretServiceFactory = ({
       return cfg;
     });
 
-    return { ...updatedDynamicCfg, inputs: updatedInput };
+    return {
+      dynamicSecret: updatedDynamicCfg,
+      updatedFields,
+      projectId: project.id,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   const deleteByName: TDynamicSecretServiceFactory["deleteByName"] = async ({
@@ -412,7 +542,12 @@ export const dynamicSecretServiceFactory = ({
       await Promise.all(leases.map(({ id: leaseId }) => dynamicSecretQueueService.unsetLeaseRevocation(leaseId)));
 
       const deletedDynamicSecretCfg = await dynamicSecretDAL.deleteById(dynamicSecretCfg.id);
-      return deletedDynamicSecretCfg;
+      return {
+        ...deletedDynamicSecretCfg,
+        environment: environmentSlug,
+        secretPath: path,
+        projectId: project.id
+      };
     }
     // if leases exist we should flag it as deleting and then remove leases in background
     // then delete the main one
@@ -421,11 +556,21 @@ export const dynamicSecretServiceFactory = ({
         status: DynamicSecretStatus.Deleting
       });
       await dynamicSecretQueueService.pruneDynamicSecret(updatedDynamicSecretCfg.id);
-      return updatedDynamicSecretCfg;
+      return {
+        ...updatedDynamicSecretCfg,
+        environment: environmentSlug,
+        secretPath: path,
+        projectId: project.id
+      };
     }
     // if no leases just delete the config
     const deletedDynamicSecretCfg = await dynamicSecretDAL.deleteById(dynamicSecretCfg.id);
-    return deletedDynamicSecretCfg;
+    return {
+      ...deletedDynamicSecretCfg,
+      projectId: project.id,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   const getDetails: TDynamicSecretServiceFactory["getDetails"] = async ({
@@ -491,7 +636,13 @@ export const dynamicSecretServiceFactory = ({
       projectId
     })) as object;
 
-    return { ...dynamicSecretCfg, inputs: providerInputs };
+    return {
+      ...dynamicSecretCfg,
+      inputs: providerInputs,
+      projectId: project.id,
+      environment: environmentSlug,
+      secretPath: path
+    };
   };
 
   // get unique dynamic secret count across multiple envs
@@ -533,7 +684,7 @@ export const dynamicSecretServiceFactory = ({
     }
 
     const dynamicSecretCfg = await dynamicSecretDAL.find(
-      { $in: { folderId: folders.map((folder) => folder.id) }, $search: search ? { name: `%${search}%` } : undefined },
+      { $in: { folderId: folders.map((folder) => folder.id) }, $search: search ? { name: search } : undefined },
       { countDistinct: "name" }
     );
 
@@ -570,7 +721,7 @@ export const dynamicSecretServiceFactory = ({
     }
 
     const dynamicSecretCfg = await dynamicSecretDAL.find(
-      { folderId: folder.id, $search: search ? { name: `%${search}%` } : undefined },
+      { folderId: folder.id, $search: search ? { name: search } : undefined },
       { count: true }
     );
     return Number(dynamicSecretCfg[0]?.count ?? 0);
@@ -614,7 +765,7 @@ export const dynamicSecretServiceFactory = ({
       throw new NotFoundError({ message: `Folder with path '${path}' in environment '${environmentSlug}' not found` });
 
     const dynamicSecretCfg = await dynamicSecretDAL.findWithMetadata(
-      { folderId: folder.id, $search: search ? { name: `%${search}%` } : undefined },
+      { folderId: folder.id, $search: search ? { name: search } : undefined },
       {
         limit,
         offset,
@@ -622,16 +773,21 @@ export const dynamicSecretServiceFactory = ({
       }
     );
 
-    return dynamicSecretCfg.filter((dynamicSecret) => {
-      return permission.can(
-        ProjectPermissionDynamicSecretActions.ReadRootCredential,
-        subject(ProjectPermissionSub.DynamicSecrets, {
-          environment: environmentSlug,
-          secretPath: path,
-          metadata: dynamicSecret.metadata
-        })
-      );
-    });
+    return {
+      dynamicSecrets: dynamicSecretCfg.filter((dynamicSecret) => {
+        return permission.can(
+          ProjectPermissionDynamicSecretActions.ReadRootCredential,
+          subject(ProjectPermissionSub.DynamicSecrets, {
+            environment: environmentSlug,
+            secretPath: path,
+            metadata: dynamicSecret.metadata
+          })
+        );
+      }),
+      environment: environmentSlug,
+      secretPath: path,
+      projectId
+    };
   };
 
   const listDynamicSecretsByFolderIds: TDynamicSecretServiceFactory["listDynamicSecretsByFolderIds"] = async (
@@ -715,6 +871,62 @@ export const dynamicSecretServiceFactory = ({
     });
   };
 
+  const getSshCaPublicKey: TDynamicSecretServiceFactory["getSshCaPublicKey"] = async ({
+    dynamicSecretId,
+    actor,
+    actorId,
+    actorAuthMethod,
+    actorOrgId
+  }) => {
+    const dynamicSecretCfg = await dynamicSecretDAL.findOne({ id: dynamicSecretId });
+    if (!dynamicSecretCfg) {
+      throw new NotFoundError({ message: `Dynamic secret with ID '${dynamicSecretId}' not found` });
+    }
+
+    if (dynamicSecretCfg.type !== DynamicSecretProviders.Ssh) {
+      throw new BadRequestError({ message: "Dynamic secret is not an SSH type" });
+    }
+
+    // Find the folder to get environment and path for permission check
+    const folder = await folderDAL.findById(dynamicSecretCfg.folderId);
+    if (!folder) {
+      throw new NotFoundError({ message: "Dynamic secret folder not found" });
+    }
+
+    // Get the full secret path for the permission check
+    const folderPaths = await folderDAL.findSecretPathByFolderIds(folder.projectId, [dynamicSecretCfg.folderId]);
+    const secretPath = folderPaths?.[0]?.path || "/";
+
+    const { permission } = await permissionService.getProjectPermission({
+      actor,
+      actorId,
+      projectId: folder.projectId,
+      actorAuthMethod,
+      actorOrgId,
+      actionProjectType: ActionProjectType.SecretManager
+    });
+
+    ForbiddenError.from(permission).throwUnlessCan(
+      ProjectPermissionDynamicSecretActions.EditRootCredential,
+      subject(ProjectPermissionSub.DynamicSecrets, {
+        environment: folder.environment.envSlug,
+        secretPath,
+        metadata: dynamicSecretCfg.metadata
+      })
+    );
+
+    const { decryptor: secretManagerDecryptor } = await kmsService.createCipherPairWithDataKey({
+      type: KmsDataKey.SecretManager,
+      projectId: folder.projectId
+    });
+
+    const decryptedStoredInput = SshStoredSchema.pick({ caPublicKey: true }).parse(
+      JSON.parse(secretManagerDecryptor({ cipherTextBlob: dynamicSecretCfg.encryptedInput }).toString())
+    );
+
+    return { caPublicKey: decryptedStoredInput.caPublicKey };
+  };
+
   const fetchAzureEntraIdUsers: TDynamicSecretServiceFactory["fetchAzureEntraIdUsers"] = async ({
     tenantId,
     applicationId,
@@ -728,6 +940,40 @@ export const dynamicSecretServiceFactory = ({
     return azureEntraIdUsers;
   };
 
+  const fetchIbmApiConnectOrgs: TDynamicSecretServiceFactory["fetchIbmApiConnectOrgs"] = async ({
+    instanceUrl,
+    apiKey,
+    clientId,
+    clientSecret
+  }) => {
+    return IbmApiConnectProvider().fetchOrganizations({ instanceUrl, apiKey, clientId, clientSecret });
+  };
+
+  const fetchIbmApiConnectOrgCatalogs: TDynamicSecretServiceFactory["fetchIbmApiConnectOrgCatalogs"] = async ({
+    instanceUrl,
+    apiKey,
+    clientId,
+    clientSecret,
+    orgId
+  }) => {
+    return IbmApiConnectProvider().fetchOrganizationCatalogs({ instanceUrl, apiKey, clientId, clientSecret }, orgId);
+  };
+
+  const fetchIbmApiConnectOrgApps: TDynamicSecretServiceFactory["fetchIbmApiConnectOrgApps"] = async ({
+    instanceUrl,
+    apiKey,
+    clientId,
+    clientSecret,
+    orgId,
+    catalogId
+  }) => {
+    return IbmApiConnectProvider().fetchOrganizationApps(
+      { instanceUrl, apiKey, clientId, clientSecret },
+      orgId,
+      catalogId
+    );
+  };
+
   return {
     create,
     updateByName,
@@ -738,6 +984,10 @@ export const dynamicSecretServiceFactory = ({
     getDynamicSecretCount,
     getCountMultiEnv,
     fetchAzureEntraIdUsers,
-    listDynamicSecretsByFolderIds
+    fetchIbmApiConnectOrgs,
+    fetchIbmApiConnectOrgCatalogs,
+    fetchIbmApiConnectOrgApps,
+    listDynamicSecretsByFolderIds,
+    getSshCaPublicKey
   };
 };

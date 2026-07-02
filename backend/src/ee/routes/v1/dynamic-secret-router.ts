@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { DynamicSecretLeasesSchema } from "@app/db/schemas";
+import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { DynamicSecretProviderSchema } from "@app/ee/services/dynamic-secret/providers/models";
 import { ApiDocsTags, DYNAMIC_SECRETS } from "@app/lib/api-docs";
 import { removeTrailingSlash } from "@app/lib/fn";
@@ -9,10 +10,12 @@ import { isValidHandleBarTemplate } from "@app/lib/template/validate-handlebars"
 import { CharacterType, characterValidator } from "@app/lib/validator/validate-string";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { slugSchema } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { SanitizedDynamicSecretSchema } from "@app/server/routes/sanitizedSchemas";
 import { AuthMode } from "@app/services/auth/auth-type";
-import { ResourceMetadataSchema } from "@app/services/resource-metadata/resource-metadata-schema";
+import { ResourceMetadataNonEncryptionSchema } from "@app/services/resource-metadata/resource-metadata-schema";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 const validateUsernameTemplateCharacters = characterValidator([
   CharacterType.AlphaNumeric,
@@ -25,7 +28,10 @@ const validateUsernameTemplateCharacters = characterValidator([
   CharacterType.Fullstop,
   CharacterType.SingleQuote,
   CharacterType.Spaces,
-  CharacterType.Pipe
+  CharacterType.Pipe,
+  CharacterType.OpenParen,
+  CharacterType.CloseParen,
+  CharacterType.DoubleQuote
 ]);
 
 const userTemplateSchema = z
@@ -35,7 +41,8 @@ const userTemplateSchema = z
   .refine((el) => validateUsernameTemplateCharacters(el))
   .refine((el) =>
     isValidHandleBarTemplate(el, {
-      allowedExpressions: (val) => ["randomUsername", "unixTimestamp", "identity.name"].includes(val)
+      allowedExpressions: (val) =>
+        ["randomUsername", "unixTimestamp", "identity.name", "dynamicSecret.name", "dynamicSecret.type"].includes(val)
     })
   );
 
@@ -78,7 +85,7 @@ export const registerDynamicSecretRouter = async (server: FastifyZodProvider) =>
         path: z.string().describe(DYNAMIC_SECRETS.CREATE.path).trim().default("/").transform(removeTrailingSlash),
         environmentSlug: z.string().describe(DYNAMIC_SECRETS.CREATE.environmentSlug).min(1),
         name: slugSchema({ min: 1, max: 64, field: "Name" }).describe(DYNAMIC_SECRETS.CREATE.name),
-        metadata: ResourceMetadataSchema.optional(),
+        metadata: ResourceMetadataNonEncryptionSchema.optional(),
         usernameTemplate: userTemplateSchema.optional()
       }),
       response: {
@@ -98,6 +105,44 @@ export const registerDynamicSecretRouter = async (server: FastifyZodProvider) =>
         actorOrgId: req.permission.orgId,
         ...req.body
       });
+
+      await server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.DynamicSecretCreated,
+          organizationId: req.permission.orgId,
+          distinctId: getTelemetryDistinctId(req),
+          properties: {
+            provider: dynamicSecretCfg.type,
+            projectId: dynamicSecretCfg.projectId,
+            environment: dynamicSecretCfg.environment,
+            secretPath: dynamicSecretCfg.secretPath,
+            defaultTTL: `${ms(dynamicSecretCfg.defaultTTL) / 1000}s`,
+            maxTTL: dynamicSecretCfg.maxTTL ? `${ms(dynamicSecretCfg.maxTTL) / 1000}s` : null,
+            hasGateway: Boolean(dynamicSecretCfg.gatewayId || dynamicSecretCfg.gatewayV2Id)
+          }
+        })
+        .catch(() => {});
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: dynamicSecretCfg.projectId,
+        event: {
+          type: EventType.CREATE_DYNAMIC_SECRET,
+          metadata: {
+            dynamicSecretName: dynamicSecretCfg.name,
+            dynamicSecretType: dynamicSecretCfg.type,
+            dynamicSecretId: dynamicSecretCfg.id,
+            defaultTTL: dynamicSecretCfg.defaultTTL,
+            maxTTL: dynamicSecretCfg.maxTTL,
+            gatewayV2Id: dynamicSecretCfg.gatewayV2Id,
+            usernameTemplate: dynamicSecretCfg.usernameTemplate,
+            environment: dynamicSecretCfg.environment,
+            secretPath: dynamicSecretCfg.secretPath,
+            projectId: dynamicSecretCfg.projectId
+          }
+        }
+      });
+
       return { dynamicSecret: dynamicSecretCfg };
     }
   });
@@ -146,7 +191,7 @@ export const registerDynamicSecretRouter = async (server: FastifyZodProvider) =>
             })
             .nullable(),
           newName: z.string().describe(DYNAMIC_SECRETS.UPDATE.newName).optional(),
-          metadata: ResourceMetadataSchema.optional(),
+          metadata: ResourceMetadataNonEncryptionSchema.optional(),
           usernameTemplate: userTemplateSchema.nullable().optional()
         })
       }),
@@ -160,18 +205,46 @@ export const registerDynamicSecretRouter = async (server: FastifyZodProvider) =>
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const dynamicSecretCfg = await server.services.dynamicSecret.updateByName({
-        actor: req.permission.type,
-        actorId: req.permission.id,
-        actorAuthMethod: req.permission.authMethod,
-        actorOrgId: req.permission.orgId,
-        name: req.params.name,
-        path: req.body.path,
-        projectSlug: req.body.projectSlug,
-        environmentSlug: req.body.environmentSlug,
-        ...req.body.data
+      const { dynamicSecret, updatedFields, projectId, environment, secretPath } =
+        await server.services.dynamicSecret.updateByName({
+          actor: req.permission.type,
+          actorId: req.permission.id,
+          actorAuthMethod: req.permission.authMethod,
+          actorOrgId: req.permission.orgId,
+          name: req.params.name,
+          path: req.body.path,
+          projectSlug: req.body.projectSlug,
+          environmentSlug: req.body.environmentSlug,
+          ...req.body.data
+        });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.UPDATE_DYNAMIC_SECRET,
+          metadata: {
+            dynamicSecretName: dynamicSecret.name,
+            dynamicSecretType: dynamicSecret.type,
+            dynamicSecretId: dynamicSecret.id,
+            environment,
+            secretPath,
+            projectId,
+            updatedFields
+          }
+        }
       });
-      return { dynamicSecret: dynamicSecretCfg };
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.DynamicSecretUpdated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: req.permission.orgId,
+          properties: { provider: dynamicSecret.type, projectId, environment, secretPath }
+        })
+        .catch(() => {});
+
+      return { dynamicSecret };
     }
   });
 
@@ -209,6 +282,38 @@ export const registerDynamicSecretRouter = async (server: FastifyZodProvider) =>
         name: req.params.name,
         ...req.body
       });
+
+      await server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.DynamicSecretDeleted,
+          organizationId: req.permission.orgId,
+          distinctId: getTelemetryDistinctId(req),
+          properties: {
+            provider: dynamicSecretCfg.type,
+            projectId: dynamicSecretCfg.projectId,
+            environment: dynamicSecretCfg.environment,
+            secretPath: dynamicSecretCfg.secretPath,
+            isForced: req.body.isForced
+          }
+        })
+        .catch(() => {});
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: dynamicSecretCfg.projectId,
+        event: {
+          type: EventType.DELETE_DYNAMIC_SECRET,
+          metadata: {
+            dynamicSecretName: dynamicSecretCfg.name,
+            dynamicSecretType: dynamicSecretCfg.type,
+            dynamicSecretId: dynamicSecretCfg.id,
+            environment: dynamicSecretCfg.environment,
+            secretPath: dynamicSecretCfg.secretPath,
+            projectId: dynamicSecretCfg.projectId
+          }
+        }
+      });
+
       return { dynamicSecret: dynamicSecretCfg };
     }
   });
@@ -249,6 +354,22 @@ export const registerDynamicSecretRouter = async (server: FastifyZodProvider) =>
         ...req.query
       });
 
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId: dynamicSecretCfg.projectId,
+        event: {
+          type: EventType.GET_DYNAMIC_SECRET,
+          metadata: {
+            dynamicSecretName: dynamicSecretCfg.name,
+            dynamicSecretType: dynamicSecretCfg.type,
+            dynamicSecretId: dynamicSecretCfg.id,
+            environment: dynamicSecretCfg.environment,
+            secretPath: dynamicSecretCfg.secretPath,
+            projectId: dynamicSecretCfg.projectId
+          }
+        }
+      });
+
       return { dynamicSecret: dynamicSecretCfg };
     }
   });
@@ -275,14 +396,29 @@ export const registerDynamicSecretRouter = async (server: FastifyZodProvider) =>
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const dynamicSecretCfgs = await server.services.dynamicSecret.listDynamicSecretsByEnv({
-        actor: req.permission.type,
-        actorId: req.permission.id,
-        actorAuthMethod: req.permission.authMethod,
-        actorOrgId: req.permission.orgId,
-        ...req.query
+      const { dynamicSecrets, environment, secretPath, projectId } =
+        await server.services.dynamicSecret.listDynamicSecretsByEnv({
+          actor: req.permission.type,
+          actorId: req.permission.id,
+          actorAuthMethod: req.permission.authMethod,
+          actorOrgId: req.permission.orgId,
+          ...req.query
+        });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.LIST_DYNAMIC_SECRETS,
+          metadata: {
+            environment,
+            secretPath,
+            projectId
+          }
+        }
       });
-      return { dynamicSecrets: dynamicSecretCfgs };
+
+      return { dynamicSecrets };
     }
   });
 
@@ -316,15 +452,281 @@ export const registerDynamicSecretRouter = async (server: FastifyZodProvider) =>
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const leases = await server.services.dynamicSecretLease.listLeases({
+      const { leases, dynamicSecret, projectId, environment, secretPath } =
+        await server.services.dynamicSecretLease.listLeases({
+          actor: req.permission.type,
+          actorId: req.permission.id,
+          actorAuthMethod: req.permission.authMethod,
+          actorOrgId: req.permission.orgId,
+          name: req.params.name,
+          ...req.query
+        });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        projectId,
+        event: {
+          type: EventType.LIST_DYNAMIC_SECRET_LEASES,
+          metadata: {
+            dynamicSecretName: dynamicSecret.name,
+            dynamicSecretType: dynamicSecret.type,
+            dynamicSecretId: dynamicSecret.id,
+            environment,
+            secretPath,
+            projectId,
+            leaseCount: leases.length
+          }
+        }
+      });
+
+      return { leases };
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/ssh-ca-setup/:dynamicSecretId",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      operationId: "getSshDynamicSecretCaSetup",
+      description: "Get SSH dynamic secret CA setup script for configuring the target server to trust the CA",
+      params: z.object({
+        dynamicSecretId: z.string().uuid()
+      }),
+      response: {
+        200: z.string()
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req, reply) => {
+      const { caPublicKey } = await server.services.dynamicSecret.getSshCaPublicKey({
+        dynamicSecretId: req.params.dynamicSecretId,
         actor: req.permission.type,
         actorId: req.permission.id,
         actorAuthMethod: req.permission.authMethod,
-        actorOrgId: req.permission.orgId,
-        name: req.params.name,
-        ...req.query
+        actorOrgId: req.permission.orgId
       });
-      return { leases };
+
+      const setupScript = `#!/bin/bash
+set -e
+
+CA_PUBLIC_KEY="${caPublicKey}"
+CA_FILE="/etc/ssh/infisical_ca.pub"
+SSHD_CONFIG="/etc/ssh/sshd_config"
+
+echo "==> Infisical SSH CA Setup"
+echo ""
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: This script must be run as root (use sudo)"
+    exit 1
+fi
+
+echo "==> Writing CA public key to \${CA_FILE}..."
+echo "\${CA_PUBLIC_KEY}" > "\${CA_FILE}"
+chmod 644 "\${CA_FILE}"
+echo "    Done."
+
+if grep -q "^TrustedUserCAKeys" "\${SSHD_CONFIG}"; then
+    EXISTING_CA_FILE=$(grep "^TrustedUserCAKeys" "\${SSHD_CONFIG}" | awk '{print $2}')
+    if [ "\${EXISTING_CA_FILE}" = "\${CA_FILE}" ]; then
+        echo "==> TrustedUserCAKeys already configured for \${CA_FILE}"
+    else
+        echo "Warning: TrustedUserCAKeys is already set to \${EXISTING_CA_FILE}"
+        echo "         You may need to manually update sshd_config to use \${CA_FILE}"
+        echo "         or combine multiple CA keys into a single file."
+    fi
+else
+    echo "==> Adding TrustedUserCAKeys to \${SSHD_CONFIG}..."
+    echo "" >> "\${SSHD_CONFIG}"
+    echo "# Infisical SSH CA - Added by setup script" >> "\${SSHD_CONFIG}"
+    echo "TrustedUserCAKeys \${CA_FILE}" >> "\${SSHD_CONFIG}"
+    echo "    Done."
+fi
+
+echo "==> Validating SSH configuration..."
+if sshd -t; then
+    echo "    Configuration is valid."
+else
+    echo "Error: SSH configuration is invalid. Please check \${SSHD_CONFIG}"
+    exit 1
+fi
+
+echo "==> Restarting SSH service..."
+if command -v systemctl &> /dev/null; then
+    if systemctl cat sshd.service &>/dev/null; then
+        systemctl restart sshd
+    elif systemctl cat ssh.service &>/dev/null; then
+        systemctl restart ssh
+    else
+        echo "Warning: Could not find SSH service. Please restart it manually."
+    fi
+elif command -v service &> /dev/null; then
+    service sshd restart 2>/dev/null || service ssh restart
+else
+    echo "Warning: Could not detect init system. Please restart sshd manually."
+fi
+echo "    Done."
+
+echo ""
+echo "==> Setup complete!"
+echo ""
+echo "Your SSH server is now configured to trust certificates signed by the Infisical CA."
+echo ""
+`;
+
+      void reply.header("Content-Type", "text/plain; charset=utf-8");
+      return setupScript;
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/ssh-ca-public-key/:dynamicSecretId",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      operationId: "getSshDynamicSecretCaPublicKey",
+      description: "Get SSH dynamic secret CA public key",
+      params: z.object({
+        dynamicSecretId: z.string().uuid()
+      }),
+      response: {
+        200: z.object({
+          caPublicKey: z.string()
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      const { caPublicKey } = await server.services.dynamicSecret.getSshCaPublicKey({
+        dynamicSecretId: req.params.dynamicSecretId,
+        actor: req.permission.type,
+        actorId: req.permission.id,
+        actorAuthMethod: req.permission.authMethod,
+        actorOrgId: req.permission.orgId
+      });
+
+      return { caPublicKey };
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/ibm-api-connect/orgs",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      body: z.object({
+        instanceUrl: z.string().url().min(1).describe("The IBM API Connect instance URL"),
+        apiKey: z.string().min(1).describe("The IBM API Connect API key"),
+        clientId: z.string().min(1).describe("The IBM API Connect client ID"),
+        clientSecret: z.string().min(1).describe("The IBM API Connect client secret")
+      }),
+      response: {
+        200: z
+          .object({
+            name: z.string().describe("The name/slug of the organization"),
+            title: z.string().describe("The display title of the organization"),
+            id: z.string().describe("The unique identifier of the organization")
+          })
+          .array()
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const data = await server.services.dynamicSecret.fetchIbmApiConnectOrgs({
+        instanceUrl: req.body.instanceUrl,
+        apiKey: req.body.apiKey,
+        clientId: req.body.clientId,
+        clientSecret: req.body.clientSecret
+      });
+      return data;
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/ibm-api-connect/orgs/:orgId/catalogs",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      params: z.object({
+        orgId: z.string().min(1).describe("The organization ID")
+      }),
+      body: z.object({
+        instanceUrl: z.string().url().min(1).describe("The IBM API Connect instance URL"),
+        apiKey: z.string().min(1).describe("The IBM API Connect API key"),
+        clientId: z.string().min(1).describe("The IBM API Connect client ID"),
+        clientSecret: z.string().min(1).describe("The IBM API Connect client secret")
+      }),
+      response: {
+        200: z
+          .object({
+            name: z.string().describe("The name/slug of the catalog"),
+            title: z.string().describe("The display title of the catalog"),
+            id: z.string().describe("The unique identifier of the catalog")
+          })
+          .array()
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const data = await server.services.dynamicSecret.fetchIbmApiConnectOrgCatalogs({
+        instanceUrl: req.body.instanceUrl,
+        apiKey: req.body.apiKey,
+        clientId: req.body.clientId,
+        clientSecret: req.body.clientSecret,
+        orgId: req.params.orgId
+      });
+      return data;
+    }
+  });
+
+  server.route({
+    method: "POST",
+    url: "/ibm-api-connect/orgs/:orgId/catalogs/:catalogId/apps",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      params: z.object({
+        orgId: z.string().min(1).describe("The organization ID"),
+        catalogId: z.string().min(1).describe("The catalog ID")
+      }),
+      body: z.object({
+        instanceUrl: z.string().url().min(1).describe("The IBM API Connect instance URL"),
+        apiKey: z.string().min(1).describe("The IBM API Connect API key"),
+        clientId: z.string().min(1).describe("The IBM API Connect client ID"),
+        clientSecret: z.string().min(1).describe("The IBM API Connect client secret")
+      }),
+      response: {
+        200: z
+          .object({
+            name: z.string().describe("The name/slug of the application"),
+            title: z.string().describe("The display title of the application"),
+            id: z.string().describe("The unique identifier of the application"),
+            consumerOrgId: z.string().describe("The consumer organization ID extracted from the app's consumer_org_url")
+          })
+          .array()
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT]),
+    handler: async (req) => {
+      const data = await server.services.dynamicSecret.fetchIbmApiConnectOrgApps({
+        instanceUrl: req.body.instanceUrl,
+        apiKey: req.body.apiKey,
+        clientId: req.body.clientId,
+        clientSecret: req.body.clientSecret,
+        orgId: req.params.orgId,
+        catalogId: req.params.catalogId
+      });
+      return data;
     }
   });
 

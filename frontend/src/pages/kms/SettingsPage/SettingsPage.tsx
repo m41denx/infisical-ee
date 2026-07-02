@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { InfoIcon } from "lucide-react";
 
-import { PageHeader, Tab, TabList, TabPanel, Tabs } from "@app/components/v2";
+import { PageHeader, TabPanel, Tabs } from "@app/components/v2";
 import { useOrganization } from "@app/context";
 import { ProjectType } from "@app/hooks/api/projects/types";
 import { ProjectGeneralTab } from "@app/pages/project/SettingsPage/components/ProjectGeneralTab";
@@ -19,7 +19,7 @@ const tabs = [
 export const SettingsPage = () => {
   const { t } = useTranslation();
 
-  const { currentOrg } = useOrganization();
+  const { currentOrg, isSubOrganization } = useOrganization();
 
   return (
     <div className="flex h-full w-full justify-center bg-bunker-800 text-white">
@@ -39,17 +39,11 @@ export const SettingsPage = () => {
             }}
             className="flex items-center gap-x-1.5 text-xs whitespace-nowrap text-neutral hover:underline"
           >
-            <InfoIcon size={12} /> Looking for organization settings?
+            <InfoIcon size={12} /> Looking for {isSubOrganization ? "sub-" : ""}organization
+            settings?
           </Link>
         </PageHeader>
         <Tabs orientation="vertical" defaultValue={tabs[0].key}>
-          <TabList>
-            {tabs.map((tab) => (
-              <Tab variant="project" value={tab.key} key={tab.key}>
-                {tab.name}
-              </Tab>
-            ))}
-          </TabList>
           {tabs.map(({ key, Component }) => (
             <TabPanel value={key} key={key}>
               <Component />

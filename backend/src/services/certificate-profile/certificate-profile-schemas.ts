@@ -30,7 +30,12 @@ export const createCertificateProfileSchema = z
         renewBeforeDays: z.number().min(1).max(30).optional()
       })
       .optional(),
-    acmeConfig: z.object({}).optional()
+    acmeConfig: z
+      .object({
+        skipDnsOwnershipVerification: z.boolean().optional(),
+        skipEabBinding: z.boolean().optional()
+      })
+      .optional()
   })
   .refine(
     (data) => {
@@ -100,6 +105,18 @@ export const createCertificateProfileSchema = z
   )
   .refine(
     (data) => {
+      if (data.enrollmentType === EnrollmentType.ACME && data.acmeConfig) {
+        return !(data.acmeConfig.skipEabBinding && data.acmeConfig.skipDnsOwnershipVerification);
+      }
+      return true;
+    },
+    {
+      message:
+        "Cannot skip both External Account Binding (EAB) and DNS ownership verification at the same time for security reasons"
+    }
+  )
+  .refine(
+    (data) => {
       if (data.issuerType === IssuerType.CA) {
         return !!data.caId;
       }
@@ -155,6 +172,12 @@ export const updateCertificateProfileSchema = z
         autoRenew: z.boolean().default(false),
         renewBeforeDays: z.number().min(1).max(30).optional()
       })
+      .optional(),
+    acmeConfig: z
+      .object({
+        skipDnsOwnershipVerification: z.boolean().optional(),
+        skipEabBinding: z.boolean().optional()
+      })
       .optional()
   })
   .refine(
@@ -177,6 +200,18 @@ export const updateCertificateProfileSchema = z
     },
     {
       message: "API enrollment type cannot have EST configuration"
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.acmeConfig) {
+        return !(data.acmeConfig.skipEabBinding && data.acmeConfig.skipDnsOwnershipVerification);
+      }
+      return true;
+    },
+    {
+      message:
+        "Cannot skip both External Account Binding (EAB) and DNS ownership verification at the same time for security reasons"
     }
   )
   .refine(

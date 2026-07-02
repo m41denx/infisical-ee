@@ -31,7 +31,13 @@ export const ProjectsSchema = z.object({
   secretSharing: z.boolean().default(true),
   showSnapshotsLegacy: z.boolean().default(false),
   defaultProduct: z.string().nullable().optional(),
-  secretDetectionIgnoreValues: z.string().array().nullable().optional()
+  secretDetectionIgnoreValues: z.string().array().nullable().optional(),
+  enforceEncryptedSecretManagerSecretMetadata: z.boolean().nullable().optional(),
+  deleteAfter: z.date().nullable().optional(),
+  softDeletedAt: z.date().nullable().optional(),
+  deletedByActorType: z.string().nullable().optional(),
+  deletedByActorId: z.string().uuid().nullable().optional(),
+  secretBlindIndexEnabled: z.boolean().default(true)
 });
 
 export type TProjects = z.infer<typeof ProjectsSchema>;

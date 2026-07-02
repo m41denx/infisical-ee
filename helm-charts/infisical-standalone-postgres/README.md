@@ -1,6 +1,6 @@
 # infisical-standalone
 
-![Version: 1.4.0](https://img.shields.io/badge/Version-1.4.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.1](https://img.shields.io/badge/AppVersion-1.0.1-informational?style=flat-square)
+![Version: 1.9.0](https://img.shields.io/badge/Version-1.9.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.1](https://img.shields.io/badge/AppVersion-1.0.1-informational?style=flat-square)
 
 A helm chart to deploy Infisical
 
@@ -23,6 +23,11 @@ A helm chart to deploy Infisical
 | infisical.databaseSchemaMigrationJob.image.tag | string | `"no-root-v2.0"` | Image tag version |
 | infisical.deploymentAnnotations | object | `{}` | Custom annotations for Infisical deployment |
 | infisical.enabled | bool | `true` |  |
+| infisical.extraContainers | list | `[]` | Additional containers to run alongside the Infisical container (sidecars). Useful for running auxiliary services like HSM PKCS#11 clients |
+| infisical.extraEnv | list | `[]` | Extra environment variables to set on the Infisical container |
+| infisical.extraInitContainers | list | `[]` | Additional init containers to run before the Infisical container starts |
+| infisical.extraVolumeMounts | list | `[]` | Additional volume mounts for the Infisical container |
+| infisical.extraVolumes | list | `[]` | Additional volumes to attach to the Infisical pods |
 | infisical.fullnameOverride | string | `""` | Override for the full name of Infisical resources in this deployment |
 | infisical.image.imagePullSecrets | list | `[]` | Secret references for pulling the image, if needed |
 | infisical.image.pullPolicy | string | `"IfNotPresent"` | Pulls image only if not already present on the node |
@@ -43,7 +48,7 @@ A helm chart to deploy Infisical
 | ingress.annotations | object | `{}` | Custom annotations for ingress resource |
 | ingress.enabled | bool | `true` | Enable or disable ingress configuration |
 | ingress.hostName | string | `""` | Hostname for ingress access, e.g., app.example.com |
-| ingress.ingressClassName | string | `"nginx"` | Specifies the ingress class, useful for multi-ingress setups |
+| ingress.ingressClassName | string | `""` | Specifies the ingress class. Defaults to "infisical-nginx" when bundled ingress-nginx is enabled, or "nginx" otherwise |
 | ingress.nginx.enabled | bool | `true` | Enable NGINX-specific settings, if using NGINX ingress controller |
 | ingress.tls | list | `[]` | TLS settings for HTTPS access |
 | nameOverride | string | `""` | Overrides the default release name |
@@ -63,3 +68,7 @@ A helm chart to deploy Infisical
 | redis.fullnameOverride | string | `"redis"` | Full name override for Redis resources |
 | redis.name | string | `"redis"` | Redis resource name |
 | redis.usePassword | bool | `true` | Requires a password for Redis authentication |
+| ingress-nginx.controller.ingressClassResource.name | string | `"infisical-nginx"` | IngressClass name used by the bundled NGINX controller. Uses a unique name to avoid conflicts with existing cluster ingress controllers |
+| ingress-nginx.controller.ingressClassResource.controllerValue | string | `"k8s.io/infisical-nginx"` | Controller value for the bundled IngressClass |
+| ingress-nginx.controller.ingressClassResource.default | bool | `false` | Whether the bundled IngressClass should be set as the cluster default |
+| ingress-nginx.controller.ingressClass | string | `"infisical-nginx"` | Ingress class the bundled controller watches for |

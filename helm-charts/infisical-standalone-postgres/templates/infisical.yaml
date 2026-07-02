@@ -25,6 +25,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      serviceAccountName: {{ include "infisical.serviceAccountName" . }}
     {{- with $infisicalValues.topologySpreadConstraints }}
       topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
@@ -44,6 +45,10 @@ spec:
     {{- if $infisicalValues.image.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml $infisicalValues.image.imagePullSecrets | nindent 6 }}
+    {{- end }}
+    {{- with $infisicalValues.extraInitContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
     {{- end }}
       containers:
       - name: {{ template "infisical.name" . }}-{{ $infisicalValues.name }}
@@ -73,6 +78,9 @@ spec:
         - name: REDIS_URL
           value: {{ include "infisical.redisConnectionString" . }}
         {{- end }}
+        {{- with $infisicalValues.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
         envFrom:
         - secretRef:
             name: {{ $infisicalValues.kubeSecretRef }}
@@ -83,6 +91,9 @@ spec:
         volumeMounts:
           {{- toYaml . | nindent 10 }}
         {{- end }}
+      {{- with $infisicalValues.extraContainers }}
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with $infisicalValues.extraVolumes }}
       volumes:
         {{- toYaml . | nindent 8 }}

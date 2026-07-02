@@ -1,14 +1,19 @@
 import { z } from "zod";
 
-import { IdentityOciAuthsSchema } from "@app/db/schemas";
+import { IdentityAuthMethod, IdentityOciAuthsSchema } from "@app/db/schemas";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags, OCI_AUTH } from "@app/lib/api-docs";
+import { UnauthorizedError } from "@app/lib/errors";
+import { logger } from "@app/lib/logger";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { slugSchema } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
-import { AuthMode } from "@app/services/auth/auth-type";
+import { ActorType, AuthMode } from "@app/services/auth/auth-type";
 import { TIdentityTrustedIp } from "@app/services/identity/identity-types";
 import { validateTenancy, validateUsernames } from "@app/services/identity-oci-auth/identity-oci-auth-validators";
 import { isSuperAdmin } from "@app/services/super-admin/super-admin-fns";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) => {
   server.route({
@@ -19,6 +24,7 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
     },
     schema: {
       hide: false,
+      operationId: "loginWithOciAuth",
       tags: [ApiDocsTags.OciAuth],
       description: "Login with OCI Auth for machine identity",
       body: z.object({
@@ -40,7 +46,8 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
               });
             }
           })
-          .describe(OCI_AUTH.LOGIN.headers)
+          .describe(OCI_AUTH.LOGIN.headers),
+        organizationSlug: slugSchema().optional().describe(OCI_AUTH.LOGIN.organizationSlug)
       }),
       response: {
         200: z.object({
@@ -52,28 +59,80 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
       }
     },
     handler: async (req) => {
-      const { identityOciAuth, accessToken, identityAccessToken, identity } =
-        await server.services.identityOciAuth.login(req.body);
+      try {
+        const { identityOciAuth, accessToken, identityAccessToken, identity } =
+          await server.services.identityOciAuth.login(req.body);
 
-      await server.services.auditLog.createAuditLog({
-        ...req.auditLogInfo,
-        orgId: identity.orgId,
-        event: {
-          type: EventType.LOGIN_IDENTITY_OCI_AUTH,
-          metadata: {
-            identityId: identityOciAuth.identityId,
-            identityAccessTokenId: identityAccessToken.id,
-            identityOciAuthId: identityOciAuth.id
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          actor: {
+            type: ActorType.IDENTITY,
+            metadata: {
+              identityId: identityOciAuth.identityId,
+              name: identity.name
+            }
+          },
+          orgId: identity.orgId,
+          event: {
+            type: EventType.LOGIN_IDENTITY_OCI_AUTH,
+            metadata: {
+              identityId: identityOciAuth.identityId,
+              identityAccessTokenId: identityAccessToken.id,
+              identityOciAuthId: identityOciAuth.id
+            }
           }
-        }
-      });
+        });
 
-      return {
-        accessToken,
-        tokenType: "Bearer" as const,
-        expiresIn: identityOciAuth.accessTokenTTL,
-        accessTokenMaxTTL: identityOciAuth.accessTokenMaxTTL
-      };
+        void server.services.telemetry
+          .sendPostHogEvents({
+            event: PostHogEventTypes.MachineIdentityLogin,
+            distinctId: `identity-${identityOciAuth.identityId}`,
+            organizationId: identity.orgId,
+            properties: {
+              identityId: identityOciAuth.identityId,
+              orgId: identity.orgId,
+              authMethod: IdentityAuthMethod.OCI_AUTH
+            }
+          })
+          .catch((error) => {
+            logger.error(error, `Failed to send telemetry event [identityId=${identityOciAuth.identityId}]`);
+          });
+
+        return {
+          accessToken,
+          tokenType: "Bearer" as const,
+          expiresIn: identityOciAuth.accessTokenTTL,
+          accessTokenMaxTTL: identityOciAuth.accessTokenMaxTTL
+        };
+      } catch (error) {
+        if (
+          error instanceof UnauthorizedError &&
+          error.detail?.orgId &&
+          error.detail?.identityId &&
+          error.detail?.identityName
+        ) {
+          await server.services.auditLog.createAuditLog({
+            ...req.auditLogInfo,
+            actor: {
+              type: ActorType.IDENTITY,
+              metadata: {
+                identityId: error.detail.identityId as string,
+                name: error.detail.identityName as string
+              }
+            },
+            orgId: error.detail.orgId as string,
+            event: {
+              type: EventType.LOGIN_IDENTITY_OCI_AUTH_FAILED,
+              metadata: {
+                identityId: error.detail.identityId as string,
+                reasonCode: error.detail.reasonCode as string,
+                message: error.message
+              }
+            }
+          });
+        }
+        throw error;
+      }
     }
   });
 
@@ -86,6 +145,7 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "attachOciAuth",
       tags: [ApiDocsTags.OciAuth],
       description: "Attach OCI Auth configuration onto machine identity",
       security: [
@@ -162,6 +222,21 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodAttached,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityOciAuth.orgId,
+          properties: {
+            identityId: identityOciAuth.identityId,
+            orgId: identityOciAuth.orgId,
+            authMethod: IdentityAuthMethod.OCI_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityOciAuth.identityId}]`);
+        });
+
       return { identityOciAuth };
     }
   });
@@ -175,6 +250,7 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "updateOciAuth",
       tags: [ApiDocsTags.OciAuth],
       description: "Update OCI Auth configuration on machine identity",
       security: [
@@ -245,6 +321,21 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodUpdated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityOciAuth.orgId,
+          properties: {
+            identityId: identityOciAuth.identityId,
+            orgId: identityOciAuth.orgId,
+            authMethod: IdentityAuthMethod.OCI_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityOciAuth.identityId}]`);
+        });
+
       return { identityOciAuth };
     }
   });
@@ -258,6 +349,7 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getOciAuth",
       tags: [ApiDocsTags.OciAuth],
       description: "Retrieve OCI Auth configuration on machine identity",
       security: [
@@ -306,6 +398,7 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "deleteOciAuth",
       tags: [ApiDocsTags.OciAuth],
       description: "Delete OCI Auth configuration on machine identity",
       security: [
@@ -341,6 +434,21 @@ export const registerIdentityOciAuthRouter = async (server: FastifyZodProvider) 
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodRevoked,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityOciAuth.orgId,
+          properties: {
+            identityId: identityOciAuth.identityId,
+            orgId: identityOciAuth.orgId,
+            authMethod: IdentityAuthMethod.OCI_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityOciAuth.identityId}]`);
+        });
 
       return { identityOciAuth };
     }

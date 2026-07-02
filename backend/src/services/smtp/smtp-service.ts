@@ -4,18 +4,24 @@ import SMTPTransport from "nodemailer/lib/smtp-transport";
 import React from "react";
 
 import { getConfig } from "@app/lib/config/env";
+import { InternalServerError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 
 import {
   AccessApprovalRequestTemplate,
   AccessApprovalRequestUpdatedTemplate,
+  AccessPamRequestBypassedTemplate,
   AccountDeletionConfirmationTemplate,
+  AuditLogMigrationAlertTemplate,
+  CredentialRotationFailedTemplate,
+  EmailChangeRequestNotificationTemplate,
   EmailMfaTemplate,
   EmailVerificationTemplate,
   ExternalImportFailedTemplate,
   ExternalImportStartedTemplate,
   ExternalImportSucceededTemplate,
   HealthAlertTemplate,
+  HoneyTokenTriggeredTemplate,
   IntegrationSyncFailedTemplate,
   NewDeviceLoginTemplate,
   OAuthPasswordResetTemplate,
@@ -41,6 +47,7 @@ import {
   SecretSyncFailedTemplate,
   ServiceTokenExpiryNoticeTemplate,
   SignupEmailVerificationTemplate,
+  SignupExistingAccountTemplate,
   SubOrganizationInvitationTemplate,
   UnlockAccountTemplate
 } from "./emails";
@@ -57,13 +64,16 @@ export type TSmtpService = ReturnType<typeof smtpServiceFactory>;
 
 export enum SmtpTemplates {
   SignupEmailVerification = "signupEmailVerification",
+  SignupExistingAccount = "signupExistingAccount",
   EmailVerification = "emailVerification",
+  EmailChangeRequestNotification = "emailChangeRequestNotification",
   SecretReminder = "secretReminder",
   EmailMfa = "emailMfa",
   UnlockAccount = "unlockAccount",
   AccessApprovalRequest = "accessApprovalRequest",
   AccessApprovalRequestUpdated = "accessApprovalRequestUpdated",
   AccessSecretRequestBypassed = "accessSecretRequestBypassed",
+  AccessPamRequestBypassed = "accessPamRequestBypassed",
   SecretApprovalRequestNeedsReview = "secretApprovalRequestNeedsReview",
   // HistoricalSecretList = "historicalSecretLeakIncident", not used anymore?
   NewDeviceJoin = "newDevice",
@@ -93,7 +103,10 @@ export enum SmtpTemplates {
   SecretScanningV2SecretsDetected = "secretScanningV2SecretsDetected",
   AccountDeletionConfirmation = "accountDeletionConfirmation",
   HealthAlert = "healthAlert",
-  DynamicSecretLeaseRevocationFailed = "dynamicSecretLeaseRevocationFailed"
+  DynamicSecretLeaseRevocationFailed = "dynamicSecretLeaseRevocationFailed",
+  CredentialRotationFailed = "credentialRotationFailed",
+  AuditLogMigrationAlert = "auditLogMigrationAlert",
+  HoneyTokenTriggered = "honeyTokenTriggered"
 }
 
 export enum SmtpHost {
@@ -112,14 +125,17 @@ const EmailTemplateMap: Record<SmtpTemplates, React.FC<any>> = {
   [SmtpTemplates.OrgAssignment]: OrganizationAssignmentTemplate,
   [SmtpTemplates.NewDeviceJoin]: NewDeviceLoginTemplate,
   [SmtpTemplates.SignupEmailVerification]: SignupEmailVerificationTemplate,
+  [SmtpTemplates.SignupExistingAccount]: SignupExistingAccountTemplate,
   [SmtpTemplates.EmailMfa]: EmailMfaTemplate,
   [SmtpTemplates.AccessApprovalRequest]: AccessApprovalRequestTemplate,
   [SmtpTemplates.AccessApprovalRequestUpdated]: AccessApprovalRequestUpdatedTemplate,
   [SmtpTemplates.EmailVerification]: EmailVerificationTemplate,
+  [SmtpTemplates.EmailChangeRequestNotification]: EmailChangeRequestNotificationTemplate,
   [SmtpTemplates.ExternalImportFailed]: ExternalImportFailedTemplate,
   [SmtpTemplates.ExternalImportStarted]: ExternalImportStartedTemplate,
   [SmtpTemplates.ExternalImportSuccessful]: ExternalImportSucceededTemplate,
   [SmtpTemplates.AccessSecretRequestBypassed]: SecretApprovalRequestBypassedTemplate,
+  [SmtpTemplates.AccessPamRequestBypassed]: AccessPamRequestBypassedTemplate,
   [SmtpTemplates.IntegrationSyncFailed]: IntegrationSyncFailedTemplate,
   [SmtpTemplates.OrgAdminBreakglassAccess]: OrgAdminBreakglassAccessTemplate,
   [SmtpTemplates.SecretLeakIncident]: SecretLeakIncidentTemplate,
@@ -143,7 +159,10 @@ const EmailTemplateMap: Record<SmtpTemplates, React.FC<any>> = {
   [SmtpTemplates.SecretScanningV2SecretsDetected]: SecretScanningSecretsDetectedTemplate,
   [SmtpTemplates.AccountDeletionConfirmation]: AccountDeletionConfirmationTemplate,
   [SmtpTemplates.HealthAlert]: HealthAlertTemplate,
-  [SmtpTemplates.DynamicSecretLeaseRevocationFailed]: DynamicSecretLeaseRevocationFailedTemplate
+  [SmtpTemplates.DynamicSecretLeaseRevocationFailed]: DynamicSecretLeaseRevocationFailedTemplate,
+  [SmtpTemplates.CredentialRotationFailed]: CredentialRotationFailedTemplate,
+  [SmtpTemplates.AuditLogMigrationAlert]: AuditLogMigrationAlertTemplate,
+  [SmtpTemplates.HoneyTokenTriggered]: HoneyTokenTriggeredTemplate
 };
 
 export const smtpServiceFactory = (cfg: TSmtpConfig) => {
@@ -202,4 +221,17 @@ export const smtpServiceFactory = (cfg: TSmtpConfig) => {
   };
 
   return { sendMail, verify };
+};
+
+export const throwIfSmtpError = (err: unknown, logMessage: string) => {
+  logger.error(err, logMessage);
+  const { isCloud } = getConfig();
+  // We must always throw so the user is not left waiting for an email that never arrives.
+  // On cloud, we show a generic message to avoid exposing internal misconfiguration details.
+  throw new InternalServerError({
+    message: isCloud
+      ? "We could not send you an email. Please try again later."
+      : "Failed to send email. This is likely due to a misconfigured SMTP server. Please check your SMTP settings and try again.",
+    name: "SmtpError"
+  });
 };

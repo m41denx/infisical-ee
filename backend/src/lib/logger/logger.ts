@@ -4,7 +4,8 @@
 // easier to use it that's all.
 import { requestContext } from "@fastify/request-context";
 import pino, { Logger } from "pino";
-import { z } from "zod";
+
+import { RequestContextKey } from "@app/lib/request-context/request-context-keys";
 
 const logLevelToSeverityLookup: Record<string, string> = {
   "10": "TRACE",
@@ -46,15 +47,6 @@ export interface CustomLogger extends Omit<Logger, "info" | "error" | "warn" | "
 // eslint-disable-next-line import/no-mutable-exports
 export let logger: Readonly<CustomLogger>;
 
-const loggerConfig = z.object({
-  AWS_CLOUDWATCH_LOG_GROUP_NAME: z.string().default("infisical-log-stream"),
-  AWS_CLOUDWATCH_LOG_REGION: z.string().default("us-east-1"),
-  AWS_CLOUDWATCH_LOG_ACCESS_KEY_ID: z.string().min(1).optional(),
-  AWS_CLOUDWATCH_LOG_ACCESS_KEY_SECRET: z.string().min(1).optional(),
-  AWS_CLOUDWATCH_LOG_INTERVAL: z.coerce.number().default(1000),
-  NODE_ENV: z.enum(["development", "test", "production"]).default("production")
-});
-
 const redactedKeys = [
   "accessToken",
   "authToken",
@@ -79,6 +71,9 @@ const redactedKeys = [
   "encryptedKey",
   "plaintextProjectKey",
   "accessKey",
+  "accessKeyId",
+  "secretAccessKey",
+  "sessionToken",
   "botKey",
   "decryptedSecret",
   "secrets",
@@ -86,14 +81,16 @@ const redactedKeys = [
   "password",
   "config",
   "bindPass",
-  "bindDN"
+  "bindDN",
+  "x-vault-token",
+  "X-VAULT-TOKEN"
 ];
 
 const UNKNOWN_REQUEST_ID = "UNKNOWN_REQUEST_ID";
 
 const extractReqId = () => {
   try {
-    return requestContext.get("reqId") || UNKNOWN_REQUEST_ID;
+    return requestContext.get(RequestContextKey.ReqId) || UNKNOWN_REQUEST_ID;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.log("failed to get request context", err);
@@ -103,14 +100,13 @@ const extractReqId = () => {
 
 const extractOrgId = () => {
   try {
-    return requestContext.get("orgId");
+    return requestContext.get(RequestContextKey.OrgId);
   } catch {
     return "";
   }
 };
 
 export const initLogger = () => {
-  const cfg = loggerConfig.parse(process.env);
   const targets: pino.TransportMultiOptions["targets"][number][] = [
     {
       level: "info",
@@ -121,21 +117,6 @@ export const initLogger = () => {
       }
     }
   ];
-
-  if (cfg.AWS_CLOUDWATCH_LOG_ACCESS_KEY_ID && cfg.AWS_CLOUDWATCH_LOG_ACCESS_KEY_SECRET) {
-    targets.push({
-      target: "@serdnam/pino-cloudwatch-transport",
-      level: "info",
-      options: {
-        logGroupName: cfg.AWS_CLOUDWATCH_LOG_GROUP_NAME,
-        logStreamName: cfg.AWS_CLOUDWATCH_LOG_GROUP_NAME,
-        awsRegion: cfg.AWS_CLOUDWATCH_LOG_REGION,
-        awsAccessKeyId: cfg.AWS_CLOUDWATCH_LOG_ACCESS_KEY_ID,
-        awsSecretAccessKey: cfg.AWS_CLOUDWATCH_LOG_ACCESS_KEY_SECRET,
-        interval: cfg.AWS_CLOUDWATCH_LOG_INTERVAL
-      }
-    });
-  }
 
   const transport = pino.transport({
     targets
@@ -179,7 +160,14 @@ export const initLogger = () => {
         })
       },
       // redact until depth of three
-      redact: [...redactedKeys, ...redactedKeys.map((key) => `*.${key}`), ...redactedKeys.map((key) => `*.*.${key}`)]
+      // Keys with special characters (hyphens) need bracket notation for fast-redact
+      redact: redactedKeys.flatMap((key) => {
+        if (key.includes("-")) {
+          const k = `["${key}"]`;
+          return [k, `*${k}`, `*.*${k}`];
+        }
+        return [key, `*.${key}`, `*.*.${key}`];
+      })
     },
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     transport

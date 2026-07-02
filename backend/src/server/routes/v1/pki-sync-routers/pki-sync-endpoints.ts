@@ -3,10 +3,13 @@ import { z } from "zod";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags } from "@app/lib/api-docs";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { openApiHidden } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
 import { PkiSync } from "@app/services/pki-sync/pki-sync-enums";
 import { PKI_SYNC_NAME_MAP } from "@app/services/pki-sync/pki-sync-maps";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 export const registerSyncPkiEndpoints = ({
   server,
@@ -14,13 +17,15 @@ export const registerSyncPkiEndpoints = ({
   createSchema,
   updateSchema,
   responseSchema,
-  syncOptions
+  syncOptions,
+  enableOperationId = true
 }: {
   destination: PkiSync;
   server: FastifyZodProvider;
   createSchema: z.ZodType<{
     name: string;
-    projectId: string;
+    projectId?: string;
+    applicationId?: string;
     connectionId: string;
     destinationConfig: Record<string, unknown>;
     syncOptions?: Record<string, unknown>;
@@ -42,8 +47,13 @@ export const registerSyncPkiEndpoints = ({
     canImportCertificates: boolean;
     canRemoveCertificates: boolean;
   };
+  enableOperationId?: boolean;
 }) => {
   const destinationName = PKI_SYNC_NAME_MAP[destination];
+  const destinationNameForOpId = destination
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join("");
 
   server.route({
     method: "GET",
@@ -53,10 +63,11 @@ export const registerSyncPkiEndpoints = ({
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: `list${destinationNameForOpId}PkiSyncs` } : {}),
       tags: [ApiDocsTags.PkiSyncs],
       description: `List the ${destinationName} PKI Syncs for the specified project.`,
       querystring: z.object({
-        projectId: z.string().trim().min(1, "Project ID required")
+        projectId: z.string().trim().optional().describe(openApiHidden())
       }),
       response: {
         200: z.object({ pkiSyncs: responseSchema.array() })
@@ -64,9 +75,7 @@ export const registerSyncPkiEndpoints = ({
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const {
-        query: { projectId }
-      } = req;
+      const projectId = req.internalCertManagerProjectId;
 
       const pkiSyncs = await server.services.pkiSync.listPkiSyncsByProjectId({ projectId }, req.permission);
 
@@ -93,6 +102,7 @@ export const registerSyncPkiEndpoints = ({
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: `get${destinationNameForOpId}PkiSync` } : {}),
       tags: [ApiDocsTags.PkiSyncs],
       description: `Get the specified ${destinationName} PKI Sync by ID.`,
       params: z.object({
@@ -115,7 +125,8 @@ export const registerSyncPkiEndpoints = ({
           type: EventType.GET_PKI_SYNC,
           metadata: {
             syncId: pkiSyncId,
-            destination
+            destination,
+            ...(pkiSync.applicationId && { applicationId: pkiSync.applicationId })
           }
         }
       });
@@ -132,6 +143,7 @@ export const registerSyncPkiEndpoints = ({
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: `create${destinationNameForOpId}PkiSync` } : {}),
       tags: [ApiDocsTags.PkiSyncs],
       description: `Create a ${destinationName} PKI Sync for the specified project.`,
       body: createSchema,
@@ -141,7 +153,10 @@ export const registerSyncPkiEndpoints = ({
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const pkiSync = await server.services.pkiSync.createPkiSync({ ...req.body, destination }, req.permission);
+      const pkiSync = await server.services.pkiSync.createPkiSync(
+        { ...req.body, projectId: req.body.projectId ?? req.internalCertManagerProjectId, destination },
+        req.permission
+      );
 
       await server.services.auditLog.createAuditLog({
         ...req.auditLogInfo,
@@ -151,8 +166,19 @@ export const registerSyncPkiEndpoints = ({
           metadata: {
             pkiSyncId: pkiSync.id,
             name: pkiSync.name,
-            destination
+            destination,
+            ...(pkiSync.applicationId && { applicationId: pkiSync.applicationId })
           }
+        }
+      });
+
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.PkiSyncCreated,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          destination,
+          orgId: req.permission.orgId
         }
       });
 
@@ -168,6 +194,7 @@ export const registerSyncPkiEndpoints = ({
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: `update${destinationNameForOpId}PkiSync` } : {}),
       tags: [ApiDocsTags.PkiSyncs],
       description: `Update the specified ${destinationName} PKI Sync.`,
       params: z.object({
@@ -191,7 +218,8 @@ export const registerSyncPkiEndpoints = ({
           type: EventType.UPDATE_PKI_SYNC,
           metadata: {
             pkiSyncId,
-            name: pkiSync.name
+            name: pkiSync.name,
+            ...(pkiSync.applicationId && { applicationId: pkiSync.applicationId })
           }
         }
       });
@@ -208,6 +236,7 @@ export const registerSyncPkiEndpoints = ({
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: `delete${destinationNameForOpId}PkiSync` } : {}),
       tags: [ApiDocsTags.PkiSyncs],
       description: `Delete the specified ${destinationName} PKI Sync.`,
       params: z.object({
@@ -231,8 +260,19 @@ export const registerSyncPkiEndpoints = ({
           metadata: {
             pkiSyncId,
             name: pkiSync.name,
-            destination: pkiSync.destination
+            destination: pkiSync.destination,
+            ...(pkiSync.applicationId && { applicationId: pkiSync.applicationId })
           }
+        }
+      });
+
+      await server.services.telemetry.sendPostHogEvents({
+        event: PostHogEventTypes.PkiSyncDeleted,
+        distinctId: getTelemetryDistinctId(req),
+        organizationId: req.permission.orgId,
+        properties: {
+          destination: pkiSync.destination,
+          orgId: req.permission.orgId
         }
       });
 
@@ -248,6 +288,7 @@ export const registerSyncPkiEndpoints = ({
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: `sync${destinationNameForOpId}PkiSync` } : {}),
       tags: [ApiDocsTags.PkiSyncs],
       description: `Trigger a sync for the specified ${destinationName} PKI Sync.`,
       params: z.object({
@@ -282,6 +323,7 @@ export const registerSyncPkiEndpoints = ({
       },
       schema: {
         hide: false,
+        ...(enableOperationId ? { operationId: `import${destinationNameForOpId}PkiSyncCertificates` } : {}),
         tags: [ApiDocsTags.PkiSyncs],
         description: `Import certificates from the specified ${destinationName} PKI Sync destination.`,
         params: z.object({
@@ -315,6 +357,7 @@ export const registerSyncPkiEndpoints = ({
     },
     schema: {
       hide: false,
+      ...(enableOperationId ? { operationId: `remove${destinationNameForOpId}PkiSyncCertificates` } : {}),
       tags: [ApiDocsTags.PkiSyncs],
       description: `Remove certificates from the specified ${destinationName} PKI Sync destination.`,
       params: z.object({

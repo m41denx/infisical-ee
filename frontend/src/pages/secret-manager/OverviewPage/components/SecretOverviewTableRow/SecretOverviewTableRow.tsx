@@ -9,6 +9,7 @@ import {
   faFileImport,
   faKey,
   faRotate,
+  faShieldHalved,
   faXmark
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -37,14 +38,20 @@ type Props = {
   onToggleSecretSelect: (key: string) => void;
   getSecretByKey: (slug: string, key: string) => SecretV3RawSanitized | undefined;
   onSecretCreate: (env: string, key: string, value: string) => Promise<void>;
-  onSecretUpdate: (
-    env: string,
-    key: string,
-    value: string,
-    secretValueHidden: boolean,
-    type?: SecretType,
-    secretId?: string
-  ) => Promise<void>;
+  onSecretUpdate: (params: {
+    env: string;
+    key: string;
+    value: string | undefined;
+    secretValueHidden: boolean;
+    type?: SecretType;
+    secretId?: string;
+    newSecretName?: string;
+    secretComment?: string;
+    tags?: { id: string; slug: string }[];
+    secretMetadata?: { key: string; value: string; isEncrypted?: boolean }[];
+    skipMultilineEncoding?: boolean | null;
+    originalValue?: string;
+  }) => Promise<void>;
   onSecretDelete: (env: string, key: string, secretId?: string) => Promise<void>;
   isImportedSecretPresentInEnv: (env: string, secretName: string) => boolean;
   getImportedSecretByKey: (
@@ -258,6 +265,11 @@ export const SecretOverviewTableRow = ({
                                   <FontAwesomeIcon icon={faRotate} />
                                 </Tooltip>
                               )}
+                              {secret?.isHoneyTokenSecret && (
+                                <Tooltip content="Honey Token Secret">
+                                  <FontAwesomeIcon icon={faShieldHalved} className="text-yellow" />
+                                </Tooltip>
+                              )}
                               {secret?.idOverride && (
                                 <Tooltip content="Personal Override">
                                   <FontAwesomeIcon icon={faCodeBranch} />
@@ -283,6 +295,7 @@ export const SecretOverviewTableRow = ({
                               onSecretUpdate={onSecretUpdate}
                               environment={slug}
                               isRotatedSecret={secret?.isRotatedSecret}
+                              isHoneyTokenSecret={secret?.isHoneyTokenSecret}
                               importedBy={importedBy}
                               isSecretPresent={Boolean(secret)}
                             />

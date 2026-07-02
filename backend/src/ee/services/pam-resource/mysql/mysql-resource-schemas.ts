@@ -2,13 +2,13 @@ import { z } from "zod";
 
 import { PamResource } from "../pam-resource-enums";
 import {
+  BaseCreateGatewayPamResourceSchema,
   BaseCreatePamAccountSchema,
-  BaseCreatePamResourceSchema,
   BasePamAccountSchema,
   BasePamAccountSchemaWithResource,
   BasePamResourceSchema,
-  BaseUpdatePamAccountSchema,
-  BaseUpdatePamResourceSchema
+  BaseUpdateGatewayPamResourceSchema,
+  BaseUpdatePamAccountSchema
 } from "../pam-resource-schemas";
 import {
   BaseSqlAccountCredentialsSchema,
@@ -43,12 +43,12 @@ export const MySQLResourceListItemSchema = z.object({
   resource: z.literal(PamResource.MySQL)
 });
 
-export const CreateMySQLResourceSchema = BaseCreatePamResourceSchema.extend({
+export const CreateMySQLResourceSchema = BaseCreateGatewayPamResourceSchema.extend({
   connectionDetails: MySQLResourceConnectionDetailsSchema,
   rotationAccountCredentials: MySQLAccountCredentialsSchema.nullable().optional()
 });
 
-export const UpdateMySQLResourceSchema = BaseUpdatePamResourceSchema.extend({
+export const UpdateMySQLResourceSchema = BaseUpdateGatewayPamResourceSchema.extend({
   connectionDetails: MySQLResourceConnectionDetailsSchema.optional(),
   rotationAccountCredentials: MySQLAccountCredentialsSchema.nullable().optional()
 });
@@ -67,6 +67,7 @@ export const UpdateMySQLAccountSchema = BaseUpdatePamAccountSchema.extend({
 });
 
 export const SanitizedMySQLAccountWithResourceSchema = BasePamAccountSchemaWithResource.extend({
+  parentType: z.literal(PamResource.MySQL),
   credentials: MySQLAccountCredentialsSchema.pick({
     username: true
   })

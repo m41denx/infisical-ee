@@ -1,12 +1,13 @@
 import { Controller, FormProvider, useForm } from "react-hook-form";
-import { faArrowRight } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { ForwardIcon } from "lucide-react";
+import { twMerge } from "tailwind-merge";
 import { z } from "zod";
 
-import { createNotification } from "@app/components/notifications";
-import { Button, FormControl, TextArea } from "@app/components/v2";
+import { Button, Field, FieldError, FieldLabel, TextArea } from "@app/components/v3";
 import { useSetSecretRequestValue } from "@app/hooks/api";
+
+import { BrandingTheme } from "../../ViewSharedSecretByIDPage/ViewSharedSecretByIDPage";
 
 const formSchema = z.object({
   secretValue: z.string().min(1)
@@ -15,11 +16,12 @@ const formSchema = z.object({
 type FormData = z.infer<typeof formSchema>;
 
 type Props = {
+  brandingTheme?: BrandingTheme;
   onSuccess: () => void;
   secretRequestId: string;
 };
 
-export const SecretRequestContainer = ({ onSuccess, secretRequestId }: Props) => {
+export const SecretRequestContainer = ({ brandingTheme, onSuccess, secretRequestId }: Props) => {
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema)
   });
@@ -32,47 +34,71 @@ export const SecretRequestContainer = ({ onSuccess, secretRequestId }: Props) =>
       secretValue: data.secretValue
     });
 
-    createNotification({
-      title: "Secret request value shared",
-      text: "The secret request value has been shared",
-      type: "success"
-    });
-
     onSuccess();
   };
+
+  const panelStyle = brandingTheme
+    ? {
+        backgroundColor: brandingTheme.panelBg,
+        borderColor: brandingTheme.panelBorder
+      }
+    : undefined;
+
+  const inputStyle = brandingTheme
+    ? ({
+        backgroundColor: brandingTheme.inputBg,
+        color: brandingTheme.textColor,
+        "--muted-color": brandingTheme.textMutedColor,
+        borderColor: brandingTheme.panelBorder
+      } as React.CSSProperties)
+    : undefined;
 
   return (
     <FormProvider {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)}>
-        <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-800 p-4">
-          <div className="flex items-center justify-between rounded-md bg-white/5 p-2 text-base text-gray-400">
-            <div className="w-full">
-              <Controller
-                control={form.control}
-                name="secretValue"
-                render={({ field, fieldState: { error } }) => (
-                  <FormControl
-                    isError={Boolean(error)}
-                    errorText={error?.message}
-                    isRequired
-                    label="Secret Value"
-                  >
-                    <TextArea {...field} rows={10} reSize="none" />
-                  </FormControl>
-                )}
-              />
-              <Button
-                isLoading={isPending}
-                isDisabled={isPending}
-                colorSchema="secondary"
-                className="w-full"
-                type="submit"
-              >
-                Share Secret
-                <FontAwesomeIcon className="ml-2" icon={faArrowRight} />
-              </Button>
-            </div>
-          </div>
+        <div className="flex flex-col gap-4" style={panelStyle}>
+          <Controller
+            control={form.control}
+            name="secretValue"
+            render={({ field, fieldState: { error } }) => (
+              <Field style={brandingTheme ? { color: brandingTheme.textColor } : undefined}>
+                <FieldLabel
+                  className={brandingTheme ? "text-[var(--muted-color)]" : ""}
+                  style={
+                    brandingTheme
+                      ? ({ "--muted-color": brandingTheme.textMutedColor } as React.CSSProperties)
+                      : undefined
+                  }
+                >
+                  Secret Value
+                </FieldLabel>
+                <TextArea
+                  {...field}
+                  rows={10}
+                  className={twMerge(
+                    "resize-none",
+                    brandingTheme &&
+                      "border placeholder-[var(--muted-color)]/70 focus-visible:ring-[var(--muted-color)]/50"
+                  )}
+                  style={inputStyle}
+                  aria-invalid={Boolean(error)}
+                />
+                {error && <FieldError>{error.message}</FieldError>}
+              </Field>
+            )}
+          />
+          <Button
+            isPending={isPending}
+            isDisabled={isPending || !form.formState.isValid}
+            variant="project"
+            isFullWidth
+            size="lg"
+            type="submit"
+            style={inputStyle}
+          >
+            Share Secret
+            <ForwardIcon />
+          </Button>
         </div>
       </form>
     </FormProvider>

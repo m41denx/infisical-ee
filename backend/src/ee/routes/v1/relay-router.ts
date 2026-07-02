@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { RelaysSchema } from "@app/db/schemas";
+import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { getConfig } from "@app/lib/config/env";
 import { crypto } from "@app/lib/crypto/cryptography";
 import { UnauthorizedError } from "@app/lib/errors";
@@ -19,6 +20,7 @@ export const registerRelayRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "registerInstanceRelay",
       body: z.object({
         host: z.string(),
         name: slugSchema({ min: 1, max: 32, field: "name" })
@@ -69,6 +71,8 @@ export const registerRelayRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      hide: true,
+      operationId: "registerOrgRelay",
       body: z.object({
         host: z.string(),
         name: slugSchema({ min: 1, max: 32, field: "name" })
@@ -103,6 +107,8 @@ export const registerRelayRouter = async (server: FastifyZodProvider) => {
     method: "GET",
     url: "/",
     schema: {
+      hide: false,
+      operationId: "getRelays",
       response: {
         200: RelaysSchema.array()
       }
@@ -110,7 +116,7 @@ export const registerRelayRouter = async (server: FastifyZodProvider) => {
     config: {
       rateLimit: readLimit
     },
-    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN, AuthMode.GATEWAY_ACCESS_TOKEN]),
     handler: async (req) => {
       return server.services.relay.getRelays({
         actorId: req.permission.id,
@@ -128,6 +134,7 @@ export const registerRelayRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "deleteRelay",
       params: z.object({
         id: z.string()
       }),
@@ -137,13 +144,24 @@ export const registerRelayRouter = async (server: FastifyZodProvider) => {
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      return server.services.relay.deleteRelay({
+      const relay = await server.services.relay.deleteRelay({
         id: req.params.id,
         actorId: req.permission.id,
         actor: req.permission.type,
         actorAuthMethod: req.permission.authMethod,
         actorOrgId: req.permission.orgId
       });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        orgId: req.permission.orgId,
+        event: {
+          type: EventType.RELAY_DELETE,
+          metadata: { relayId: relay.id, name: relay.name }
+        }
+      });
+
+      return relay;
     }
   });
 
@@ -154,6 +172,7 @@ export const registerRelayRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      operationId: "heartbeatInstanceRelay",
       body: z.object({
         name: slugSchema({ min: 1, max: 32, field: "name" })
       }),
@@ -206,6 +225,8 @@ export const registerRelayRouter = async (server: FastifyZodProvider) => {
       rateLimit: writeLimit
     },
     schema: {
+      hide: true,
+      operationId: "heartbeatOrgRelay",
       body: z.object({
         name: slugSchema({ min: 1, max: 32, field: "name" })
       }),

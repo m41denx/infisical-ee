@@ -77,7 +77,7 @@ const schema = z
       [CertExtendedKeyUsage.TIMESTAMPING]: z.boolean().optional()
     }),
     enableAutoRenewal: z.boolean().optional().default(false),
-    renewalBefore: z.number().min(1).optional(),
+    renewalBefore: z.coerce.number().min(1).optional(),
     renewalUnit: z.nativeEnum(TimeUnit).optional(),
     // Properties for Azure ADCS only
     azureTemplateType: z.string().optional(),
@@ -161,13 +161,11 @@ export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
   const { currentProject } = useProject();
   const projectId = currentProject.id;
   const { data: subscribers } = useListWorkspacePkiSubscribers(projectId);
-  const { data: cas } = useListCasByProjectId(projectId);
+  const { data: cas } = useListCasByProjectId();
   const [tabValue, setTabValue] = useState<FormTab>(FormTab.Configuration);
 
   const { data: pkiSubscriber } = useGetPkiSubscriber({
-    subscriberName:
-      (popUp?.pkiSubscriber?.data as { subscriberName: string })?.subscriberName || "",
-    projectId
+    subscriberName: (popUp?.pkiSubscriber?.data as { subscriberName: string })?.subscriberName || ""
   });
 
   const { mutateAsync: createMutateAsync } = useCreatePkiSubscriber();
@@ -213,7 +211,7 @@ export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
   // Fetch Azure ADCS templates when Azure CA is selected
   const { data: azureTemplates } = useGetAzureAdcsTemplates({
     caId: selectedCa?.type === CaType.AZURE_AD_CS ? selectedCaId : "",
-    projectId
+    isAzureAdcsCa: true
   });
 
   // Initialize form with ALL subscriber data including template
@@ -344,7 +342,6 @@ export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
     if (pkiSubscriber) {
       await updateMutateAsync({
         subscriberName: pkiSubscriber.name,
-        projectId,
         name,
         caId,
         commonName,
@@ -364,7 +361,6 @@ export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
       });
     } else {
       await createMutateAsync({
-        projectId,
         name,
         caId,
         commonName,
@@ -757,7 +753,11 @@ export const PkiSubscriberModal = ({ popUp, handlePopUpToggle }: Props) => {
                           placeholder="5"
                           type="number"
                           min={1}
-                          onChange={(e) => onChange(Number(e.target.value))}
+                          value={field.value ?? ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            onChange(val === "" ? "" : Number(val));
+                          }}
                         />
                       </FormControl>
                     )}

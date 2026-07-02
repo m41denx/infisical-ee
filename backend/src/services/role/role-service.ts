@@ -2,8 +2,12 @@ import { packRules } from "@casl/ability/extra";
 import { requestContext } from "@fastify/request-context";
 
 import { AccessScope, ActionProjectType, OrganizationActionScope, TableName } from "@app/db/schemas";
+import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { RequestContextKey } from "@app/lib/request-context/request-context-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { validateHandlebarTemplate } from "@app/lib/template/validate-handlebars";
 import { UnpackedPermissionSchema, unpackPermissions } from "@app/server/routes/sanitizedSchema/permission";
 import { TMembershipRoleDALFactory } from "@app/services/membership/membership-role-dal";
@@ -13,19 +17,35 @@ import { TExternalGroupOrgRoleMappingDALFactory } from "../external-group-org-ro
 import { TIdentityDALFactory } from "../identity/identity-dal";
 import { TProjectDALFactory } from "../project/project-dal";
 import { TUserDALFactory } from "../user/user-dal";
-import { newNamespaceRoleFactory } from "./namespace/namespace-role-factory";
 import { newOrgRoleFactory } from "./org/org-role-factory";
 import { newProjectRoleFactory } from "./project/project-role-factory";
 import { TRoleDALFactory } from "./role-dal";
 import {
   TCreateRoleDTO,
   TDeleteRoleDTO,
+  TGetProjectRoleByIdDTO,
   TGetRoleByIdDTO,
   TGetRoleBySlugDTO,
   TGetUserPermissionDTO,
   TListRoleDTO,
   TUpdateRoleDTO
 } from "./role-types";
+
+const stripExpiredTemporaryRoles = <
+  M extends {
+    roles: Array<{
+      role: string;
+      isTemporary?: boolean;
+      temporaryAccessEndTime?: Date | null;
+    }>;
+  }
+>(
+  memberships: M[]
+): M[] =>
+  memberships.map((m) => ({
+    ...m,
+    roles: m.roles.filter((r) => !r.isTemporary || (r.temporaryAccessEndTime && new Date() < r.temporaryAccessEndTime))
+  }));
 
 type TRoleServiceFactoryDep = {
   roleDAL: TRoleDALFactory;
@@ -35,6 +55,7 @@ type TRoleServiceFactoryDep = {
   projectDAL: Pick<TProjectDALFactory, "findById">;
   externalGroupOrgRoleMappingDAL: Pick<TExternalGroupOrgRoleMappingDALFactory, "findOne">;
   membershipRoleDAL: Pick<TMembershipRoleDALFactory, "find">;
+  licenseService: Pick<TLicenseServiceFactory, "getPlan">;
 };
 
 export type TRoleServiceFactory = ReturnType<typeof roleServiceFactory>;
@@ -46,7 +67,8 @@ export const roleServiceFactory = ({
   identityDAL,
   userDAL,
   externalGroupOrgRoleMappingDAL,
-  membershipRoleDAL
+  membershipRoleDAL,
+  licenseService
 }: TRoleServiceFactoryDep) => {
   const orgRoleFactory = newOrgRoleFactory({
     permissionService,
@@ -56,13 +78,9 @@ export const roleServiceFactory = ({
     permissionService,
     projectDAL
   });
-  const namespaceRoleFactory = newNamespaceRoleFactory({
-    permissionService
-  });
   const scopeFactory = {
     [AccessScope.Organization]: orgRoleFactory,
-    [AccessScope.Project]: projectRoleFactory,
-    [AccessScope.Namespace]: namespaceRoleFactory
+    [AccessScope.Project]: projectRoleFactory
   };
 
   const createRole = async (dto: TCreateRoleDTO) => {
@@ -70,15 +88,25 @@ export const roleServiceFactory = ({
     const factory = scopeFactory[scopeData.scope];
     await factory.onCreateRoleGuard(dto);
 
+    const plan = await licenseService.getPlan(dto.permission.orgId);
+    if (!plan?.rbac) {
+      throw new BadRequestError({
+        message:
+          "Failed to create custom role due to plan RBAC restriction. Upgrade to Infisical Enterprise plan to create custom roles."
+      });
+    }
+
     const scope = factory.getScopeField(scopeData);
     const existingRole = await roleDAL.findOne({
       slug: data.slug,
       [scope.key]: scope.value
     });
-    if (existingRole) throw new NotFoundError({ message: `Role with ${data.slug} exists` });
+    if (existingRole) throw new BadRequestError({ message: `Role with ${data.slug} already exists` });
 
     validateHandlebarTemplate("Role Creation", JSON.stringify(data.permissions || []), {
-      allowedExpressions: (val) => val.includes("identity.")
+      allowedExpressions: (val) => val.includes("identity."),
+      allowedHelpers: ["stripPrefix"],
+      rejectUnescaped: true
     });
 
     const role = await roleDAL.create({
@@ -99,6 +127,14 @@ export const roleServiceFactory = ({
 
     await factory.onUpdateRoleGuard(dto);
 
+    const plan = await licenseService.getPlan(dto.permission.orgId);
+    if (!plan?.rbac) {
+      throw new BadRequestError({
+        message:
+          "Failed to update custom role due to plan RBAC restriction. Upgrade to Infisical Enterprise plan to update custom roles."
+      });
+    }
+
     const existingRole = await roleDAL.findOne({
       id: dto.selector.id,
       [scope.key]: scope.value
@@ -115,7 +151,9 @@ export const roleServiceFactory = ({
     }
 
     validateHandlebarTemplate("Role Update", JSON.stringify(data.permissions || []), {
-      allowedExpressions: (val) => val.includes("identity.")
+      allowedExpressions: (val) => val.includes("identity."),
+      allowedHelpers: ["stripPrefix"],
+      rejectUnescaped: true
     });
 
     const role = await roleDAL.updateById(existingRole.id, {
@@ -208,6 +246,38 @@ export const roleServiceFactory = ({
     return { ...role, [scope.key]: scope.value, permissions: unpackPermissions(role.permissions) };
   };
 
+  const getProjectRoleById = async (dto: TGetProjectRoleByIdDTO) => {
+    const { permission, selector } = dto;
+
+    const [role] = await roleDAL.find({ id: selector.id, $notNull: ["projectId"] }, { limit: 1 });
+    if (!role) {
+      throw new NotFoundError({ message: `Role with id ${selector.id} not found` });
+    }
+
+    if (!role.projectId) {
+      throw new NotFoundError({ message: `Role with id ${selector.id} not found` });
+    }
+
+    const project = await projectDAL.findById(role.projectId);
+    if (!project || project.orgId !== permission.orgId) {
+      throw new NotFoundError({ message: `Role with id ${selector.id} not found` });
+    }
+
+    const scopeData = {
+      scope: AccessScope.Project,
+      orgId: permission.orgId,
+      projectId: role.projectId
+    } as const;
+
+    const roleResult = await getRoleById({
+      permission,
+      scopeData,
+      selector: { id: role.id }
+    });
+
+    return { ...roleResult, projectId: scopeData.projectId };
+  };
+
   const getRoleBySlug = async (dto: TGetRoleBySlugDTO) => {
     const { scopeData, selector } = dto;
     const factory = scopeFactory[scopeData.scope];
@@ -242,7 +312,11 @@ export const roleServiceFactory = ({
         actorAuthMethod: dto.permission.authMethod,
         scope: OrganizationActionScope.Any
       });
-      return { permissions: packRules(permission.rules), memberships, assumedPrivilegeDetails: undefined };
+      return {
+        permissions: packRules(permission.rules),
+        memberships: stripExpiredTemporaryRoles(memberships),
+        assumedPrivilegeDetails: undefined
+      };
     }
 
     if (dto.scopeData.scope === AccessScope.Project) {
@@ -255,7 +329,7 @@ export const roleServiceFactory = ({
         actorOrgId: dto.permission.orgId
       });
 
-      const assumedPrivilegeDetailsCtx = requestContext.get("assumedPrivilegeDetails");
+      const assumedPrivilegeDetailsCtx = requestContext.get(RequestContextKey.AssumedPrivilegeDetails);
       const isAssumingPrivilege = assumedPrivilegeDetailsCtx?.projectId === dto.scopeData.projectId;
       const assumedPrivilegeDetails = isAssumingPrivilege
         ? {
@@ -267,19 +341,28 @@ export const roleServiceFactory = ({
         : undefined;
 
       if (assumedPrivilegeDetails?.actorType === ActorType.IDENTITY) {
-        const identityDetails = await identityDAL.findById(assumedPrivilegeDetails.actorId);
+        const identityDetails = await requestMemoize(
+          requestMemoKeys.identityFindById(assumedPrivilegeDetails.actorId),
+          () => identityDAL.findById(assumedPrivilegeDetails.actorId)
+        );
         if (!identityDetails)
           throw new NotFoundError({ message: `Identity with ID ${assumedPrivilegeDetails.actorId} not found` });
         assumedPrivilegeDetails.actorName = identityDetails.name;
       } else if (assumedPrivilegeDetails?.actorType === ActorType.USER) {
-        const userDetails = await userDAL.findById(assumedPrivilegeDetails?.actorId);
+        const userDetails = await requestMemoize(requestMemoKeys.userFindById(assumedPrivilegeDetails.actorId), () =>
+          userDAL.findById(assumedPrivilegeDetails.actorId)
+        );
         if (!userDetails)
           throw new NotFoundError({ message: `User with ID ${assumedPrivilegeDetails.actorId} not found` });
-        assumedPrivilegeDetails.actorName = `${userDetails?.firstName} ${userDetails?.lastName || ""}`;
+        assumedPrivilegeDetails.actorName = `${userDetails?.firstName ?? ""} ${userDetails?.lastName ?? ""}`.trim();
         assumedPrivilegeDetails.actorEmail = userDetails?.email || "";
       }
 
-      return { permissions: packRules(permission.rules), memberships, assumedPrivilegeDetails };
+      return {
+        permissions: packRules(permission.rules),
+        memberships: stripExpiredTemporaryRoles(memberships),
+        assumedPrivilegeDetails
+      };
     }
 
     throw new BadRequestError({ message: "Invalid scope defined" });
@@ -291,6 +374,7 @@ export const roleServiceFactory = ({
     deleteRole,
     listRoles,
     getRoleById,
+    getProjectRoleById,
     getRoleBySlug,
     getUserPermission
   };

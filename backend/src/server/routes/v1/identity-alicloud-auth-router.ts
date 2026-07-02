@@ -1,15 +1,20 @@
 import RE2 from "re2";
 import { z } from "zod";
 
-import { IdentityAlicloudAuthsSchema } from "@app/db/schemas";
+import { IdentityAlicloudAuthsSchema, IdentityAuthMethod } from "@app/db/schemas";
 import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ALICLOUD_AUTH, ApiDocsTags } from "@app/lib/api-docs";
+import { UnauthorizedError } from "@app/lib/errors";
+import { logger } from "@app/lib/logger";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
+import { slugSchema } from "@app/server/lib/schemas";
+import { getTelemetryDistinctId } from "@app/server/lib/telemetry";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
-import { AuthMode } from "@app/services/auth/auth-type";
+import { ActorType, AuthMode } from "@app/services/auth/auth-type";
 import { TIdentityTrustedIp } from "@app/services/identity/identity-types";
 import { validateArns } from "@app/services/identity-alicloud-auth/identity-alicloud-auth-validators";
 import { isSuperAdmin } from "@app/services/super-admin/super-admin-fns";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 
 export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvider) => {
   server.route({
@@ -20,6 +25,7 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
     },
     schema: {
       hide: false,
+      operationId: "loginWithAlicloudAuth",
       tags: [ApiDocsTags.AliCloudAuth],
       description: "Login with Alibaba Cloud Auth for machine identity",
       body: z.object({
@@ -38,6 +44,7 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
             message: "AccessKeyId must be alphanumeric"
           })
           .describe(ALICLOUD_AUTH.LOGIN.AccessKeyId),
+        organizationSlug: slugSchema().optional().describe(ALICLOUD_AUTH.LOGIN.organizationSlug),
         SignatureMethod: z.enum(["HMAC-SHA1"]).describe(ALICLOUD_AUTH.LOGIN.SignatureMethod),
         Timestamp: z
           .string()
@@ -73,28 +80,80 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
       }
     },
     handler: async (req) => {
-      const { identityAliCloudAuth, accessToken, identityAccessToken, identity } =
-        await server.services.identityAliCloudAuth.login(req.body);
+      try {
+        const { identityAliCloudAuth, accessToken, identityAccessToken, identity } =
+          await server.services.identityAliCloudAuth.login(req.body);
 
-      await server.services.auditLog.createAuditLog({
-        ...req.auditLogInfo,
-        orgId: identity.orgId,
-        event: {
-          type: EventType.LOGIN_IDENTITY_ALICLOUD_AUTH,
-          metadata: {
-            identityId: identityAliCloudAuth.identityId,
-            identityAccessTokenId: identityAccessToken.id,
-            identityAliCloudAuthId: identityAliCloudAuth.id
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          actor: {
+            type: ActorType.IDENTITY,
+            metadata: {
+              identityId: identityAliCloudAuth.identityId,
+              name: identity.name
+            }
+          },
+          orgId: identity.orgId,
+          event: {
+            type: EventType.LOGIN_IDENTITY_ALICLOUD_AUTH,
+            metadata: {
+              identityId: identityAliCloudAuth.identityId,
+              identityAccessTokenId: identityAccessToken.id,
+              identityAliCloudAuthId: identityAliCloudAuth.id
+            }
           }
-        }
-      });
+        });
 
-      return {
-        accessToken,
-        tokenType: "Bearer" as const,
-        expiresIn: identityAliCloudAuth.accessTokenTTL,
-        accessTokenMaxTTL: identityAliCloudAuth.accessTokenMaxTTL
-      };
+        void server.services.telemetry
+          .sendPostHogEvents({
+            event: PostHogEventTypes.MachineIdentityLogin,
+            distinctId: `identity-${identityAliCloudAuth.identityId}`,
+            organizationId: identity.orgId,
+            properties: {
+              identityId: identityAliCloudAuth.identityId,
+              orgId: identity.orgId,
+              authMethod: IdentityAuthMethod.ALICLOUD_AUTH
+            }
+          })
+          .catch((error) => {
+            logger.error(error, `Failed to send telemetry event [identityId=${identityAliCloudAuth.identityId}]`);
+          });
+
+        return {
+          accessToken,
+          tokenType: "Bearer" as const,
+          expiresIn: identityAliCloudAuth.accessTokenTTL,
+          accessTokenMaxTTL: identityAliCloudAuth.accessTokenMaxTTL
+        };
+      } catch (error) {
+        if (
+          error instanceof UnauthorizedError &&
+          error.detail?.orgId &&
+          error.detail?.identityId &&
+          error.detail?.identityName
+        ) {
+          await server.services.auditLog.createAuditLog({
+            ...req.auditLogInfo,
+            actor: {
+              type: ActorType.IDENTITY,
+              metadata: {
+                identityId: error.detail.identityId as string,
+                name: error.detail.identityName as string
+              }
+            },
+            orgId: error.detail.orgId as string,
+            event: {
+              type: EventType.LOGIN_IDENTITY_ALICLOUD_AUTH_FAILED,
+              metadata: {
+                identityId: error.detail.identityId as string,
+                reasonCode: error.detail.reasonCode as string,
+                message: error.message
+              }
+            }
+          });
+        }
+        throw error;
+      }
     }
   });
 
@@ -107,6 +166,7 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "attachAlicloudAuth",
       tags: [ApiDocsTags.AliCloudAuth],
       description: "Attach Alibaba Cloud Auth configuration onto machine identity",
       security: [
@@ -186,6 +246,21 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodAttached,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAliCloudAuth.orgId,
+          properties: {
+            identityId: identityAliCloudAuth.identityId,
+            orgId: identityAliCloudAuth.orgId,
+            authMethod: IdentityAuthMethod.ALICLOUD_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAliCloudAuth.identityId}]`);
+        });
+
       return { identityAliCloudAuth };
     }
   });
@@ -199,6 +274,7 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "updateAlicloudAuth",
       tags: [ApiDocsTags.AliCloudAuth],
       description: "Update Alibaba Cloud Auth configuration on machine identity",
       security: [
@@ -278,6 +354,21 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
         }
       });
 
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodUpdated,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAliCloudAuth.orgId,
+          properties: {
+            identityId: identityAliCloudAuth.identityId,
+            orgId: identityAliCloudAuth.orgId,
+            authMethod: IdentityAuthMethod.ALICLOUD_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAliCloudAuth.identityId}]`);
+        });
+
       return { identityAliCloudAuth };
     }
   });
@@ -291,6 +382,7 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "getAlicloudAuth",
       tags: [ApiDocsTags.AliCloudAuth],
       description: "Retrieve Alibaba Cloud Auth configuration on machine identity",
       security: [
@@ -339,6 +431,7 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     schema: {
       hide: false,
+      operationId: "deleteAlicloudAuth",
       tags: [ApiDocsTags.AliCloudAuth],
       description: "Delete Alibaba Cloud Auth configuration on machine identity",
       security: [
@@ -374,6 +467,21 @@ export const registerIdentityAliCloudAuthRouter = async (server: FastifyZodProvi
           }
         }
       });
+
+      void server.services.telemetry
+        .sendPostHogEvents({
+          event: PostHogEventTypes.MachineIdentityAuthMethodRevoked,
+          distinctId: getTelemetryDistinctId(req),
+          organizationId: identityAliCloudAuth.orgId,
+          properties: {
+            identityId: identityAliCloudAuth.identityId,
+            orgId: identityAliCloudAuth.orgId,
+            authMethod: IdentityAuthMethod.ALICLOUD_AUTH
+          }
+        })
+        .catch((error) => {
+          logger.error(error, `Failed to send telemetry event [identityId=${identityAliCloudAuth.identityId}]`);
+        });
 
       return { identityAliCloudAuth };
     }

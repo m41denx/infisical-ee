@@ -47,10 +47,6 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
         .where((qb) => {
           if (scopeData.scope === AccessScope.Organization) {
             void qb.where(`${TableName.Membership}.scope`, AccessScope.Organization);
-          } else if (scopeData.scope === AccessScope.Namespace) {
-            void qb
-              .where(`${TableName.Membership}.scope`, AccessScope.Namespace)
-              .where(`${TableName.Membership}.scopeNamespaceId`, scopeData.namespaceId);
           } else if (scopeData.scope === AccessScope.Project) {
             void qb
               .where(`${TableName.Membership}.scope`, AccessScope.Project)
@@ -85,6 +81,11 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
         )
         .leftJoin(TableName.IdentityLdapAuth, `${TableName.Identity}.id`, `${TableName.IdentityLdapAuth}.identityId`)
         .leftJoin(TableName.IdentityJwtAuth, `${TableName.Identity}.id`, `${TableName.IdentityJwtAuth}.identityId`)
+        .leftJoin(
+          TableName.IdentitySpiffeAuth,
+          `${TableName.Identity}.id`,
+          `${TableName.IdentitySpiffeAuth}.identityId`
+        )
         .select(selectAllTableCols(TableName.Membership))
         .select(
           db.ref("name").withSchema(TableName.Identity).as("identityName"),
@@ -124,7 +125,8 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
           db.ref("id").as("tokenId").withSchema(TableName.IdentityTokenAuth),
           db.ref("id").as("jwtId").withSchema(TableName.IdentityJwtAuth),
           db.ref("id").as("ldapId").withSchema(TableName.IdentityLdapAuth),
-          db.ref("id").as("tlsCertId").withSchema(TableName.IdentityTlsCertAuth)
+          db.ref("id").as("tlsCertId").withSchema(TableName.IdentityTlsCertAuth),
+          db.ref("id").as("spiffeId").withSchema(TableName.IdentitySpiffeAuth)
         );
 
       const data = sqlNestRelationships({
@@ -148,7 +150,8 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
             jwtId,
             ociId,
             ldapId,
-            tlsCertId
+            tlsCertId,
+            spiffeId
           } = el;
           return {
             ...MembershipsSchema.parse(el),
@@ -170,7 +173,8 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
                 jwtId,
                 ldapId,
                 ociId,
-                tlsCertId
+                tlsCertId,
+                spiffeId
               })
             }
           };
@@ -242,10 +246,6 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
 
           if (scopeData.scope === AccessScope.Organization) {
             void qb.where(`${TableName.Membership}.scope`, AccessScope.Organization);
-          } else if (scopeData.scope === AccessScope.Namespace) {
-            void qb
-              .where(`${TableName.Membership}.scope`, AccessScope.Namespace)
-              .where(`${TableName.Membership}.scopeNamespaceId`, scopeData.namespaceId);
           } else if (scopeData.scope === AccessScope.Project) {
             void qb
               .where(`${TableName.Membership}.scope`, AccessScope.Project)
@@ -253,15 +253,12 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
           }
         });
 
-      if (filter.limit) void paginatedIdentitys.limit(filter.limit);
-      if (filter.offset) void paginatedIdentitys.offset(filter.offset);
-
       if (filter.name || filter.role) {
         buildKnexFilterForSearchResource(
           paginatedIdentitys,
           {
-            name: filter.name!,
-            role: filter.role!
+            ...(filter.name && { name: filter.name }),
+            ...(filter.role && { role: filter.role })
           },
           (attr) => {
             switch (attr) {
@@ -276,11 +273,51 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
         );
       }
 
+      const countQuery = await (tx || db.replicaNode())
+        .count("* as total")
+        .from(paginatedIdentitys.clone().as("distinctMemberships"));
+
+      if (filter.limit) void paginatedIdentitys.limit(filter.limit);
+      if (filter.offset) void paginatedIdentitys.offset(filter.offset);
+
       const docs = await (tx || db.replicaNode())(TableName.Membership)
         .whereNotNull(`${TableName.Membership}.actorIdentityId`)
         .join(TableName.Identity, `${TableName.Identity}.id`, `${TableName.Membership}.actorIdentityId`)
         .join(TableName.MembershipRole, `${TableName.Membership}.id`, `${TableName.MembershipRole}.membershipId`)
         .leftJoin(TableName.Role, `${TableName.MembershipRole}.customRoleId`, `${TableName.Role}.id`)
+        .leftJoin(
+          TableName.IdentityUniversalAuth,
+          `${TableName.Identity}.id`,
+          `${TableName.IdentityUniversalAuth}.identityId`
+        )
+        .leftJoin(TableName.IdentityGcpAuth, `${TableName.Identity}.id`, `${TableName.IdentityGcpAuth}.identityId`)
+        .leftJoin(
+          TableName.IdentityAliCloudAuth,
+          `${TableName.Identity}.id`,
+          `${TableName.IdentityAliCloudAuth}.identityId`
+        )
+        .leftJoin(TableName.IdentityAwsAuth, `${TableName.Identity}.id`, `${TableName.IdentityAwsAuth}.identityId`)
+        .leftJoin(
+          TableName.IdentityKubernetesAuth,
+          `${TableName.Identity}.id`,
+          `${TableName.IdentityKubernetesAuth}.identityId`
+        )
+        .leftJoin(TableName.IdentityOciAuth, `${TableName.Identity}.id`, `${TableName.IdentityOciAuth}.identityId`)
+        .leftJoin(TableName.IdentityOidcAuth, `${TableName.Identity}.id`, `${TableName.IdentityOidcAuth}.identityId`)
+        .leftJoin(TableName.IdentityAzureAuth, `${TableName.Identity}.id`, `${TableName.IdentityAzureAuth}.identityId`)
+        .leftJoin(TableName.IdentityTokenAuth, `${TableName.Identity}.id`, `${TableName.IdentityTokenAuth}.identityId`)
+        .leftJoin(
+          TableName.IdentityTlsCertAuth,
+          `${TableName.Identity}.id`,
+          `${TableName.IdentityTlsCertAuth}.identityId`
+        )
+        .leftJoin(TableName.IdentityLdapAuth, `${TableName.Identity}.id`, `${TableName.IdentityLdapAuth}.identityId`)
+        .leftJoin(TableName.IdentityJwtAuth, `${TableName.Identity}.id`, `${TableName.IdentityJwtAuth}.identityId`)
+        .leftJoin(
+          TableName.IdentitySpiffeAuth,
+          `${TableName.Identity}.id`,
+          `${TableName.IdentitySpiffeAuth}.identityId`
+        )
         .distinct(`${TableName.Membership}.id`)
         .where(`${TableName.Membership}.scopeOrgId`, scopeData.orgId)
         .whereIn(`${TableName.Membership}.id`, paginatedIdentitys)
@@ -293,6 +330,7 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
           db.ref("hasDeleteProtection").withSchema(TableName.Identity).as("identityHasDeleteProtection"),
 
           db.ref("slug").withSchema(TableName.Role).as("roleSlug"),
+          db.ref("name").withSchema(TableName.Role).as("roleName"),
           db.ref("id").withSchema(TableName.MembershipRole).as("membershipRoleId"),
           db.ref("role").withSchema(TableName.MembershipRole).as("membershipRole"),
           db.ref("temporaryMode").withSchema(TableName.MembershipRole).as("membershipRoleTemporaryMode"),
@@ -307,12 +345,20 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
             .withSchema(TableName.MembershipRole)
             .as("membershipRoleTemporaryAccessEndTime"),
           db.ref("createdAt").withSchema(TableName.MembershipRole).as("membershipRoleCreatedAt"),
-          db.ref("updatedAt").withSchema(TableName.MembershipRole).as("membershipRoleUpdatedAt")
-        )
-        .select(
-          db.raw(
-            `count(${TableName.Membership}."actorIdentityId") OVER(PARTITION BY ${TableName.Membership}."scopeOrgId") as total`
-          )
+          db.ref("updatedAt").withSchema(TableName.MembershipRole).as("membershipRoleUpdatedAt"),
+          db.ref("id").as("uaId").withSchema(TableName.IdentityUniversalAuth),
+          db.ref("id").as("gcpId").withSchema(TableName.IdentityGcpAuth),
+          db.ref("id").as("alicloudId").withSchema(TableName.IdentityAliCloudAuth),
+          db.ref("id").as("awsId").withSchema(TableName.IdentityAwsAuth),
+          db.ref("id").as("kubernetesId").withSchema(TableName.IdentityKubernetesAuth),
+          db.ref("id").as("ociId").withSchema(TableName.IdentityOciAuth),
+          db.ref("id").as("oidcId").withSchema(TableName.IdentityOidcAuth),
+          db.ref("id").as("azureId").withSchema(TableName.IdentityAzureAuth),
+          db.ref("id").as("tokenId").withSchema(TableName.IdentityTokenAuth),
+          db.ref("id").as("jwtId").withSchema(TableName.IdentityJwtAuth),
+          db.ref("id").as("ldapId").withSchema(TableName.IdentityLdapAuth),
+          db.ref("id").as("tlsCertId").withSchema(TableName.IdentityTlsCertAuth),
+          db.ref("id").as("spiffeId").withSchema(TableName.IdentitySpiffeAuth)
         );
 
       const data = sqlNestRelationships({
@@ -324,7 +370,20 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
             identityHasDeleteProtection,
             identityName,
             identityProjectId,
-            identityOrgId
+            identityOrgId,
+            uaId,
+            gcpId,
+            alicloudId,
+            awsId,
+            kubernetesId,
+            ociId,
+            oidcId,
+            azureId,
+            tokenId,
+            jwtId,
+            ldapId,
+            tlsCertId,
+            spiffeId
           } = el;
           return {
             ...MembershipsSchema.parse(el),
@@ -334,7 +393,22 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
               id: actorIdentityId,
               hasDeleteProtection: identityHasDeleteProtection,
               orgId: identityOrgId,
-              projectId: identityProjectId
+              projectId: identityProjectId,
+              authMethods: buildAuthMethods({
+                uaId,
+                gcpId,
+                alicloudId,
+                awsId,
+                kubernetesId,
+                ociId,
+                oidcId,
+                azureId,
+                tokenId,
+                jwtId,
+                ldapId,
+                tlsCertId,
+                spiffeId
+              })
             }
           };
         },
@@ -344,6 +418,7 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
             label: "roles" as const,
             mapper: ({
               roleSlug,
+              roleName,
               membershipRoleId,
               membershipRole,
               membershipRoleIsTemporary,
@@ -356,6 +431,7 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
             }) => ({
               id: membershipRoleId,
               role: membershipRole,
+              customRoleName: roleName,
               customRoleSlug: roleSlug,
               temporaryRange: membershipRoleTemporaryRange,
               temporaryMode: membershipRoleTemporaryMode,
@@ -368,7 +444,7 @@ export const membershipIdentityDALFactory = (db: TDbClient) => {
           }
         ]
       });
-      return { data, totalCount: Number((data?.[0] as unknown as { total: number })?.total ?? 0) };
+      return { data, totalCount: Number((countQuery?.[0] as unknown as { total: number })?.total ?? 0) };
     } catch (error) {
       throw new DatabaseError({ error, name: "MembershipfindIdentity" });
     }

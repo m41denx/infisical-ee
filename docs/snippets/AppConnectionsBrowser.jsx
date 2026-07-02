@@ -6,6 +6,7 @@ export const AppConnectionsBrowser = () => {
 
   const categories = [
     "All",
+    "AI & LLM",
     "Cloud Providers",
     "Databases",
     "CI/CD",
@@ -17,6 +18,7 @@ export const AppConnectionsBrowser = () => {
     "DevOps Tools",
     "Security",
     "Networking & DNS",
+    "SaaS",
   ];
 
   const connections = [
@@ -67,6 +69,13 @@ export const AppConnectionsBrowser = () => {
       description:
         "Learn how to connect your Azure ADCS to pull secrets from Infisical.",
       category: "Cloud Providers",
+    },
+    {
+      name: "SSH",
+      slug: "ssh",
+      path: "/integrations/app-connections/ssh",
+      description: "Learn how to connect your machine using SSH.",
+      category: "Networking & DNS",
     },
     {
       name: "GCP",
@@ -139,6 +148,14 @@ export const AppConnectionsBrowser = () => {
       description:
         "Learn how to connect your Heroku application to pull secrets from Infisical.",
       category: "Hosting",
+    },
+    {
+      name: "DBT",
+      slug: "dbt",
+      path: "/integrations/app-connections/dbt",
+      description:
+        "Learn how to connect your DBT application to pull secrets from Infisical.",
+      category: "Data Analytics",
     },
     {
       name: "DigitalOcean",
@@ -221,6 +238,14 @@ export const AppConnectionsBrowser = () => {
       category: "Cloud Providers",
     },
     {
+      name: "CircleCI",
+      slug: "circleci",
+      path: "/integrations/app-connections/circleci",
+      description:
+        "Learn how to connect your CircleCI application to pull secrets from Infisical.",
+      category: "CI/CD",
+    },
+    {
       name: "Databricks",
       slug: "databricks",
       path: "/integrations/app-connections/databricks",
@@ -233,6 +258,13 @@ export const AppConnectionsBrowser = () => {
       slug: "dns-made-easy",
       path: "/integrations/app-connections/dns-made-easy",
       description: "Learn how to connect Infisical to DNS Made Easy.",
+      category: "Networking & DNS",
+    },
+    {
+      name: "Azure DNS",
+      slug: "azure-dns",
+      path: "/integrations/app-connections/azure-dns",
+      description: "Learn how to connect Infisical to Azure DNS for ACME DNS validation.",
       category: "Networking & DNS",
     },
     {
@@ -339,6 +371,22 @@ export const AppConnectionsBrowser = () => {
       category: "Identity & Auth",
     },
     {
+      name: "Salesforce",
+      slug: "salesforce",
+      path: "/integrations/app-connections/salesforce",
+      description:
+        "Learn how to connect your Salesforce to pull secrets from Infisical.",
+      category: "SaaS",
+    },
+    {
+      name: "OpenRouter",
+      slug: "openrouter",
+      path: "/integrations/app-connections/openrouter",
+      description:
+        "Learn how to connect OpenRouter (unified LLM router) to manage and rotate API keys with Infisical.",
+      category: "AI & LLM",
+    },
+    {
       name: "Laravel Forge",
       slug: "laravel-forge",
       path: "/integrations/app-connections/laravel-forge",
@@ -361,6 +409,179 @@ export const AppConnectionsBrowser = () => {
       description:
         "Learn how to connect your Northflank projects to pull secrets from Infisical.",
       category: "Hosting",
+    },
+    {
+      name: "Ona",
+      slug: "ona",
+      path: "/integrations/app-connections/ona",
+      description:
+        "Learn how to connect your Ona (Gitpod) workspaces to pull secrets from Infisical.",
+      category: "Hosting",
+    },
+    {
+      name: "MongoDB",
+      slug: "mongodb",
+      path: "/integrations/app-connections/mongodb",
+      description: "Learn how to connect your MongoDB to pull secrets from Infisical.",
+      category: "Databases"
+    },
+    {
+      name: "Octopus Deploy",
+      slug: "octopus-deploy",
+      path: "/integrations/app-connections/octopus-deploy",
+      description: "Learn how to connect your Octopus Deploy to pull secrets from Infisical.",
+      category: "DevOps Tools",
+    },
+    {
+      name: "SMB",
+      slug: "smb",
+      path: "/integrations/app-connections/smb",
+      description: "Learn how to connect to Windows servers via SMB.",
+      category: "Networking & DNS",
+    },
+    {
+      name: "Azure Entra ID",
+      slug: "azure-entra-id",
+      path: "/integrations/app-connections/azure-entra-id",
+      description:
+        "Learn how to connect your Azure Entra ID to manage SCIM tokens with Infisical.",
+      category: "Identity & Auth",
+    },
+    {
+      name: "Infisical",
+      slug: "external-infisical",
+      path: "/integrations/app-connections/external-infisical",
+      description:
+        "Learn how to connect a remote Infisical instance to sync secrets between Infisical projects.",
+      category: "Security",
+    },
+    {
+      name: "Doppler",
+      slug: "doppler",
+      path: "/integrations/app-connections/doppler",
+      description:
+        "Learn how to connect Doppler for migrating data from Doppler to Infisical.",
+      category: "DevOps Tools",
+    }, 
+    {
+      name: "OVH",
+      slug: "ovh",
+      path: "/integrations/app-connections/ovh",
+      description:
+        "Learn how to connect OVH Cloud to pull secrets from OVH Secret Manager to Infisical.",
+      category: "Cloud Providers",
+    },
+    {
+      name: "Travis CI",
+      slug: "travis-ci",
+      path: "/integrations/app-connections/travis-ci",
+      description:
+        "Learn how to connect Travis CI to pull secrets from Infisical.",
+      category: "CI/CD",
+    },
+    {
+      name: "Snowflake",
+      slug: "snowflake",
+      path: "/integrations/app-connections/snowflake",
+      description:
+        "Learn how to connect Snowflake to pull secrets from Infisical.",
+      category: "Databases",
+    },
+    {
+      name: "Datadog",
+      slug: "datadog",
+      path: "/integrations/app-connections/datadog",
+      description:
+        "Learn how to connect Datadog to pull secrets from Infisical.",
+      category: "Monitoring",
+    },
+    {
+      name: "Convex",
+      slug: "convex",
+      path: "/integrations/app-connections/convex",
+      description:
+        "Learn how to connect Convex to manage and rotate access keys with Infisical.",
+      category: "SaaS",
+    },
+    {
+      name: "Trigger.dev",
+      slug: "trigger-dev",
+      path: "/integrations/app-connections/trigger-dev",
+      description:
+        "Learn how to connect your Trigger.dev account to sync secrets from Infisical.",
+      category: "DevOps Tools",
+    },
+    {
+      name: "Anthropic",
+      slug: "anthropic",
+      path: "/integrations/app-connections/anthropic",
+      description:
+        "Learn how to connect Anthropic to manage and rotate API keys with Infisical.",
+      category: "AI & LLM",
+    },
+    {
+      name: "Devin",
+      slug: "devin",
+      path: "/integrations/app-connections/devin",
+      description:
+        "Learn how to connect Devin to manage and rotate API keys with Infisical.",
+      category: "AI & LLM",
+    },
+    {
+      name: "DigiCert",
+      slug: "digicert",
+      path: "/integrations/app-connections/digicert",
+      description:
+        "Learn how to connect DigiCert to issue and manage certificates with Infisical.",
+      category: "Security",
+    },
+    {
+      name: "Venafi",
+      slug: "venafi",
+      path: "/integrations/app-connections/venafi",
+      description:
+        "Learn how to connect Venafi TLS Protect Cloud to manage certificates with Infisical.",
+      category: "Security",
+    },
+    {
+      name: "Venafi TPP",
+      slug: "venafi-tpp",
+      path: "/integrations/app-connections/venafi-tpp",
+      description:
+        "Learn how to connect Venafi Trust Protection Platform (TPP) to manage certificates with Infisical.",
+      category: "Security",
+    },
+    {
+      name: "F5 BIG-IP",
+      slug: "f5-big-ip",
+      path: "/integrations/app-connections/f5-big-ip",
+      description:
+        "Learn how to connect F5 BIG-IP to deploy and manage certificates with Infisical.",
+      category: "Networking & DNS",
+    },
+    {
+      name: "NetScaler",
+      slug: "netscaler",
+      path: "/integrations/app-connections/netscaler",
+      description:
+        "Learn how to connect NetScaler to deploy and manage certificates with Infisical.",
+      category: "Networking & DNS",
+    },
+    {
+      name: "GoDaddy",
+      slug: "godaddy",
+      path: "/integrations/app-connections/godaddy",
+      description:
+        "Learn how to connect GoDaddy to Infisical for ACME DNS validation.",
+      category: "Networking & DNS",
+    },
+    {
+      name: "Qovery",
+      slug: "qovery",
+      path: "/integrations/app-connections/qovery",
+      description:
+        "Learn how to connect Qovery to pull secrets from Infisical.",
+      category: "DevOps Tools",
     },
   ].sort(function (a, b) {
     return a.name.toLowerCase().localeCompare(b.name.toLowerCase());

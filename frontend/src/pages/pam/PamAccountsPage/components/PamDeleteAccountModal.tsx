@@ -6,23 +6,20 @@ type Props = {
   account?: TPamAccount;
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
+  onDeleted?: () => void;
 };
 
-export const PamDeleteAccountModal = ({ isOpen, onOpenChange, account }: Props) => {
+export const PamDeleteAccountModal = ({ isOpen, onOpenChange, account, onDeleted }: Props) => {
   const deletePamAccount = useDeletePamAccount();
 
-  if (!account) return null;
+  if (!account || !account.parentType) return null;
 
-  const {
-    id: accountId,
-    name,
-    resource: { resourceType }
-  } = account;
+  const { id: accountId, name, parentType } = account;
 
   const handleDelete = async () => {
     await deletePamAccount.mutateAsync({
       accountId,
-      resourceType
+      parentType
     });
 
     createNotification({
@@ -31,6 +28,7 @@ export const PamDeleteAccountModal = ({ isOpen, onOpenChange, account }: Props) 
     });
 
     onOpenChange(false);
+    if (onDeleted) onDeleted();
   };
 
   return (

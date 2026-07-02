@@ -1,23 +1,35 @@
-import { faCheck } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { CheckCircleIcon } from "lucide-react";
+
+import { Alert, AlertDescription, AlertTitle } from "@app/components/v3";
+
+import { BrandingTheme } from "../../ViewSharedSecretByIDPage/ViewSharedSecretByIDPage";
 
 type Props = {
+  brandingTheme?: BrandingTheme;
   requesterUsername: string;
 };
 
-export const SecretRequestSuccessContainer = ({ requesterUsername }: Props) => {
+export const SecretRequestSuccessContainer = ({ brandingTheme, requesterUsername }: Props) => {
+  const panelStyle = brandingTheme
+    ? ({
+        backgroundColor: brandingTheme.panelBg,
+        color: brandingTheme.textColor,
+        borderColor: brandingTheme.panelBorder
+      } as React.CSSProperties)
+    : undefined;
+
   return (
-    <div className="rounded-lg border border-mineshaft-600 bg-mineshaft-800 p-8">
-      <div className="text-center">
-        <div className="mx-auto w-min rounded-md border border-mineshaft-800 bg-mineshaft-600 p-3">
-          <FontAwesomeIcon icon={faCheck} size="2x" className="text-primary-500" />
-        </div>
-        <p className="text-md mt-2 font-medium">Secret Shared</p>
-        <p className="mt-2 text-sm text-mineshaft-300">
-          <strong>{requesterUsername}</strong> has now been notified of your shared secret, and will
-          be able to access it shortly.
-        </p>
-      </div>
-    </div>
+    <Alert variant={brandingTheme ? "default" : "success"} style={panelStyle}>
+      <CheckCircleIcon
+        style={brandingTheme ? { color: brandingTheme.textMutedColor } : undefined}
+      />
+      <AlertTitle style={brandingTheme ? { color: brandingTheme.textColor } : undefined}>
+        Secret Shared
+      </AlertTitle>
+      <AlertDescription style={brandingTheme ? { color: brandingTheme.textMutedColor } : undefined}>
+        {requesterUsername} has now been notified of your shared secret, and will be able to access
+        it shortly.
+      </AlertDescription>
+    </Alert>
   );
 };

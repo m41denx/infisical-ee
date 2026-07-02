@@ -3,6 +3,7 @@ import { TProjectPermission } from "@app/lib/types";
 export type TLoginGcpAuthDTO = {
   identityId: string;
   jwt: string;
+  organizationSlug?: string;
 };
 
 export type TAttachGcpAuthDTO = {

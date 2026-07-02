@@ -15,7 +15,6 @@ export const MembershipsSchema = z.object({
   actorGroupId: z.string().uuid().nullable().optional(),
   scopeOrgId: z.string().uuid(),
   scopeProjectId: z.string().nullable().optional(),
-  scopeNamespaceId: z.string().uuid().nullable().optional(),
   isActive: z.boolean().default(true),
   status: z.string().nullable().optional(),
   inviteEmail: z.string().nullable().optional(),
@@ -24,7 +23,9 @@ export const MembershipsSchema = z.object({
   lastLoginTime: z.date().nullable().optional(),
   projectFavorites: z.string().array().nullable().optional(),
   createdAt: z.date(),
-  updatedAt: z.date()
+  updatedAt: z.date(),
+  scopeResourceType: z.string().nullable().optional(),
+  scopeResourceId: z.string().nullable().optional()
 });
 
 export type TMemberships = z.infer<typeof MembershipsSchema>;

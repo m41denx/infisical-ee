@@ -50,9 +50,11 @@ const baseSecretScanningDataSourceQuery = ({
       db.ref("description").withSchema(TableName.AppConnection).as("connectionDescription"),
       db.ref("version").withSchema(TableName.AppConnection).as("connectionVersion"),
       db.ref("gatewayId").withSchema(TableName.AppConnection).as("connectionGatewayId"),
+      db.ref("gatewayPoolId").withSchema(TableName.AppConnection).as("connectionGatewayPoolId"),
       db.ref("projectId").withSchema(TableName.AppConnection).as("connectionProjectId"),
       db.ref("createdAt").withSchema(TableName.AppConnection).as("connectionCreatedAt"),
       db.ref("updatedAt").withSchema(TableName.AppConnection).as("connectionUpdatedAt"),
+      db.ref("isAutoRotationEnabled").withSchema(TableName.AppConnection).as("connectionIsAutoRotationEnabled"),
       db
         .ref("isPlatformManagedCredentials")
         .withSchema(TableName.AppConnection)
@@ -77,6 +79,7 @@ const expandSecretScanningDataSource = <
     connectionName,
     connectionId,
     connectionOrgId,
+    connectionIsAutoRotationEnabled,
     connectionEncryptedCredentials,
     connectionMethod,
     connectionDescription,
@@ -85,6 +88,7 @@ const expandSecretScanningDataSource = <
     connectionVersion,
     connectionIsPlatformManagedCredentials,
     connectionGatewayId,
+    connectionGatewayPoolId,
     connectionProjectId,
     ...el
   } = dataSource;
@@ -104,8 +108,10 @@ const expandSecretScanningDataSource = <
           createdAt: connectionCreatedAt,
           updatedAt: connectionUpdatedAt,
           version: connectionVersion,
+          isAutoRotationEnabled: connectionIsAutoRotationEnabled,
           isPlatformManagedCredentials: connectionIsPlatformManagedCredentials,
           gatewayId: connectionGatewayId,
+          gatewayPoolId: connectionGatewayPoolId,
           projectId: connectionProjectId
         }
       : undefined

@@ -1,5 +1,6 @@
 import { AppConnection } from "../enums";
 import { TOnePassConnection } from "./1password-connection";
+import { TAnthropicConnection } from "./anthropic-connection";
 import { TAppConnectionOption } from "./app-options";
 import { TAuth0Connection } from "./auth0-connection";
 import { TAwsConnection } from "./aws-connection";
@@ -7,39 +8,67 @@ import { TAzureADCSConnection } from "./azure-adcs-connection";
 import { TAzureAppConfigurationConnection } from "./azure-app-configuration-connection";
 import { TAzureClientSecretsConnection } from "./azure-client-secrets-connection";
 import { TAzureDevOpsConnection } from "./azure-devops-connection";
+import { TAzureDNSConnection } from "./azure-dns-connection";
+import { TAzureEntraIdConnection } from "./azure-entra-id-connection";
 import { TAzureKeyVaultConnection } from "./azure-key-vault-connection";
 import { TBitbucketConnection } from "./bitbucket-connection";
 import { TCamundaConnection } from "./camunda-connection";
 import { TChecklyConnection } from "./checkly-connection";
 import { TChefConnection } from "./chef-connection";
+import { TCircleCIConnection } from "./circleci-connection";
+import { TCloud66Connection } from "./cloud-66-connection";
 import { TCloudflareConnection } from "./cloudflare-connection";
+import { TConvexConnection } from "./convex-connection";
 import { TDatabricksConnection } from "./databricks-connection";
+import { TDatadogConnection } from "./datadog-connection";
+import { TDbtConnection } from "./dbt-connection";
+import { TDevinConnection } from "./devin-connection";
+import { TDigiCertConnection } from "./digicert-connection";
 import { TDigitalOceanConnection } from "./digital-ocean";
 import { TDNSMadeEasyConnection } from "./dns-made-easy-connection";
+import { TDopplerConnection } from "./doppler-connection";
+import { TExternalInfisicalConnection } from "./external-infisical-connection";
+import { TF5BigIpConnection } from "./f5-big-ip-connection";
 import { TFlyioConnection } from "./flyio-connection";
 import { TGcpConnection } from "./gcp-connection";
 import { TGitHubConnection } from "./github-connection";
 import { TGitHubRadarConnection } from "./github-radar-connection";
 import { TGitLabConnection } from "./gitlab-connection";
+import { TGoDaddyConnection } from "./godaddy-connection";
 import { THCVaultConnection } from "./hc-vault-connection";
 import { THerokuConnection } from "./heroku-connection";
 import { THumanitecConnection } from "./humanitec-connection";
 import { TLaravelForgeConnection } from "./laravel-forge-connection";
 import { TLdapConnection } from "./ldap-connection";
+import { TMongoDBConnection } from "./mongodb-connection";
 import { TMsSqlConnection } from "./mssql-connection";
 import { TMySqlConnection } from "./mysql-connection";
 import { TNetlifyConnection } from "./netlify-connection";
+import { TNetScalerConnection } from "./netscaler-connection";
 import { TNorthflankConnection } from "./northflank-connection";
 import { TOCIConnection } from "./oci-connection";
+import { TOctopusDeployConnection } from "./octopus-deploy-connection";
 import { TOktaConnection } from "./okta-connection";
+import { TOnaConnection } from "./ona-connection";
+import { TOpenRouterConnection } from "./open-router-connection";
 import { TOracleDBConnection } from "./oracledb-connection";
+import { TOvhConnection } from "./ovh-connection";
 import { TPostgresConnection } from "./postgres-connection";
+import { TQoveryConnection } from "./qovery-connection";
 import { TRailwayConnection } from "./railway-connection";
 import { TRedisConnection } from "./redis-connection";
 import { TRenderConnection } from "./render-connection";
+import { TSalesforceConnection } from "./salesforce-connection";
+import { TSmbConnection } from "./smb-connection";
+import { TSnowflakeConnection } from "./snowflake-connection";
+import { TSshConnection } from "./ssh-connection";
 import { TSupabaseConnection } from "./supabase-connection";
 import { TTeamCityConnection } from "./teamcity-connection";
 import { TTerraformCloudConnection } from "./terraform-cloud-connection";
+import { TTravisCIConnection } from "./travis-ci-connection";
+import { TTriggerDevConnection } from "./trigger-dev-connection";
+import { TVenafiConnection } from "./venafi-connection";
+import { TVenafiTppConnection } from "./venafi-tpp-connection";
 import { TVercelConnection } from "./vercel-connection";
 import { TWindmillConnection } from "./windmill-connection";
 import { TZabbixConnection } from "./zabbix-connection";
@@ -51,14 +80,26 @@ export * from "./azure-adcs-connection";
 export * from "./azure-app-configuration-connection";
 export * from "./azure-client-secrets-connection";
 export * from "./azure-devops-connection";
+export * from "./azure-dns-connection";
+export * from "./azure-entra-id-connection";
 export * from "./azure-key-vault-connection";
 export * from "./bitbucket-connection";
 export * from "./camunda-connection";
 export * from "./checkly-connection";
 export * from "./chef-connection";
+export * from "./circleci-connection";
+export * from "./cloud-66-connection";
 export * from "./cloudflare-connection";
+export * from "./convex-connection";
 export * from "./databricks-connection";
+export * from "./datadog-connection";
+export * from "./dbt-connection";
+export * from "./devin-connection";
+export * from "./digicert-connection";
 export * from "./dns-made-easy-connection";
+export * from "./doppler-connection";
+export * from "./external-infisical-connection";
+export * from "./f5-big-ip-connection";
 export * from "./flyio-connection";
 export * from "./gcp-connection";
 export * from "./github-connection";
@@ -69,20 +110,35 @@ export * from "./heroku-connection";
 export * from "./humanitec-connection";
 export * from "./laravel-forge-connection";
 export * from "./ldap-connection";
+export * from "./mongodb-connection";
 export * from "./mssql-connection";
 export * from "./mysql-connection";
 export * from "./netlify-connection";
+export * from "./netscaler-connection";
 export * from "./northflank-connection";
 export * from "./oci-connection";
+export * from "./octopus-deploy-connection";
 export * from "./okta-connection";
+export * from "./ona-connection";
+export * from "./open-router-connection";
 export * from "./oracledb-connection";
+export * from "./ovh-connection";
 export * from "./postgres-connection";
+export * from "./qovery-connection";
 export * from "./railway-connection";
 export * from "./redis-connection";
 export * from "./render-connection";
+export * from "./salesforce-connection";
+export * from "./smb-connection";
+export * from "./snowflake-connection";
+export * from "./ssh-connection";
 export * from "./supabase-connection";
 export * from "./teamcity-connection";
 export * from "./terraform-cloud-connection";
+export * from "./travis-ci-connection";
+export * from "./trigger-dev-connection";
+export * from "./venafi-connection";
+export * from "./venafi-tpp-connection";
 export * from "./vercel-connection";
 export * from "./windmill-connection";
 export * from "./zabbix-connection";
@@ -115,6 +171,7 @@ export type TAppConnection =
   | TOnePassConnection
   | THerokuConnection
   | TLaravelForgeConnection
+  | TOctopusDeployConnection
   | TRenderConnection
   | TFlyioConnection
   | TGitLabConnection
@@ -129,8 +186,36 @@ export type TAppConnection =
   | TNorthflankConnection
   | TOktaConnection
   | TRedisConnection
+  | TMongoDBConnection
   | TChefConnection
-  | TDNSMadeEasyConnection;
+  | TDNSMadeEasyConnection
+  | TAzureDNSConnection
+  | TSshConnection
+  | TDbtConnection
+  | TSmbConnection
+  | TOpenRouterConnection
+  | TAnthropicConnection
+  | TCircleCIConnection
+  | TCloud66Connection
+  | TAzureEntraIdConnection
+  | TVenafiConnection
+  | TVenafiTppConnection
+  | TExternalInfisicalConnection
+  | TNetScalerConnection
+  | TDopplerConnection
+  | TOvhConnection
+  | TDevinConnection
+  | TOnaConnection
+  | TDigiCertConnection
+  | TGoDaddyConnection
+  | TTravisCIConnection
+  | TSalesforceConnection
+  | TSnowflakeConnection
+  | TDatadogConnection
+  | TF5BigIpConnection
+  | TConvexConnection
+  | TTriggerDevConnection
+  | TQoveryConnection;
 
 export type TAvailableAppConnection = Pick<TAppConnection, "name" | "id" | "projectId">;
 
@@ -150,22 +235,42 @@ export type TCreateAppConnectionDTO = Pick<
   | "description"
   | "isPlatformManagedCredentials"
   | "gatewayId"
+  | "gatewayPoolId"
   | "projectId"
->;
+> & {
+  configuration?: Record<string, unknown>;
+};
 
 export type TUpdateAppConnectionDTO = Partial<
   Pick<
     TAppConnection,
-    "name" | "credentials" | "description" | "isPlatformManagedCredentials" | "gatewayId"
+    | "name"
+    | "credentials"
+    | "description"
+    | "isPlatformManagedCredentials"
+    | "gatewayId"
+    | "gatewayPoolId"
   >
 > & {
   connectionId: string;
   app: AppConnection;
+  isAutoRotationEnabled?: boolean;
+  rotation?: {
+    rotationInterval?: number;
+    rotateAtUtc?: { hours: number; minutes: number };
+  };
+  configuration?: Record<string, unknown>;
 };
 
 export type TDeleteAppConnectionDTO = {
   app: AppConnection;
   connectionId: string;
+};
+
+export type TRotateAppConnectionCredentialsDTO = {
+  app: AppConnection;
+  connectionId: string;
+  projectId?: string;
 };
 
 // scott: we will need this once we have individual app connection page

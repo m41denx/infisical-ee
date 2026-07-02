@@ -22,7 +22,10 @@ export const AppConnectionsSchema = z.object({
   updatedAt: z.date(),
   isPlatformManagedCredentials: z.boolean().default(false).nullable().optional(),
   gatewayId: z.string().uuid().nullable().optional(),
-  projectId: z.string().nullable().optional()
+  projectId: z.string().nullable().optional(),
+  isAutoRotationEnabled: z.boolean().default(false),
+  gatewayPoolId: z.string().uuid().nullable().optional(),
+  encryptedConfiguration: zodBuffer.nullable().optional()
 });
 
 export type TAppConnections = z.infer<typeof AppConnectionsSchema>;

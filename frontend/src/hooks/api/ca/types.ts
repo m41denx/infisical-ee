@@ -1,5 +1,12 @@
 import { CertExtendedKeyUsage, CertKeyAlgorithm, CertKeyUsage } from "../certificates/enums";
-import { AcmeDnsProvider, CaRenewalType, CaStatus, CaType, InternalCaType } from "./enums";
+import {
+  AcmeDnsProvider,
+  CaRenewalType,
+  CaStatus,
+  CaType,
+  GoDaddyProductType,
+  InternalCaType
+} from "./enums";
 
 export type TAcmeCertificateAuthority = {
   id: string;
@@ -17,7 +24,7 @@ export type TAcmeCertificateAuthority = {
     directoryUrl: string;
     accountEmail: string;
     eabKid?: string;
-    eabHmacKey?: string;
+    dnsResolver?: string;
   };
 };
 
@@ -31,6 +38,90 @@ export type TAzureAdCsCertificateAuthority = {
   configuration: {
     azureAdcsConnectionId: string;
     templateName: string;
+  };
+};
+
+export type TAwsPcaCertificateAuthority = {
+  id: string;
+  projectId: string;
+  type: CaType.AWS_PCA;
+  status: CaStatus;
+  name: string;
+  enableDirectIssuance: boolean;
+  configuration: {
+    appConnectionId: string;
+    certificateAuthorityArn: string;
+    region: string;
+  };
+};
+
+export enum DigiCertCaPurpose {
+  Ssl = "ssl",
+  CodeSigning = "code_signing"
+}
+
+export type TDigiCertVerifiedContact = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  jobTitle: string;
+  telephone: string;
+};
+
+export type TDigiCertCertificateAuthority = {
+  id: string;
+  projectId: string;
+  type: CaType.DIGICERT;
+  status: CaStatus;
+  name: string;
+  enableDirectIssuance: boolean;
+  configuration: {
+    appConnectionId: string;
+    organizationId: number;
+    productNameId: string;
+    purpose?: DigiCertCaPurpose;
+    verifiedContact?: TDigiCertVerifiedContact;
+  };
+};
+
+export type TGoDaddyCertificateAuthority = {
+  id: string;
+  projectId: string;
+  type: CaType.GODADDY;
+  status: CaStatus;
+  name: string;
+  enableDirectIssuance: boolean;
+  configuration: {
+    appConnectionId: string;
+    productType: GoDaddyProductType;
+  };
+};
+
+export type TAwsAcmPublicCaCertificateAuthority = {
+  id: string;
+  projectId: string;
+  type: CaType.AWS_ACM_PUBLIC_CA;
+  status: CaStatus;
+  name: string;
+  enableDirectIssuance: boolean;
+  configuration: {
+    appConnectionId: string;
+    dnsAppConnectionId: string;
+    hostedZoneId: string;
+    region: string;
+  };
+};
+
+export type TVenafiTppCertificateAuthority = {
+  id: string;
+  projectId: string;
+  type: CaType.VENAFI_TPP;
+  status: CaStatus;
+  name: string;
+  enableDirectIssuance: boolean;
+  configuration: {
+    appConnectionId: string;
+    policyDN: string;
   };
 };
 
@@ -58,26 +149,37 @@ export type TInternalCertificateAuthority = {
     parentCaId?: string;
     serialNumber?: string;
     activeCaCertId?: string;
+    crlDistributionPointUrls?: string[];
+    disableManagedCrlDistributionPointUrl?: boolean;
   };
 };
+
+export const MAX_INTERNAL_CA_DISTRIBUTION_POINT_URLS = 4;
+export const MAX_DISTRIBUTION_POINT_URL_LENGTH = 2048;
 
 export type TUnifiedCertificateAuthority =
   | TAcmeCertificateAuthority
   | TAzureAdCsCertificateAuthority
+  | TAwsPcaCertificateAuthority
+  | TDigiCertCertificateAuthority
+  | TGoDaddyCertificateAuthority
+  | TAwsAcmPublicCaCertificateAuthority
+  | TVenafiTppCertificateAuthority
   | TInternalCertificateAuthority;
 
 export type TCreateCertificateAuthorityDTO = Omit<
   TUnifiedCertificateAuthority,
-  "id" | "enableDirectIssuance"
+  "id" | "enableDirectIssuance" | "projectId"
 >;
-export type TUpdateCertificateAuthorityDTO = Partial<TUnifiedCertificateAuthority> & {
+export type TUpdateCertificateAuthorityDTO = Partial<
+  Omit<TUnifiedCertificateAuthority, "projectId">
+> & {
   id: string;
   type: CaType;
 };
 
 export type TDeleteCertificateAuthorityDTO = {
   id: string;
-  projectId: string;
   type: CaType;
 };
 
@@ -106,14 +208,12 @@ export type TCertificateAuthority = {
 };
 
 export type TUpdateCaDTO = {
-  projectSlug: string;
   caId: string;
   status?: CaStatus;
   requireTemplateForIssuance?: boolean;
 };
 
 export type TDeleteCaDTO = {
-  projectSlug: string;
   caId: string;
 };
 
@@ -140,7 +240,6 @@ export type TAzureAdCsTemplate = {
 
 export type TImportCaCertificateDTO = {
   caId: string;
-  projectSlug: string;
   certificate: string;
   certificateChain: string;
 };
@@ -151,7 +250,6 @@ export type TImportCaCertificateResponse = {
 };
 
 export type TCreateCertificateDTO = {
-  projectSlug: string;
   caId?: string;
   certificateTemplateId?: string;
   pkiCollectionId?: string;
@@ -174,13 +272,12 @@ export type TCreateCertificateResponse = {
 };
 
 export type TCreateCertificateV3DTO = {
-  projectSlug: string;
   profileId: string;
   pkiCollectionId?: string;
   friendlyName?: string;
   commonName?: string;
   organization?: string;
-  organizationUnit?: string;
+  organizationalUnit?: string;
   locality?: string;
   state?: string;
   country?: string;
@@ -204,7 +301,6 @@ export type TCreateCertificateV3Response = TCreateCertificateResponse & {
 };
 
 export type TOrderCertificateDTO = {
-  projectSlug: string;
   profileId: string;
   subjectAlternativeNames: Array<{
     type: "dns" | "ip";
@@ -252,7 +348,6 @@ export type TOrderCertificateResponse = {
 };
 
 export type TRenewCaDTO = {
-  projectSlug: string;
   caId: string;
   type: CaRenewalType;
   notAfter: string;

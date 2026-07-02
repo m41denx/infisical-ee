@@ -1,11 +1,15 @@
+import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
+import { faQuestionCircle } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
 import ms from "ms";
 import { z } from "zod";
 
 import { TtlFormLabel } from "@app/components/features";
+import { createNotification } from "@app/components/notifications";
 import { OrgPermissionCan } from "@app/components/permissions";
+import { ValidationRuleOverrideNotice } from "@app/components/secret-validation/ValidationRuleOverrideNotice";
 import {
   Accordion,
   AccordionContent,
@@ -22,16 +26,28 @@ import {
   TextArea,
   Tooltip
 } from "@app/components/v2";
+import { GatewayPicker } from "@app/components/v3/platform/GatewayPicker";
+import { ProjectPermissionSub, useProject } from "@app/context";
 import {
   OrgGatewayPermissionActions,
   OrgPermissionSubjects
 } from "@app/context/OrgPermissionContext/types";
-import { gatewaysQueryKeys, useCreateDynamicSecret } from "@app/hooks/api";
+import { useCanUseProjectAppConnectionImport } from "@app/hooks";
+import { useCreateDynamicSecret } from "@app/hooks/api";
+import { useListAvailableAppConnections } from "@app/hooks/api/appConnections";
+import { AppConnection } from "@app/hooks/api/appConnections/enums";
 import { DynamicSecretProviders, SqlProviders } from "@app/hooks/api/dynamicSecret/types";
+import { VaultDatabaseRole } from "@app/hooks/api/migration/types";
+import {
+  DynamicSecretRuleProvider,
+  SecretValidationRuleType
+} from "@app/hooks/api/secretValidationRules";
 import { ProjectEnv } from "@app/hooks/api/types";
 import { slugSchema } from "@app/lib/schemas";
 
 import { MetadataForm } from "../../DynamicSecretListView/MetadataForm";
+import { LoadFromVaultBanner } from "./components/LoadFromVaultBanner";
+import { VaultSqlDatabaseImportModal } from "./VaultSqlDatabaseImportModal";
 
 const passwordRequirementsSchema = z
   .object({
@@ -68,7 +84,9 @@ const formSchema = z.object({
     renewStatement: z.string().optional(),
     sslEnabled: z.boolean().optional(),
     ca: z.string().optional(),
-    gatewayId: z.string().optional()
+    sslRejectUnauthorized: z.boolean().default(true),
+    gatewayId: z.string().optional(),
+    gatewayPoolId: z.string().optional()
   }),
   defaultTTL: z.string().superRefine((val, ctx) => {
     const valMs = ms(val);
@@ -170,6 +188,18 @@ export const SqlDatabaseInputForm = ({
   projectSlug,
   isSingleEnvironmentMode
 }: Props) => {
+  const [isVaultImportModalOpen, setIsVaultImportModalOpen] = useState(false);
+
+  const { projectId } = useProject();
+  const canUseAppConnectionImport = useCanUseProjectAppConnectionImport(
+    ProjectPermissionSub.Secrets
+  );
+  const { data: vaultAppConnections = [] } = useListAvailableAppConnections(
+    AppConnection.HCVault,
+    projectId,
+    { enabled: canUseAppConnectionImport }
+  );
+
   const {
     control,
     setValue,
@@ -181,6 +211,7 @@ export const SqlDatabaseInputForm = ({
     defaultValues: {
       provider: {
         ...getSqlStatements(SqlProviders.Postgres),
+        sslRejectUnauthorized: true,
         passwordRequirements: {
           length: 48,
           required: {
@@ -198,8 +229,9 @@ export const SqlDatabaseInputForm = ({
   });
 
   const createDynamicSecret = useCreateDynamicSecret();
-  const { data: gateways, isPending: isGatewaysLoading } = useQuery(gatewaysQueryKeys.list());
   const selectedClient = watch("provider.client");
+  const providerGatewayId = watch("provider.gatewayId");
+  const providerGatewayPoolId = watch("provider.gatewayPoolId");
 
   const handleCreateDynamicSecret = async ({
     name,
@@ -241,10 +273,141 @@ export const SqlDatabaseInputForm = ({
     setValue("provider.passwordRequirements.length", length);
   };
 
+  const handleVaultImport = (role: VaultDatabaseRole) => {
+    try {
+      setValue("name", role.name);
+
+      // Determine the SQL provider from the plugin name
+      const pluginName = role.config.plugin_name?.toLowerCase() || "";
+      let sqlProvider = SqlProviders.Postgres;
+      if (pluginName.includes("mysql")) {
+        sqlProvider = SqlProviders.MySql;
+      } else if (pluginName.includes("oracle")) {
+        sqlProvider = SqlProviders.Oracle;
+      } else if (pluginName.includes("mssql")) {
+        sqlProvider = SqlProviders.MsSQL;
+      }
+      setValue("provider.client", sqlProvider);
+
+      // Parse connection URL to extract host, port, database
+      const connectionUrl = role.config.connection_details.connection_url || "";
+      try {
+        const trimmedUrl = connectionUrl.trim();
+        if (!trimmedUrl) throw new Error("Empty URL");
+
+        const defaultPort = getDefaultPort(sqlProvider);
+
+        const setConnectionDetails = (host: string, port: number | undefined, database: string) => {
+          if (host) setValue("provider.host", host);
+          const parsedPort = port ?? defaultPort;
+          setValue("provider.port", Number.isNaN(parsedPort) ? defaultPort : parsedPort);
+          if (database) setValue("provider.database", database);
+        };
+
+        const parseStandardUrl = (url: URL, dbFromParams?: string) => {
+          if (url.username) {
+            setValue("provider.username", url.username);
+          }
+          const port = url.port ? parseInt(url.port, 10) : undefined;
+          const database = dbFromParams || url.pathname.replace(/^\//, "");
+          setConnectionDetails(url.hostname, port, database);
+        };
+
+        if (sqlProvider === SqlProviders.MySql) {
+          // MySQL format: user:pass@tcp(host:port)/database or standard URL
+          const tcpMatch = trimmedUrl.match(/@tcp\(([^:]+):?(\d+)?\)\/([^?#]+)/);
+          if (tcpMatch) {
+            const port = tcpMatch[2] ? parseInt(tcpMatch[2], 10) : undefined;
+            setConnectionDetails(tcpMatch[1], port, tcpMatch[3]);
+          } else if (trimmedUrl.includes("://")) {
+            parseStandardUrl(new URL(trimmedUrl));
+          }
+        } else if (sqlProvider === SqlProviders.Oracle) {
+          // Oracle format: user/pass@host:port/service_name or user/pass@//host:port/service_name
+          const oracleMatch = trimmedUrl.match(/@(?:\/\/)?([^:/]+):?(\d+)?\/(.+)/);
+          if (oracleMatch) {
+            const port = oracleMatch[2] ? parseInt(oracleMatch[2], 10) : undefined;
+            setConnectionDetails(oracleMatch[1], port, oracleMatch[3]);
+          }
+        } else if (sqlProvider === SqlProviders.MsSQL) {
+          // MSSQL format: sqlserver://user:pass@host:port?database=name
+          const url = new URL(trimmedUrl);
+          const dbParam =
+            url.searchParams.get("database") || url.searchParams.get("databaseName") || "";
+          parseStandardUrl(url, dbParam);
+        } else {
+          // PostgreSQL format: postgresql://user:pass@host:port/database
+          parseStandardUrl(new URL(trimmedUrl));
+        }
+      } catch {
+        createNotification({
+          type: "info",
+          text: "Could not parse connection URL. Host, port, and database fields may need to be filled manually."
+        });
+      }
+
+      if (role.config.connection_details.username) {
+        setValue("provider.username", role.config.connection_details.username);
+      }
+
+      if (role.config.connection_details.tls_ca) {
+        setValue("provider.ca", role.config.connection_details.tls_ca);
+      }
+
+      // Convert {{name}} variable to {{username}}
+      const convertVaultVariables = (statement: string) =>
+        statement.replace(/\{\{name\}\}/g, "{{username}}");
+
+      // Set statements
+      if (role.creation_statements && role.creation_statements.length > 0) {
+        setValue(
+          "provider.creationStatement",
+          role.creation_statements.map(convertVaultVariables).join("\n")
+        );
+      }
+
+      if (role.revocation_statements && role.revocation_statements.length > 0) {
+        setValue(
+          "provider.revocationStatement",
+          role.revocation_statements.map(convertVaultVariables).join("\n")
+        );
+      }
+
+      if (role.renew_statements && role.renew_statements.length > 0) {
+        setValue(
+          "provider.renewStatement",
+          role.renew_statements.map(convertVaultVariables).join("\n")
+        );
+      }
+
+      // Set TTLs
+      if (role.default_ttl) {
+        const defaultTTL = `${role.default_ttl}s`;
+        setValue("defaultTTL", defaultTTL);
+      }
+
+      if (role.max_ttl) {
+        const maxTTL = `${role.max_ttl}s`;
+        setValue("maxTTL", maxTTL);
+      }
+
+      createNotification({
+        type: "info",
+        text: "Configuration loaded successfully from HashiCorp Vault"
+      });
+    } catch {
+      createNotification({
+        type: "error",
+        text: "Failed to load configuration from HashiCorp Vault"
+      });
+    }
+  };
+
   return (
     <div>
       <form onSubmit={handleSubmit(handleCreateDynamicSecret)} autoComplete="off">
         <div>
+          <LoadFromVaultBanner onClick={() => setIsVaultImportModalOpen(true)} />
           <div className="flex items-center space-x-2">
             <div className="grow">
               <Controller
@@ -307,48 +470,30 @@ export const SqlDatabaseInputForm = ({
                 a={OrgPermissionSubjects.Gateway}
               >
                 {(isAllowed) => (
-                  <Controller
-                    control={control}
-                    name="provider.gatewayId"
-                    defaultValue=""
-                    render={({ field: { value, onChange }, fieldState: { error } }) => (
-                      <FormControl
-                        isError={Boolean(error?.message)}
-                        errorText={error?.message}
-                        label="Gateway"
-                      >
-                        <Tooltip
-                          isDisabled={isAllowed}
-                          content="Restricted access. You don't have permission to attach gateways to resources."
-                        >
-                          <div>
-                            <Select
-                              isDisabled={!isAllowed}
-                              value={value}
-                              onValueChange={onChange}
-                              className="w-full border border-mineshaft-500"
-                              dropdownContainerClassName="max-w-none"
-                              isLoading={isGatewaysLoading}
-                              placeholder="Default: Internet Gateway"
-                              position="popper"
-                            >
-                              <SelectItem
-                                value={null as unknown as string}
-                                onClick={() => onChange(undefined)}
-                              >
-                                Internet Gateway
-                              </SelectItem>
-                              {gateways?.map((el) => (
-                                <SelectItem value={el.id} key={el.id}>
-                                  {el.name}
-                                </SelectItem>
-                              ))}
-                            </Select>
-                          </div>
-                        </Tooltip>
-                      </FormControl>
-                    )}
-                  />
+                  <FormControl label="Gateway">
+                    <Tooltip
+                      isDisabled={isAllowed}
+                      content="Restricted access. You don't have permission to attach gateways to resources."
+                    >
+                      <div>
+                        <GatewayPicker
+                          isDisabled={!isAllowed}
+                          value={{
+                            gatewayId: providerGatewayId ?? null,
+                            gatewayPoolId: providerGatewayPoolId ?? null
+                          }}
+                          onChange={({ gatewayId: newGwId, gatewayPoolId: newPoolId }) => {
+                            setValue("provider.gatewayId", newGwId ?? undefined, {
+                              shouldDirty: true
+                            });
+                            setValue("provider.gatewayPoolId", newPoolId ?? undefined, {
+                              shouldDirty: true
+                            });
+                          }}
+                        />
+                      </div>
+                    </Tooltip>
+                  </FormControl>
                 )}
               </OrgPermissionCan>
             </div>
@@ -489,6 +634,37 @@ export const SqlDatabaseInputForm = ({
                     </FormControl>
                   )}
                 />
+                <Controller
+                  name="provider.sslRejectUnauthorized"
+                  control={control}
+                  render={({ field: { value, onChange }, fieldState: { error } }) => (
+                    <FormControl isError={Boolean(error?.message)} errorText={error?.message}>
+                      <Switch
+                        className="bg-mineshaft-400/50 shadow-inner data-[state=checked]:bg-green/80"
+                        id="ssl-reject-unauthorized"
+                        thumbClassName="bg-mineshaft-800"
+                        isChecked={value}
+                        onCheckedChange={onChange}
+                      >
+                        <p className="w-full">
+                          SSL Reject Unauthorized
+                          <Tooltip
+                            className="max-w-md"
+                            content={
+                              <p>
+                                If enabled, the server certificate will be verified against the list
+                                of supplied CAs. Disable this option if you are using a self-signed
+                                certificate.
+                              </p>
+                            }
+                          >
+                            <FontAwesomeIcon icon={faQuestionCircle} size="sm" className="ml-1" />
+                          </Tooltip>
+                        </p>
+                      </Switch>
+                    </FormControl>
+                  )}
+                />
                 <Accordion type="multiple" className="mb-2 w-full bg-mineshaft-700">
                   <AccordionItem value="advanced">
                     <AccordionTrigger>
@@ -581,6 +757,12 @@ export const SqlDatabaseInputForm = ({
                   <AccordionItem value="password-config">
                     <AccordionTrigger>Password Configuration (optional)</AccordionTrigger>
                     <AccordionContent>
+                      <ValidationRuleOverrideNotice
+                        type={SecretValidationRuleType.DynamicSecrets}
+                        provider={DynamicSecretRuleProvider.SqlDatabase}
+                        environmentSlug={watch("environment")?.slug}
+                        secretPath={secretPath}
+                      />
                       <div className="mb-4 text-sm text-mineshaft-300">
                         Set constraints on the generated database password
                       </div>
@@ -767,6 +949,12 @@ export const SqlDatabaseInputForm = ({
           </Button>
         </div>
       </form>
+      <VaultSqlDatabaseImportModal
+        isOpen={isVaultImportModalOpen}
+        onOpenChange={setIsVaultImportModalOpen}
+        appConnections={vaultAppConnections}
+        onImport={handleVaultImport}
+      />
     </div>
   );
 };

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export enum TableName {
   Users = "users",
+  EmailDomains = "email_domains",
   SshHostGroup = "ssh_host_groups",
   SshHostGroupMembership = "ssh_host_group_memberships",
   SshHost = "ssh_hosts",
@@ -21,13 +22,20 @@ export enum TableName {
   CertificateAuthorityCrl = "certificate_authority_crl",
   Certificate = "certificates",
   CertificateBody = "certificate_bodies",
+  CertificateRequests = "certificate_requests",
   CertificateSecret = "certificate_secrets",
   CertificateTemplate = "certificate_templates",
   PkiCertificateTemplateV2 = "pki_certificate_templates_v2",
+  PkiCertificatePolicy = "pki_certificate_policies",
   PkiCertificateProfile = "pki_certificate_profiles",
+  PkiApplication = "pki_applications",
+  PkiApplicationProfile = "pki_application_profiles",
   PkiEstEnrollmentConfig = "pki_est_enrollment_configs",
   PkiApiEnrollmentConfig = "pki_api_enrollment_configs",
   PkiAcmeEnrollmentConfig = "pki_acme_enrollment_configs",
+  PkiScepEnrollmentConfig = "pki_scep_enrollment_configs",
+  PkiScepTransaction = "pki_scep_transactions",
+  PkiScepDynamicChallenge = "pki_scep_dynamic_challenges",
   PkiSubscriber = "pki_subscribers",
   PkiAlert = "pki_alerts",
   PkiAlertsV2 = "pki_alerts_v2",
@@ -41,6 +49,7 @@ export enum TableName {
   GroupProjectMembershipRole = "group_project_membership_roles",
   ExternalGroupOrgRoleMapping = "external_group_org_role_mappings",
   UserGroupMembership = "user_group_membership",
+  IdentityGroupMembership = "identity_group_membership",
   UserAliases = "user_aliases",
   UserEncryptionKey = "user_encryption_keys",
   AuthTokens = "auth_tokens",
@@ -54,7 +63,6 @@ export enum TableName {
   UserAction = "user_actions",
   SuperAdmin = "super_admin",
   RateLimit = "rate_limit",
-  ApiKey = "api_keys",
   ProjectSshConfig = "project_ssh_configs",
   Project = "projects",
   ProjectBot = "project_bots",
@@ -65,9 +73,13 @@ export enum TableName {
   ProjectUserMembershipRole = "project_user_membership_roles",
   ProjectKeys = "project_keys",
   ProjectTemplates = "project_templates",
+  ProjectTemplateUserMembership = "project_template_user_memberships",
+  ProjectTemplateGroupMembership = "project_template_group_memberships",
+  ProjectTemplateIdentityMembership = "project_template_identity_memberships",
   Secret = "secrets",
   SecretReference = "secret_references",
   SecretSharing = "secret_sharing",
+  OrganizationAsset = "organization_assets",
   SecretBlindIndex = "secret_blind_indexes",
   SecretVersion = "secret_versions",
   SecretFolder = "secret_folders",
@@ -83,6 +95,7 @@ export enum TableName {
   Webhook = "webhooks",
   Identity = "identities",
   IdentityAccessToken = "identity_access_tokens",
+  IdentityAccessTokenRevocation = "identity_access_token_revocations",
   IdentityTokenAuth = "identity_token_auths",
   IdentityUniversalAuth = "identity_universal_auths",
   IdentityKubernetesAuth = "identity_kubernetes_auths",
@@ -96,6 +109,7 @@ export enum TableName {
   IdentityJwtAuth = "identity_jwt_auths",
   IdentityLdapAuth = "identity_ldap_auths",
   IdentityTlsCertAuth = "identity_tls_cert_auths",
+  IdentitySpiffeAuth = "identity_spiffe_auths",
   IdentityOrgMembership = "identity_org_memberships",
   IdentityProjectMembership = "identity_project_memberships",
   IdentityProjectMembershipRole = "identity_project_membership_role",
@@ -111,6 +125,7 @@ export enum TableName {
   AccessApprovalRequest = "access_approval_requests",
   AccessApprovalRequestReviewer = "access_approval_requests_reviewers",
   AccessApprovalPolicyEnvironment = "access_approval_policies_environments",
+  ProjectAccessRequest = "project_access_requests",
   SecretApprovalPolicy = "secret_approval_policies",
   SecretApprovalPolicyApprover = "secret_approval_policies_approvers",
   SecretApprovalPolicyBypasser = "secret_approval_policies_bypassers",
@@ -119,14 +134,13 @@ export enum TableName {
   SecretApprovalRequestSecret = "secret_approval_requests_secrets",
   SecretApprovalRequestSecretTag = "secret_approval_request_secret_tags",
   SecretApprovalPolicyEnvironment = "secret_approval_policies_environments",
-  SecretRotation = "secret_rotations",
-  SecretRotationOutput = "secret_rotation_outputs",
   SamlConfig = "saml_configs",
   LdapConfig = "ldap_configs",
   OidcConfig = "oidc_configs",
   LdapGroupMap = "ldap_group_maps",
   AuditLog = "audit_logs",
   AuditLogStream = "audit_log_streams",
+  AuditLogStreamOutbox = "audit_log_stream_outbox",
   GitAppInstallSession = "git_app_install_sessions",
   GitAppOrg = "git_app_org",
   SecretScanningGitRisk = "secret_scanning_git_risks",
@@ -141,6 +155,7 @@ export enum TableName {
   SnapshotSecretV2 = "secret_snapshot_secrets_v2",
   ProjectSplitBackfillIds = "project_split_backfill_ids",
   UserNotifications = "user_notifications",
+  ScimEvents = "scim_events",
   // Gateway
   OrgGatewayConfig = "org_gateway_config",
   Gateway = "gateways",
@@ -150,7 +165,6 @@ export enum TableName {
   JnSecretTag = "secret_tag_junction",
   SecretVersionTag = "secret_version_tag_junction",
   SecretVersionV2Tag = "secret_version_v2_tag_junction",
-  SecretRotationOutputV2 = "secret_rotation_output_v2",
   // KMS Service
   KmsServerRootConfig = "kms_root_config",
   KmsKey = "kms_keys",
@@ -158,12 +172,15 @@ export enum TableName {
   InternalKms = "internal_kms",
   InternalKmsKeyVersion = "internal_kms_key_version",
   TotpConfig = "totp_configs",
+  WebAuthnCredential = "webauthn_credentials",
   // @depreciated
   KmsKeyVersion = "kms_key_versions",
   WorkflowIntegrations = "workflow_integrations",
   SlackIntegrations = "slack_integrations",
   ProjectSlackConfigs = "project_slack_configs",
   AppConnection = "app_connections",
+  AppConnectionCredentialRotation = "app_connection_credential_rotations",
+  HsmConnector = "hsm_connectors",
   SecretSync = "secret_syncs",
   PkiSync = "pki_syncs",
   CertificateSync = "certificate_syncs",
@@ -171,12 +188,15 @@ export enum TableName {
   KmipOrgConfig = "kmip_org_configs",
   KmipOrgServerCertificates = "kmip_org_server_certificates",
   KmipClientCertificates = "kmip_client_certificates",
+  KmipServer = "kmip_servers",
   SecretRotationV2 = "secret_rotations_v2",
   SecretRotationV2SecretMapping = "secret_rotation_v2_secret_mappings",
   MicrosoftTeamsIntegrations = "microsoft_teams_integrations",
   ProjectMicrosoftTeamsConfigs = "project_microsoft_teams_configs",
   SecretReminderRecipients = "secret_reminder_recipients", // TODO(Carlos): Remove this in the future after migrating to the new reminder recipients table
   GithubOrgSyncConfig = "github_org_sync_configs",
+  GitHubApp = "github_apps",
+  GitHubAppConnection = "github_app_connections",
   FolderCommit = "folder_commits",
   FolderCommitChanges = "folder_commit_changes",
   FolderCheckpoint = "folder_checkpoints",
@@ -206,6 +226,11 @@ export enum TableName {
   OrgGatewayConfigV2 = "org_gateway_config_v2",
   Relay = "relays",
   GatewayV2 = "gateways_v2",
+  ResourceAuthMethod = "resource_auth_methods",
+  ResourceAwsAuth = "resource_aws_auths",
+  ResourceTokenAuth = "resource_token_auths",
+  GatewayPool = "gateway_pools",
+  GatewayPoolMembership = "gateway_pool_memberships",
 
   KeyValueStore = "key_value_store",
 
@@ -214,15 +239,86 @@ export enum TableName {
   PamResource = "pam_resources",
   PamAccount = "pam_accounts",
   PamSession = "pam_sessions",
+  PamSessionEventBatch = "pam_session_event_batches",
+  PamSessionEventChunk = "pam_session_event_chunks",
+  PamProjectRecordingConfig = "pam_project_recording_configs",
+  PamDiscoverySource = "pam_discovery_sources",
+  PamDiscoverySourceRun = "pam_discovery_source_runs",
+  PamDiscoverySourceResource = "pam_discovery_source_resources",
+  PamDiscoverySourceAccount = "pam_discovery_source_accounts",
+  PamDiscoverySourceDependency = "pam_discovery_source_dependencies",
+  PamAccountDependency = "pam_account_dependencies",
+  PamResourceRotationRule = "pam_resource_rotation_rules",
+  PamResourceFavorite = "pam_resource_favorites",
+  PamDomain = "pam_domains",
+  PamAccountPolicy = "pam_account_policies",
 
   VaultExternalMigrationConfig = "vault_external_migration_configs",
+  ExternalMigrationConfig = "external_migration_configs",
 
   // PKI ACME
   PkiAcmeAccount = "pki_acme_accounts",
   PkiAcmeOrder = "pki_acme_orders",
   PkiAcmeOrderAuth = "pki_acme_order_auths",
   PkiAcmeAuth = "pki_acme_auths",
-  PkiAcmeChallenge = "pki_acme_challenges"
+  PkiAcmeChallenge = "pki_acme_challenges",
+
+  // PKI Discovery
+  PkiDiscoveryConfig = "pki_discovery_configs",
+  PkiCertificateInstallation = "pki_certificate_installations",
+  PkiDiscoveryInstallation = "pki_discovery_installations",
+  PkiCertificateInstallationCert = "pki_certificate_installation_certs",
+  PkiDiscoveryScanHistory = "pki_discovery_scan_history",
+
+  // PKI Cleanup
+  CertificateCleanupConfig = "certificate_cleanup_configs",
+
+  // PKI Inventory Views
+  CertificateInventoryView = "certificate_inventory_views",
+
+  // AI
+  AiMcpServer = "ai_mcp_servers",
+  AiMcpServerTool = "ai_mcp_server_tools",
+  AiMcpServerUserCredential = "ai_mcp_server_user_credentials",
+  AiMcpEndpoint = "ai_mcp_endpoints",
+  AiMcpEndpointServer = "ai_mcp_endpoint_servers",
+  AiMcpEndpointServerTool = "ai_mcp_endpoint_server_tools",
+  AiMcpActivityLog = "ai_mcp_activity_logs",
+
+  // Approval Policies
+  ApprovalPolicies = "approval_policies",
+  ApprovalPolicySteps = "approval_policy_steps",
+  ApprovalPolicyStepApprovers = "approval_policy_step_approvers",
+  ApprovalPolicyBypassers = "approval_policy_bypassers",
+  ApprovalRequests = "approval_requests",
+  ApprovalRequestSteps = "approval_request_steps",
+  ApprovalRequestStepEligibleApprovers = "approval_request_step_eligible_approvers",
+  ApprovalRequestApprovals = "approval_request_approvals",
+  ApprovalRequestGrants = "approval_request_grants",
+
+  // Code Signing
+  PkiSigners = "pki_signers",
+  PkiSignerCertificateIssuanceJobs = "pki_signer_certificate_issuance_jobs",
+  PkiSigningOperations = "pki_signing_operations",
+
+  CaSigningConfig = "ca_signing_configs",
+  SecretValidationRule = "secret_validation_rules",
+
+  // OAuth 2.0 authorization server (Infisical as an OAuth provider)
+  OauthClient = "oauth_clients",
+
+  // Honey Tokens
+  HoneyTokenConfig = "honey_token_configs",
+  HoneyToken = "honey_tokens",
+  HoneyTokenEvent = "honey_token_events",
+  HoneyTokenSecretMapping = "honey_token_secret_mappings",
+
+  // Deprecated - Not used anymore now that Redis is persistent
+  DeprecatedDurableQueueJobs = "queue_jobs",
+  DeprecatedSecretRotationV1 = "secret_rotations",
+  DeprecatedSecretRotationOutput = "secret_rotation_outputs",
+  DeprecatedSecretRotationOutputV2 = "secret_rotation_output_v2",
+  DeprecatedApiKey = "api_keys"
 }
 
 export type TImmutableDBKeys = "id" | "createdAt" | "updatedAt" | "commitId";
@@ -267,6 +363,18 @@ export enum ProjectMembershipRole {
   KmsCryptographicOperator = "cryptographic-operator"
 }
 
+export enum ResourceMembershipRole {
+  Admin = "admin",
+  Operator = "operator",
+  Auditor = "auditor",
+  Custom = "custom"
+}
+
+export enum ResourceType {
+  CertificateApplication = "certificate-application",
+  Signer = "pki-signer"
+}
+
 export enum SecretEncryptionAlgo {
   AES_256_GCM = "aes-256-gcm"
 }
@@ -306,7 +414,8 @@ export enum IdentityAuthMethod {
   OCI_AUTH = "oci-auth",
   OIDC_AUTH = "oidc-auth",
   JWT_AUTH = "jwt-auth",
-  LDAP_AUTH = "ldap-auth"
+  LDAP_AUTH = "ldap-auth",
+  SPIFFE_AUTH = "spiffe-auth"
 }
 
 export enum ProjectType {
@@ -315,7 +424,8 @@ export enum ProjectType {
   KMS = "kms",
   SSH = "ssh",
   SecretScanning = "secret-scanning",
-  PAM = "pam"
+  PAM = "pam",
+  AI = "ai"
 }
 
 export enum ActionProjectType {
@@ -325,6 +435,7 @@ export enum ActionProjectType {
   SSH = ProjectType.SSH,
   SecretScanning = ProjectType.SecretScanning,
   PAM = ProjectType.PAM,
+  AI = ProjectType.AI,
   // project operations that happen on all types
   Any = "any"
 }
@@ -352,19 +463,15 @@ export enum SortDirection {
 
 export enum AccessScope {
   Organization = "organization",
-  Namespace = "namespace",
   Project = "project"
 }
+
+export const RESOURCE_SCOPE = "resource";
 
 export type AccessScopeData =
   | {
       scope: AccessScope.Organization;
       orgId: string;
-    }
-  | {
-      scope: AccessScope.Namespace;
-      orgId: string;
-      namespaceId: string;
     }
   | {
       scope: AccessScope.Project;

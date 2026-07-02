@@ -5,7 +5,9 @@ import { OrderByDirection } from "@app/lib/types";
 import { TAppConnectionDALFactory } from "@app/services/app-connection/app-connection-dal";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { SecretsOrderBy } from "@app/services/secret/secret-types";
+import { TConstraint } from "@app/services/secret-validation-rule/secret-validation-rule-types";
 
+import { TGatewayPoolServiceFactory } from "../gateway-pool/gateway-pool-service";
 import { TGatewayV2ServiceFactory } from "../gateway-v2/gateway-v2-service";
 import {
   TAuth0ClientSecretRotation,
@@ -29,12 +31,53 @@ import {
   TAzureClientSecretRotationWithConnection
 } from "./azure-client-secret";
 import {
+  TConvexAccessKeyRotation,
+  TConvexAccessKeyRotationGeneratedCredentials,
+  TConvexAccessKeyRotationInput,
+  TConvexAccessKeyRotationListItem,
+  TConvexAccessKeyRotationWithConnection
+} from "./convex-access-key";
+import {
+  TDatabricksServicePrincipalSecretRotation,
+  TDatabricksServicePrincipalSecretRotationGeneratedCredentials,
+  TDatabricksServicePrincipalSecretRotationInput,
+  TDatabricksServicePrincipalSecretRotationListItem,
+  TDatabricksServicePrincipalSecretRotationWithConnection
+} from "./databricks-service-principal-secret";
+import {
+  TDatadogApplicationKeySecretRotation,
+  TDatadogApplicationKeySecretRotationGeneratedCredentials,
+  TDatadogApplicationKeySecretRotationInput,
+  TDatadogApplicationKeySecretRotationListItem,
+  TDatadogApplicationKeySecretRotationWithConnection
+} from "./datadog-application-key-secret";
+import {
+  TDbtServiceTokenRotation,
+  TDbtServiceTokenRotationGeneratedCredentials,
+  TDbtServiceTokenRotationInput,
+  TDbtServiceTokenRotationListItem,
+  TDbtServiceTokenRotationWithConnection
+} from "./dbt-service-token/dbt-service-token-rotation-types";
+import {
+  THpIloRotation,
+  THpIloRotationGeneratedCredentials,
+  THpIloRotationInput,
+  THpIloRotationListItem,
+  THpIloRotationWithConnection
+} from "./hp-ilo-rotation";
+import {
   TLdapPasswordRotation,
   TLdapPasswordRotationGeneratedCredentials,
   TLdapPasswordRotationInput,
   TLdapPasswordRotationListItem,
   TLdapPasswordRotationWithConnection
 } from "./ldap-password";
+import {
+  TMongoDBCredentialsRotation,
+  TMongoDBCredentialsRotationInput,
+  TMongoDBCredentialsRotationListItem,
+  TMongoDBCredentialsRotationWithConnection
+} from "./mongodb-credentials";
 import {
   TMsSqlCredentialsRotation,
   TMsSqlCredentialsRotationInput,
@@ -55,6 +98,13 @@ import {
   TOktaClientSecretRotationWithConnection
 } from "./okta-client-secret";
 import {
+  TOpenRouterApiKeyRotation,
+  TOpenRouterApiKeyRotationGeneratedCredentials,
+  TOpenRouterApiKeyRotationInput,
+  TOpenRouterApiKeyRotationListItem,
+  TOpenRouterApiKeyRotationWithConnection
+} from "./open-router-api-key";
+import {
   TOracleDBCredentialsRotation,
   TOracleDBCredentialsRotationInput,
   TOracleDBCredentialsRotationListItem,
@@ -73,8 +123,36 @@ import {
   TRedisCredentialsRotationListItem,
   TRedisCredentialsRotationWithConnection
 } from "./redis-credentials/redis-credentials-rotation-types";
+import {
+  TSalesforceOauthCredentialsRotation,
+  TSalesforceOauthCredentialsRotationGeneratedCredentials,
+  TSalesforceOauthCredentialsRotationInput,
+  TSalesforceOauthCredentialsRotationListItem,
+  TSalesforceOauthCredentialsRotationWithConnection
+} from "./salesforce-oauth-credentials";
 import { TSecretRotationV2DALFactory } from "./secret-rotation-v2-dal";
 import { SecretRotation } from "./secret-rotation-v2-enums";
+import {
+  TSupabaseApiKeyRotation,
+  TSupabaseApiKeyRotationGeneratedCredentials,
+  TSupabaseApiKeyRotationInput,
+  TSupabaseApiKeyRotationListItem,
+  TSupabaseApiKeyRotationWithConnection
+} from "./supabase-api-key";
+import {
+  TUnixLinuxLocalAccountRotation,
+  TUnixLinuxLocalAccountRotationGeneratedCredentials,
+  TUnixLinuxLocalAccountRotationInput,
+  TUnixLinuxLocalAccountRotationListItem,
+  TUnixLinuxLocalAccountRotationWithConnection
+} from "./unix-linux-local-account-rotation";
+import {
+  TWindowsLocalAccountRotation,
+  TWindowsLocalAccountRotationGeneratedCredentials,
+  TWindowsLocalAccountRotationInput,
+  TWindowsLocalAccountRotationListItem,
+  TWindowsLocalAccountRotationWithConnection
+} from "./windows-local-account-rotation";
 
 export type TSecretRotationV2 =
   | TPostgresCredentialsRotation
@@ -86,7 +164,18 @@ export type TSecretRotationV2 =
   | TLdapPasswordRotation
   | TAwsIamUserSecretRotation
   | TOktaClientSecretRotation
-  | TRedisCredentialsRotation;
+  | TRedisCredentialsRotation
+  | TMongoDBCredentialsRotation
+  | TDatabricksServicePrincipalSecretRotation
+  | TUnixLinuxLocalAccountRotation
+  | TDbtServiceTokenRotation
+  | TWindowsLocalAccountRotation
+  | TOpenRouterApiKeyRotation
+  | THpIloRotation
+  | TSupabaseApiKeyRotation
+  | TSalesforceOauthCredentialsRotation
+  | TDatadogApplicationKeySecretRotation
+  | TConvexAccessKeyRotation;
 
 export type TSecretRotationV2WithConnection =
   | TPostgresCredentialsRotationWithConnection
@@ -98,7 +187,18 @@ export type TSecretRotationV2WithConnection =
   | TLdapPasswordRotationWithConnection
   | TAwsIamUserSecretRotationWithConnection
   | TOktaClientSecretRotationWithConnection
-  | TRedisCredentialsRotationWithConnection;
+  | TRedisCredentialsRotationWithConnection
+  | TMongoDBCredentialsRotationWithConnection
+  | TDatabricksServicePrincipalSecretRotationWithConnection
+  | TUnixLinuxLocalAccountRotationWithConnection
+  | TDbtServiceTokenRotationWithConnection
+  | TWindowsLocalAccountRotationWithConnection
+  | TOpenRouterApiKeyRotationWithConnection
+  | THpIloRotationWithConnection
+  | TSupabaseApiKeyRotationWithConnection
+  | TSalesforceOauthCredentialsRotationWithConnection
+  | TDatadogApplicationKeySecretRotationWithConnection
+  | TConvexAccessKeyRotationWithConnection;
 
 export type TSecretRotationV2GeneratedCredentials =
   | TSqlCredentialsRotationGeneratedCredentials
@@ -107,7 +207,17 @@ export type TSecretRotationV2GeneratedCredentials =
   | TLdapPasswordRotationGeneratedCredentials
   | TAwsIamUserSecretRotationGeneratedCredentials
   | TOktaClientSecretRotationGeneratedCredentials
-  | TRedisCredentialsRotationGeneratedCredentials;
+  | TRedisCredentialsRotationGeneratedCredentials
+  | TDatabricksServicePrincipalSecretRotationGeneratedCredentials
+  | TUnixLinuxLocalAccountRotationGeneratedCredentials
+  | TDbtServiceTokenRotationGeneratedCredentials
+  | TWindowsLocalAccountRotationGeneratedCredentials
+  | TOpenRouterApiKeyRotationGeneratedCredentials
+  | THpIloRotationGeneratedCredentials
+  | TSupabaseApiKeyRotationGeneratedCredentials
+  | TSalesforceOauthCredentialsRotationGeneratedCredentials
+  | TDatadogApplicationKeySecretRotationGeneratedCredentials
+  | TConvexAccessKeyRotationGeneratedCredentials;
 
 export type TSecretRotationV2Input =
   | TPostgresCredentialsRotationInput
@@ -119,7 +229,18 @@ export type TSecretRotationV2Input =
   | TLdapPasswordRotationInput
   | TAwsIamUserSecretRotationInput
   | TOktaClientSecretRotationInput
-  | TRedisCredentialsRotationInput;
+  | TRedisCredentialsRotationInput
+  | TMongoDBCredentialsRotationInput
+  | TDatabricksServicePrincipalSecretRotationInput
+  | TUnixLinuxLocalAccountRotationInput
+  | TDbtServiceTokenRotationInput
+  | TWindowsLocalAccountRotationInput
+  | TOpenRouterApiKeyRotationInput
+  | THpIloRotationInput
+  | TSupabaseApiKeyRotationInput
+  | TSalesforceOauthCredentialsRotationInput
+  | TDatadogApplicationKeySecretRotationInput
+  | TConvexAccessKeyRotationInput;
 
 export type TSecretRotationV2ListItem =
   | TPostgresCredentialsRotationListItem
@@ -131,9 +252,25 @@ export type TSecretRotationV2ListItem =
   | TLdapPasswordRotationListItem
   | TAwsIamUserSecretRotationListItem
   | TOktaClientSecretRotationListItem
-  | TRedisCredentialsRotationListItem;
+  | TRedisCredentialsRotationListItem
+  | TMongoDBCredentialsRotationListItem
+  | TDatabricksServicePrincipalSecretRotationListItem
+  | TUnixLinuxLocalAccountRotationListItem
+  | TDbtServiceTokenRotationListItem
+  | TWindowsLocalAccountRotationListItem
+  | TOpenRouterApiKeyRotationListItem
+  | THpIloRotationListItem
+  | TSupabaseApiKeyRotationListItem
+  | TSalesforceOauthCredentialsRotationListItem
+  | TDatadogApplicationKeySecretRotationListItem
+  | TConvexAccessKeyRotationListItem;
 
-export type TSecretRotationV2TemporaryParameters = TLdapPasswordRotationInput["temporaryParameters"] | undefined;
+export type TSecretRotationV2TemporaryParameters =
+  | TLdapPasswordRotationInput["temporaryParameters"]
+  | TUnixLinuxLocalAccountRotationInput["temporaryParameters"]
+  | TWindowsLocalAccountRotationInput["temporaryParameters"]
+  | THpIloRotationInput["temporaryParameters"]
+  | undefined;
 
 export type TSecretRotationV2Raw = NonNullable<Awaited<ReturnType<TSecretRotationV2DALFactory["findById"]>>>;
 
@@ -148,6 +285,8 @@ export type TFindSecretRotationV2ByIdDTO = {
 };
 
 export type TRotateSecretRotationV2 = TFindSecretRotationV2ByIdDTO & { auditLogInfo: AuditLogInfo };
+
+export type TCheckSecretRotationV2Credentials = TFindSecretRotationV2ByIdDTO & { auditLogInfo: AuditLogInfo };
 
 export type TRotateAtUtc = { hours: number; minutes: number };
 
@@ -183,6 +322,21 @@ export type TDeleteSecretRotationV2DTO = {
   rotationId: string;
   deleteSecrets: boolean;
   revokeGeneratedCredentials: boolean;
+};
+
+export type TMoveSecretRotationV2DTO = {
+  type: SecretRotation;
+  rotationId: string;
+  destinationEnvironment: string;
+  destinationSecretPath: string;
+  overwriteDestination: boolean;
+};
+
+/** Minimal rotation shape needed to build a permission subject (env, path, connectionId). */
+export type TSecretRotationV2PermissionContext = {
+  environment: { slug: string };
+  folder: { path: string };
+  connection: { id: string };
 };
 
 export type TGetDashboardSecretRotationV2Count = {
@@ -225,10 +379,17 @@ export type TSecretRotationRotateGeneratedCredentials = {
   isManualRotation?: boolean;
 };
 
-export type TSecretRotationRotateSecretsJobPayload = { rotationId: string; queuedAt: Date; isManualRotation: boolean };
-
+export type TSecretRotationRotateSecretsJobPayload = { rotationId: string; queuedAt: Date; isManualRotation?: boolean };
 export type TSecretRotationSendNotificationJobPayload = {
-  secretRotation: TSecretRotationV2Raw;
+  secretRotation: {
+    id: string;
+    name: string;
+    type: string;
+    projectId: string;
+    folder: { path: string };
+    lastRotationAttemptedAt: Date;
+    environment: { name: string; slug: string };
+  };
 };
 
 // scott: the reason for the callback structure of the rotation factory is to facilitate, when possible,
@@ -258,6 +419,19 @@ export type TRotationFactoryGetSecretsPayload<T extends TSecretRotationV2Generat
   generatedCredentials: T[number]
 ) => { key: string; value: string }[];
 
+export type TRotationFactoryCheckActiveCredentials<T extends TSecretRotationV2GeneratedCredentials> = (
+  activeCredentials: T[number]
+) => Promise<void>;
+
+// Password validation context passed to factories when an active
+// secret-validation rule covers the rotation's project/env/path/provider.
+// When present, factories that generate passwords must satisfy these
+// constraints and ignore any user-provided passwordRequirements.
+export type TRotationPasswordValidationContext = {
+  constraints: TConstraint[];
+  ruleNames: string[];
+};
+
 export type TRotationFactory<
   T extends TSecretRotationV2WithConnection,
   C extends TSecretRotationV2GeneratedCredentials,
@@ -267,10 +441,13 @@ export type TRotationFactory<
   appConnectionDAL: Pick<TAppConnectionDALFactory, "findById" | "update" | "updateById">,
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">,
   gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">,
-  gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">
+  gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">,
+  gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">,
+  passwordValidationContext?: TRotationPasswordValidationContext
 ) => {
   issueCredentials: TRotationFactoryIssueCredentials<C, P>;
   revokeCredentials: TRotationFactoryRevokeCredentials<C>;
   rotateCredentials: TRotationFactoryRotateCredentials<C>;
   getSecretsPayload: TRotationFactoryGetSecretsPayload<C>;
+  checkActiveCredentials?: TRotationFactoryCheckActiveCredentials<C>;
 };

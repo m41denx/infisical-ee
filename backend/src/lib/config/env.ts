@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { THsmServiceFactory } from "@app/ee/services/hsm/hsm-service";
 import { crypto } from "@app/lib/crypto/cryptography";
+import { initializePqcSupport } from "@app/lib/crypto/pqc";
 import { QueueWorkerProfile } from "@app/lib/types";
 import { TKmsRootConfigDALFactory } from "@app/services/kms/kms-root-config-dal";
 import { TSuperAdminDALFactory } from "@app/services/super-admin/super-admin-dal";
@@ -9,9 +10,24 @@ import { TSuperAdminDALFactory } from "@app/services/super-admin/super-admin-dal
 import { BadRequestError } from "../errors";
 import { removeTrailingSlash } from "../fn";
 import { CustomLogger } from "../logger/logger";
+import { ms } from "../ms";
 import { zpStr } from "../zod";
 
 export const GITLAB_URL = "https://gitlab.com";
+
+const DEFAULT_CLICKHOUSE_AUDIT_LOG_INSERT_SETTINGS: Record<string, string | number | boolean> = {
+  async_insert: 1,
+  // !!!NOTICE!!! by disabling wait_for_async_insert, we shouldn't suffer from the audit log queue piles up jobs
+  //              issues anymore as now insert won't be blocked until the data is written to disk.
+  //              However, this works at the cost of DATA LOSS if the ClickHouse server crashes
+  //              before the data is written to disk.
+  //              Because our Redis queue if without AOF + Fsync, may already suffer data loss issues,
+  //              so it's not worsening the issue at least for now.
+  //              Let's have this rolled out in production and see how things go for now,
+  //              in the meantime, we should think about a better solution to handle this.
+  wait_for_async_insert: 0,
+  date_time_input_format: "best_effort"
+};
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any -- If `process.pkg` is set, and it's true, then it means that the app is currently running in a packaged environment (a binary)
 export const IS_PACKAGED = (process as any)?.pkg !== undefined;
@@ -38,6 +54,7 @@ const envSchema = z
       .enum(["true", "false"])
       .default("false")
       .transform((el) => el === "true"),
+    DISABLE_PUBLIC_SECRET_SHARING: zodStrBool.default("false"),
     REDIS_URL: zpStr(z.string().optional()),
     REDIS_USERNAME: zpStr(z.string().optional()),
     REDIS_PASSWORD: zpStr(z.string().optional()),
@@ -85,7 +102,54 @@ const envSchema = z
     AUDIT_LOGS_DB_ROOT_CERT: zpStr(
       z.string().describe("Postgres database base64-encoded CA cert for Audit logs").optional()
     ),
-    DISABLE_AUDIT_LOG_STORAGE: zodStrBool.default("false").optional().describe("Disable audit log storage"),
+    CLICKHOUSE_URL: zpStr(
+      z
+        .string()
+        .optional()
+        .describe("ClickHouse connection URL. Eg: http://localhost:8123 or https://user:password@host:8443/database")
+    ),
+    CLICKHOUSE_AUDIT_LOG_INSERT_SETTINGS: zpStr(
+      z
+        .string()
+        .optional()
+        .transform((val) => {
+          if (!val || val.trim() === "") return DEFAULT_CLICKHOUSE_AUDIT_LOG_INSERT_SETTINGS;
+          return JSON.parse(val) as Record<string, string | number | boolean>;
+        })
+        .default(JSON.stringify(DEFAULT_CLICKHOUSE_AUDIT_LOG_INSERT_SETTINGS))
+        .describe(
+          'ClickHouse insert settings as JSON. Eg: {"async_insert":1,"wait_for_async_insert":1}. Applied when inserting audit logs.'
+        )
+    ),
+    CLICKHOUSE_AUDIT_LOG_ENGINE: zpStr(
+      z
+        .string()
+        .optional()
+        .default("ReplacingMergeTree")
+        .describe(
+          "ClickHouse engine for the audit_logs table. Used during migrations. Eg: ReplacingMergeTree or SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')"
+        )
+    ),
+    CLICKHOUSE_AUDIT_LOG_TABLE_NAME: zpStr(
+      z.string().optional().default("audit_logs").describe("ClickHouse table name for audit logs")
+    ),
+    CLICKHOUSE_AUDIT_LOG_ENABLED: zodStrBool.default("true").describe("Enable inserting audit logs into ClickHouse"),
+    AUDIT_LOG_STREAMS_ENABLED: zodStrBool.default("true").describe("Enable sending audit logs to external log streams"),
+    DISABLE_AUDIT_LOG_STORAGE: zodStrBool.optional(), // deprecated: use DISABLE_POSTGRES_AUDIT_LOG_STORAGE instead
+    DISABLE_POSTGRES_AUDIT_LOG_STORAGE: z
+      .string()
+      .optional()
+      .transform((val) => (val === undefined ? undefined : val === "true"))
+      .describe("Disable PostgreSQL audit log storage"),
+    GENERATE_SANITIZED_SCHEMA: zodStrBool
+      .default("false")
+      .describe("Generate sanitized schema with views after migrations"),
+    FAIL_ON_SANITIZED_SCHEMA_ERROR: zodStrBool
+      .default("false")
+      .describe("Exit startup when sanitized schema generation fails"),
+    SANITIZED_SCHEMA_ROLE: zpStr(
+      z.string().describe("PostgreSQL role to grant read access to the sanitized schema").optional()
+    ),
     MAX_LEASE_LIMIT: z.coerce.number().default(10000),
     DB_ROOT_CERT: zpStr(z.string().describe("Postgres database base64-encoded CA cert").optional()),
     DB_HOST: zpStr(z.string().describe("Postgres database host").optional()),
@@ -119,6 +183,16 @@ const envSchema = z
         })
         .default("{}")
     ),
+    ACME_DNS_RESOLVER_SERVERS: zpStr(
+      z
+        .string()
+        .optional()
+        .transform((val) => {
+          if (!val) return [];
+          return val.split(",");
+        })
+    ),
+    ACME_DNS_RESOLVE_RESOLVER_SERVERS_HOST_ENABLED: zodStrBool.default("false").optional(),
     DNS_MADE_EASY_SANDBOX_ENABLED: zodStrBool.default("false").optional(),
     // smtp options
     SMTP_HOST: zpStr(z.string().optional()),
@@ -130,6 +204,14 @@ const envSchema = z
     SMTP_PASSWORD: zpStr(z.string().optional()),
     SMTP_FROM_ADDRESS: zpStr(z.string().optional()),
     SMTP_FROM_NAME: zpStr(z.string().optional().default("Infisical")),
+    SMTP_HELO_HOST: zpStr(
+      z
+        .string()
+        .optional()
+        .describe(
+          "Hostname announced in the SMTP EHLO/HELO greeting. Defaults to the OS hostname, which may not be a valid FQDN inside containers."
+        )
+    ),
     SMTP_CUSTOM_CA_CERT: zpStr(
       z.string().optional().describe("Base64 encoded custom CA certificate PEM(s) for the SMTP server")
     ),
@@ -143,8 +225,17 @@ const envSchema = z
     // Telemetry
     TELEMETRY_ENABLED: zodStrBool.default("true"),
     POSTHOG_HOST: zpStr(z.string().optional().default("https://app.posthog.com")),
-    POSTHOG_PROJECT_API_KEY: zpStr(z.string().optional().default("phc_nSin8j5q2zdhpFDI1ETmFNUIuTG4DwKVyIigrY10XiE")),
+    POSTHOG_PROJECT_API_KEY: zpStr(z.string().optional().default("phc_swoSUd69FLA4ztGPkBhnNHDVbrssfPkuYEGCquN33FCX")),
     LOOPS_API_KEY: zpStr(z.string().optional()),
+    // HubSpot Forms API for capturing signups
+    HUBSPOT_PORTAL_ID: zpStr(z.string().optional()),
+    HUBSPOT_SIGNUP_FORM_ID: zpStr(z.string().optional()),
+    // In-app announcements (Contentful). Public read-only delivery token; safe to bake in defaults.
+    // Self-hosted admins can disable outbound calls with ANNOUNCEMENTS_ENABLED=false.
+    ANNOUNCEMENTS_ENABLED: zodStrBool.default("true"),
+    CONTENTFUL_SPACE_ID: zpStr(z.string().optional()),
+    CONTENTFUL_DELIVERY_TOKEN: zpStr(z.string().optional()),
+    CONTENTFUL_ENVIRONMENT: zpStr(z.string().optional().default("master")),
     // GitHub API token for upgrade path tool
     GITHUB_API_TOKEN: zpStr(z.string().optional()),
     // jwt options
@@ -155,6 +246,15 @@ const envSchema = z
     JWT_INVITE_LIFETIME: zpStr(z.string().default("1d")),
     JWT_MFA_LIFETIME: zpStr(z.string().default("5m")),
     JWT_PROVIDER_AUTH_LIFETIME: zpStr(z.string().default("15m")),
+    MAX_MACHINE_IDENTITY_TOKEN_AGE: zpStr(
+      z
+        .string()
+        .default("90d")
+        .transform((val) => Math.floor(ms(val) / 1000))
+    ),
+    LEGACY_IDENTITY_ACCESS_TOKEN_EXPIRATION_ENFORCED_AT: zpStr(
+      z.coerce.date().default(new Date("2026-05-04T00:00:00.000Z"))
+    ),
     // Oauth
     CLIENT_ID_GOOGLE_LOGIN: zpStr(z.string().optional()),
     CLIENT_SECRET_GOOGLE_LOGIN: zpStr(z.string().optional()),
@@ -218,6 +318,9 @@ const envSchema = z
     LICENSE_SERVER_KEY: zpStr(z.string().optional()),
     LICENSE_KEY: zpStr(z.string().optional()),
     LICENSE_KEY_OFFLINE: zpStr(z.string().optional()),
+    LICENSE_SERVER_V2_MODE: z.enum(["off", "read-compare", "on"]).default("off"),
+    LICENSE_SERVER_V2_URL: zpStr(z.string().optional()),
+    LICENSE_SERVER_V2_SERVICE_KEY: zpStr(z.string().optional()),
 
     // GENERIC
     STANDALONE_MODE: z
@@ -225,10 +328,12 @@ const envSchema = z
       .transform((val) => val === "true" || IS_PACKAGED)
       .optional(),
     INFISICAL_CLOUD: zodStrBool.default("false"),
+    INFISICAL_DEDICATED: zodStrBool.default("false"),
     MAINTENANCE_MODE: zodStrBool.default("false"),
     CAPTCHA_SECRET: zpStr(z.string().optional()),
     CAPTCHA_SITE_KEY: zpStr(z.string().optional()),
     INTERCOM_ID: zpStr(z.string().optional()),
+    CDN_HOST: zpStr(z.string().optional()),
 
     // TELEMETRY
     OTEL_TELEMETRY_COLLECTION_ENABLED: zodStrBool.default("false"),
@@ -237,6 +342,7 @@ const envSchema = z
     OTEL_COLLECTOR_BASIC_AUTH_USERNAME: zpStr(z.string().optional()),
     OTEL_COLLECTOR_BASIC_AUTH_PASSWORD: zpStr(z.string().optional()),
     OTEL_EXPORT_TYPE: z.enum(["prometheus", "otlp"]).optional(),
+    OTEL_DROP_HIGH_CARDINALITY_METERS: zodStrBool.default("false"),
 
     PYLON_API_KEY: zpStr(z.string().optional()),
     DISABLE_AUDIT_LOG_GENERATION: zodStrBool.default("false"),
@@ -286,6 +392,10 @@ const envSchema = z
     DYNAMIC_SECRET_AWS_SECRET_ACCESS_KEY: zpStr(z.string().optional()).default(
       process.env.INF_APP_CONNECTION_AWS_SECRET_ACCESS_KEY
     ),
+
+    // PAM AWS credentials (for AWS IAM PAM resource type)
+    PAM_AWS_ACCESS_KEY_ID: zpStr(z.string().optional()),
+    PAM_AWS_SECRET_ACCESS_KEY: zpStr(z.string().optional()),
     /* ----------------------------------------------------------------------------- */
 
     /* App Connections ----------------------------------------------------------------------------- */
@@ -305,6 +415,7 @@ const envSchema = z
     INF_APP_CONNECTION_GITHUB_APP_PRIVATE_KEY: zpStr(z.string().optional()),
     INF_APP_CONNECTION_GITHUB_APP_SLUG: zpStr(z.string().optional()),
     INF_APP_CONNECTION_GITHUB_APP_ID: zpStr(z.string().optional()),
+    INF_APP_CONNECTION_GITHUB_APP_HOST: zpStr(z.string().optional()),
 
     // github radar app
     INF_APP_CONNECTION_GITHUB_RADAR_APP_CLIENT_ID: zpStr(z.string().optional()),
@@ -376,6 +487,24 @@ const envSchema = z
         })
     ),
 
+    // Reverse Proxy -----------------------------------------------------------------------------
+    // Comma-separated list of trusted proxy CIDRs (e.g. "10.0.0.0/8,172.16.0.0/12") or
+    // proxy-addr aliases ("loopback", "linklocal", "uniquelocal"). When set, requests whose
+    // socket remote address is NOT in this set will have forwarded-IP headers ignored; the
+    // socket address is used as the real IP. When unset, legacy first-header-wins behavior
+    // is preserved for backwards compatibility.
+    TRUSTED_PROXY_CIDRS: zpStr(z.string().optional()),
+
+    /* OracleDB ----------------------------------------------------------------------------- */
+    TNS_ADMIN: zpStr(z.string().optional()),
+
+    /* Go Sidecar ----------------------------------------------------------------------------- */
+    GOLANG_SIDECAR_URL: zpStr(z.string().optional()),
+    GO_SIDECAR_SHADOW_ENABLED: zodStrBool.default("false"),
+    GO_SIDECAR_SHADOW_SAMPLE_RATE: z.coerce.number().min(0).max(100).default(10),
+    GO_SIDECAR_BINARY_PATH: zpStr(z.string().optional()),
+    GO_SIDECAR_SPAWN_ENABLED: zodStrBool.default("false"),
+
     /* INTERNAL ----------------------------------------------------------------------------- */
     INTERNAL_REGION: zpStr(z.enum(["us", "eu"]).optional())
   })
@@ -386,12 +515,17 @@ const envSchema = z
   .transform((data) => ({
     ...data,
     SALT_ROUNDS: data.SALT_ROUNDS || data.BCRYPT_SALT_ROUND || 12,
+    DISABLE_POSTGRES_AUDIT_LOG_STORAGE:
+      data.DISABLE_POSTGRES_AUDIT_LOG_STORAGE ?? data.DISABLE_AUDIT_LOG_STORAGE ?? false,
     DB_READ_REPLICAS: data.DB_READ_REPLICAS
       ? databaseReadReplicaSchema.parse(JSON.parse(data.DB_READ_REPLICAS))
       : undefined,
-    isCloud: Boolean(data.LICENSE_SERVER_KEY),
+    // Inferred from the legacy license server key; needs a new signal once License Server v2 fully replaces it.
+    isCloud: Boolean(data.LICENSE_SERVER_KEY || data.LICENSE_SERVER_V2_SERVICE_KEY),
+    isLicenseDualReadEnabled: data.LICENSE_SERVER_V2_MODE === "read-compare",
     isSmtpConfigured: Boolean(data.SMTP_HOST),
     isRedisConfigured: Boolean(data.REDIS_URL || data.REDIS_SENTINEL_HOSTS || data.REDIS_CLUSTER_HOSTS),
+    isClickHouseConfigured: Boolean(data.CLICKHOUSE_URL),
     isDevelopmentMode: data.NODE_ENV === "development",
     isTestMode: data.NODE_ENV === "test",
     isRotationDevelopmentMode:
@@ -489,6 +623,8 @@ export const initEnvConfig = async (
   if (superAdminDAL) {
     const fipsEnabled = await crypto.initialize(superAdminDAL, hsmService, kmsRootConfigDAL);
 
+    await initializePqcSupport();
+
     if (fipsEnabled) {
       const newEnvCfg = {
         ...parsedEnv.data,
@@ -507,7 +643,9 @@ export const initEnvConfig = async (
 export const getTelemetryConfig = () => {
   const parsedEnv = envSchema.safeParse(process.env);
   if (!parsedEnv.success) {
+    // eslint-disable-next-line no-console
     console.error("Invalid environment variables. Check the error below");
+    // eslint-disable-next-line no-console
     console.error(parsedEnv.error.issues);
     process.exit(-1);
   }
@@ -515,6 +653,7 @@ export const getTelemetryConfig = () => {
   return {
     useOtel: parsedEnv.data.OTEL_TELEMETRY_COLLECTION_ENABLED,
     useDataDogTracer: parsedEnv.data.SHOULD_USE_DATADOG_TRACER,
+    dropHighCardinalityMeters: parsedEnv.data.OTEL_DROP_HIGH_CARDINALITY_METERS,
     OTEL: {
       otlpURL: parsedEnv.data.OTEL_EXPORT_OTLP_ENDPOINT,
       otlpUser: parsedEnv.data.OTEL_COLLECTOR_BASIC_AUTH_USERNAME,
@@ -577,8 +716,12 @@ export const overwriteSchema: {
     name: "Audit Logs",
     fields: [
       {
+        key: "DISABLE_POSTGRES_AUDIT_LOG_STORAGE",
+        description: "Disable PostgreSQL audit log storage"
+      },
+      {
         key: "DISABLE_AUDIT_LOG_STORAGE",
-        description: "Disable audit log storage"
+        description: "Legacy alias for DISABLE_POSTGRES_AUDIT_LOG_STORAGE (deprecated)"
       }
     ]
   },
@@ -652,7 +795,8 @@ export const overwriteSchema: {
     fields: [
       {
         key: "INF_APP_CONNECTION_GCP_SERVICE_ACCOUNT_CREDENTIAL",
-        description: "The GCP Service Account JSON credentials."
+        description:
+          'The GCP credentials JSON used as the impersonation source. Accepts either a service account key (type "service_account") or a workload identity federation config (type "external_account"). For external_account, the referenced credential source (file, URL, or metadata endpoint) must be reachable from the instance.'
       }
     ]
   },
@@ -678,6 +822,11 @@ export const overwriteSchema: {
       {
         key: "INF_APP_CONNECTION_GITHUB_APP_PRIVATE_KEY",
         description: "The Private Key of your GitHub application."
+      },
+      {
+        key: "INF_APP_CONNECTION_GITHUB_APP_HOST",
+        description:
+          "The hostname of the GitHub instance used by the shared GitHub App (e.g. github.example.com for GitHub Enterprise Server). Defaults to github.com. Must be set when the shared app is registered on a GHES instance."
       }
     ]
   },
@@ -792,6 +941,16 @@ export const overwriteSchema: {
         description: "The Client Secret of your Heroku application."
       }
     ]
+  },
+  secretSharing: {
+    name: "Secret Sharing",
+    fields: [
+      {
+        key: "DISABLE_PUBLIC_SECRET_SHARING",
+        description:
+          "Disable creation of unauthenticated public secret shares (the /share-secret page). Set to 'true' to block public sharing."
+      }
+    ]
   }
 };
 
@@ -847,6 +1006,7 @@ export const formatSmtpConfig = () => {
   return {
     host: envCfg.SMTP_HOST,
     port: envCfg.SMTP_PORT,
+    name: envCfg.SMTP_HELO_HOST,
     auth:
       envCfg.SMTP_USERNAME && envCfg.SMTP_PASSWORD
         ? { user: envCfg.SMTP_USERNAME, pass: envCfg.SMTP_PASSWORD }
