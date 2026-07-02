@@ -1,28 +1,17 @@
 name: Release standalone docker image
 on:
     push:
-        tags:
-            - "v0.*.*"
-            - "v0.*.*-nightly-*"
-            - "v0.*.*-nightly-*.*"
 
 jobs:
-    infisical-tests:
-        name: Run tests before deployment
-        # https://docs.github.com/en/actions/using-workflows/reusing-workflows#overview
-        uses: ./.github/workflows/run-backend-tests.yml
+    # infisical-tests:
+    #     name: Run tests before deployment
+    #     # https://docs.github.com/en/actions/using-workflows/reusing-workflows#overview
+    #     uses: ./.github/workflows/run-backend-tests.yml
 
     infisical-standalone:
         name: Build infisical standalone image postgres
         runs-on: ubuntu-latest
-        needs: [infisical-tests]
-        permissions:
-            id-token: write # OIDC, to assume the ECR Public publish role
-            contents: read
-        env:
-            # Surfaced so the ECR mirror steps can be skipped when the role is
-            # not configured, decoupling them from the Docker Hub release.
-            ECR_PUBLIC_PUBLISH_ROLE_ARN: ${{ secrets.ECR_PUBLIC_PUBLISH_ROLE_ARN }}
+        # needs: [infisical-tests]
         steps:
             - name: Extract version from tag
               id: extract_version
@@ -57,18 +46,18 @@ jobs:
             - name: 📦 Build backend and push to Docker Hub
               uses: depot/build-push-action@5f3b3c2e5a00f0093de47f657aeaefcedff27d18 # Main / v1, Mar 10, 2026
               with:
-                  project: 64mmf0n610
+                  project: 181j6t17z5
                   token: ${{ secrets.DEPOT_PROJECT_TOKEN }}
                   push: true
                   context: .
                   tags: |
-                      infisical/infisical:latest
-                      infisical/infisical:${{ steps.commit.outputs.short }}
-                      infisical/infisical:${{ steps.extract_version.outputs.version }}
-                  platforms: linux/amd64,linux/arm64
+                      m41den/miculoid:latest
+                      m41den/miculoid:${{ steps.commit.outputs.short }}
+                      m41den/miculoid:${{ steps.extract_version.outputs.version }}
+                  platforms: linux/amd64
                   file: Dockerfile.standalone-infisical
                   build-args: |
-                      POSTHOG_API_KEY=${{ secrets.PUBLIC_POSTHOG_API_KEY }}
+                      POSTHOG_API_KEY=""
                       INFISICAL_PLATFORM_VERSION=${{ steps.extract_version.outputs.version }}
                       DD_GIT_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}
                       DD_GIT_COMMIT_SHA=${{ github.sha }}
@@ -120,7 +109,7 @@ jobs:
     infisical-fips-standalone:
         name: Build infisical standalone image postgres
         runs-on: ubuntu-latest
-        needs: [infisical-tests]
+        if: false
         steps:
             - name: Extract version from tag
               id: extract_version
